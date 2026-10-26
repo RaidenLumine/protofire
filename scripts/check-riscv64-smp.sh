@@ -213,7 +213,7 @@ fi
 if grep -a -F "FATAL" "$board_log" >/dev/null 2>&1; then
     board_fail "the kernel reported a fatal error"
 fi
-if ! grep -a -F "adastra ring3 shell" "$board_log" >/dev/null 2>&1; then
+if ! grep -a -F "protofire ring3 shell" "$board_log" >/dev/null 2>&1; then
     board_fail "the machine never reached the shell"
 fi
 rm -f "$board_log"

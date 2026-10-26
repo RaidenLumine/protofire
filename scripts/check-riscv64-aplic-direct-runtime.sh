@@ -170,7 +170,7 @@ require_log_line "(priority 1 of 255)"
 # answered.  The exact answer is the end-to-end evidence — a byte arrived
 # from outside, reached the console TTY and came back through the shell.
 require_log_line "[init  ] starting idle process"
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 require_log_exact_line "ring3-shell-answered"
 
 # And the delivery really is the domain's: the landmark is printed once, by

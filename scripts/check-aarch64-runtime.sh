@@ -367,7 +367,7 @@ exception-stack=
 kernel=524288 user=
 [init  ] starting idle process
 protofire kernel running
-adastra ring3 shell
+protofire ring3 shell
 [user  ] hello from aarch64 rust payload
 [user  ] aarch64-rust triggering local code-write fault
 [user  ] aarch64-rust resumed after local code-write fault
@@ -411,7 +411,7 @@ require_log_line "[abi   ] demo-launcher payload: ${PAYLOAD_SOURCE:-compiled} "
 
 # ── The shell is ring-3 code, and it answered what was typed at it ─────
 #
-# `adastra ring3 shell` above is the shell payload's own banner; the in-kernel
+# `protofire ring3 shell` above is the shell payload's own banner; the in-kernel
 # host proxy it replaced printed `protofire shell (user)`, so asserting the new
 # line is what keeps a boot from passing on the proxy after this changed.  The
 # prompt carries the directory the kernel says the process is in — the
@@ -424,8 +424,8 @@ require_log_line "[abi   ] demo-launcher payload: ${PAYLOAD_SOURCE:-compiled} "
 # to the command bytes.  A boot that is never typed at cannot tell those two
 # apart, so this check types; `scripts/feed-shell-console.sh` is what does it.
 require_log_line "[abi   ] shell payload: ${PAYLOAD_SOURCE:-compiled} "
-require_log_line "adastra:/apps/packages/shell\$ "
-require_log_line "adastra shell (ring 3) builtins:"
+require_log_line "protofire:/apps/packages/shell\$ "
+require_log_line "protofire shell (ring 3) builtins:"
 # `/system/init.elf` is a program on this target too: it reads the declarations
 # off the disk and asks for the services to be started, and says so.  The boot
 # left the start to it rather than starting them itself — that line is the
@@ -460,13 +460,13 @@ require_log_line "[time  ] wall clock: "
 # absent — a boot asked for something and was given the default.  This boot
 # passes `audit=persist`, and the line below is the kernel having read it.
 require_log_line "[audit ] persistence enabled (audit=persist)"
-require_log_line "adastra init (ring 3): reading /system/rc.d"
-require_log_line "adastra init: declared "
+require_log_line "protofire init (ring 3): reading /system/rc.d"
+require_log_line "protofire init: declared "
 # The distribution's first install, done by init on the machine: the disk
 # stages a package in the download cache, and the boot reads it, verifies what
 # it claims, writes the app zone and makes the version active.  This line is
 # the install; the typed command below reads back what it left.
-require_log_line "adastra init: installed demo-installed@1.0.0"
+require_log_line "protofire init: installed demo-installed@1.0.0"
 require_log_line "service(s) registered; leaving the start to init"
 # Read back through the shell, which is a program the machine launched: the
 # record the install wrote names the version it made active.
@@ -829,7 +829,7 @@ require_log_line "[mem   ] the machine has "
 require_log_line " frames stop at "
 require_log_line "Memory manager initialized: "
 require_log_absent_line "[FATAL"
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 require_log_line "protofire kernel running"
 log_file="$main_log"
 rm -f "$small_ram_log"

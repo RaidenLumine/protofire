@@ -293,7 +293,7 @@ if [ "$((0x$pool_start))" -le "$((0x$relocated))" ]; then
 fi
 printf '  the image and the pool report the relocated base: image at 0x%s, pool at 0x%s\n' "$relocated" "$pool_start"
 
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 require_log_exact_line "ring3-shell-answered"
 require_log_absent_line "[FATAL"
 
@@ -350,7 +350,7 @@ if grep -a -F "SMP: bringing up 0 AP" "$smp_log" >/dev/null 2>&1; then
     exit 1
 fi
 printf '  %s APs online in the copy, threads dispatching\n' "$online"
-if ! grep -a -F "adastra ring3 shell" "$smp_log" >/dev/null 2>&1; then
+if ! grep -a -F "protofire ring3 shell" "$smp_log" >/dev/null 2>&1; then
     printf 'x86_64 KASLR check failed: the SMP machine did not reach the shell\n' >&2
     cat "$smp_log" >&2
     rm -f "$smp_log"
@@ -408,7 +408,7 @@ if grep -a -F "[kaslr ] relocated" "$small_log" >/dev/null 2>&1; then
     rm -f "$small_log"
     exit 1
 fi
-if ! grep -a -F "adastra ring3 shell" "$small_log" >/dev/null 2>&1; then
+if ! grep -a -F "protofire ring3 shell" "$small_log" >/dev/null 2>&1; then
     printf 'x86_64 KASLR check failed: the 128 MiB machine did not reach the shell at the link address\n' >&2
     cat "$small_log" >&2
     rm -f "$small_log"

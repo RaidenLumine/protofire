@@ -100,9 +100,9 @@ impl StorageZone {
 
     pub const fn device(self) -> &'static str {
         match self {
-            Self::System => "/dev/adastra-system",
-            Self::Apps => "/dev/adastra-apps",
-            Self::Data => "/dev/adastra-data",
+            Self::System => "/dev/protofire-system",
+            Self::Apps => "/dev/protofire-apps",
+            Self::Data => "/dev/protofire-data",
         }
     }
 

@@ -58,67 +58,67 @@ macro_rules! rip_relative_address {
     }};
 }
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_HELLO_MESSAGE: [u8; RUST_PAYLOAD_HELLO_LEN] =
     *b"[user  ] hello from rust payload\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_TRIGGER_PAGE_FAULT_MESSAGE: [u8; RUST_PAYLOAD_TRIGGER_PAGE_FAULT_LEN] =
     *b"[user  ] triggering rust page fault\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_RESUMED_AFTER_FAULT_MESSAGE: [u8; RUST_PAYLOAD_RESUMED_AFTER_FAULT_LEN] =
     *b"[user  ] resumed after rust fault handler\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_TRIGGER_INVALID_OPCODE_MESSAGE: [u8; RUST_PAYLOAD_TRIGGER_INVALID_OPCODE_LEN] =
     *b"[user  ] triggering rust invalid opcode\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_RESUMED_AFTER_INVALID_OPCODE_MESSAGE: [u8;
     RUST_PAYLOAD_RESUMED_AFTER_INVALID_OPCODE_LEN] =
     *b"[user  ] resumed after rust invalid opcode handler\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_TRIGGER_GENERAL_PROTECTION_MESSAGE: [u8;
     RUST_PAYLOAD_TRIGGER_GENERAL_PROTECTION_LEN] =
     *b"[user  ] triggering rust general protection\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_RESUMED_AFTER_GENERAL_PROTECTION_MESSAGE: [u8;
     RUST_PAYLOAD_RESUMED_AFTER_GENERAL_PROTECTION_LEN] =
     *b"[user  ] resumed after rust general protection handler\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_TRIGGER_UNHANDLED_PAGE_FAULT_MESSAGE: [u8;
     RUST_PAYLOAD_TRIGGER_UNHANDLED_PAGE_FAULT_LEN] =
     *b"[user  ] triggering rust unhandled page fault\n";
 
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 static RUST_PAYLOAD_UNHANDLED_PAGE_FAULT_ARG: [u8; RUST_PAYLOAD_UNHANDLED_PAGE_FAULT_ARG_LEN] =
     *b"--trigger-unhandled-page-fault";
 
-crate::user::syscall::define_x86_64_payload_runtime!("adastra_demo_program_rust");
+crate::user::syscall::define_x86_64_payload_runtime!("protofire_demo_program_rust");
 
 unsafe extern "C" {
-    static adastra_demo_program_rust_entry: u8;
+    static protofire_demo_program_rust_entry: u8;
 
-    #[link_name = "__start_adastra_demo_program_rust"]
-    static ADASTRA_DEMO_PROGRAM_RUST_SECTION_START: u8;
-    #[link_name = "__stop_adastra_demo_program_rust"]
-    static ADASTRA_DEMO_PROGRAM_RUST_SECTION_END: u8;
+    #[link_name = "__start_protofire_demo_program_rust"]
+    static PROTOFIRE_DEMO_PROGRAM_RUST_SECTION_START: u8;
+    #[link_name = "__stop_protofire_demo_program_rust"]
+    static PROTOFIRE_DEMO_PROGRAM_RUST_SECTION_END: u8;
 }
 
 core::arch::global_asm!(
     r#"
-.section adastra_demo_program_rust,"ax",@progbits
-.global adastra_demo_program_rust_entry
-.type adastra_demo_program_rust_entry,@function
-adastra_demo_program_rust_entry:
+.section protofire_demo_program_rust,"ax",@progbits
+.global protofire_demo_program_rust_entry
+.type protofire_demo_program_rust_entry,@function
+protofire_demo_program_rust_entry:
     mov rdi, rsp
     jmp {main}
 "#,
-    main = sym adastra_demo_program_rust_main_from_stack,
+    main = sym protofire_demo_program_rust_main_from_stack,
 );
 
 /// The payload's machine code and data, as it was on 2026-10-01.
@@ -130,11 +130,11 @@ adastra_demo_program_rust_entry:
 /// feature on runs two frozen payloads, one started by the other.
 ///
 /// The bytes come out of the x86_64 kernel image, between the
-/// `__start_`/`__stop_adastra_demo_program_rust` symbols:
+/// `__start_`/`__stop_protofire_demo_program_rust` symbols:
 ///
 /// ```text
 /// cargo build --target x86_64-unknown-none --features demo-disk
-/// llvm-objcopy -O binary --only-section=adastra_demo_program_rust \
+/// llvm-objcopy -O binary --only-section=protofire_demo_program_rust \
 ///     target/x86_64-unknown-none/debug/protofire \
 ///     src/user/demo/fixtures/rust_payload_x86_64.bin
 /// ```
@@ -164,8 +164,8 @@ pub const fn payload_source() -> &'static str {
 pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: as the other payload sections — the linker's markers bound it.
     unsafe {
-        let start = core::ptr::addr_of!(ADASTRA_DEMO_PROGRAM_RUST_SECTION_START);
-        let end = core::ptr::addr_of!(ADASTRA_DEMO_PROGRAM_RUST_SECTION_END);
+        let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_RUST_SECTION_START);
+        let end = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_RUST_SECTION_END);
         let start_addr = start as usize;
         let end_addr = end as usize;
         let len = end_addr
@@ -182,8 +182,8 @@ pub fn payload_bytes() -> &'static [u8] {
 
 #[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_entry_offset() -> usize {
-    let entry = core::ptr::addr_of!(adastra_demo_program_rust_entry) as usize;
-    let start = core::ptr::addr_of!(ADASTRA_DEMO_PROGRAM_RUST_SECTION_START) as usize;
+    let entry = core::ptr::addr_of!(protofire_demo_program_rust_entry) as usize;
+    let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_RUST_SECTION_START) as usize;
     entry
         .checked_sub(start)
         .expect("rust demo payload entry must follow section start")
@@ -199,7 +199,7 @@ pub fn payload_entry_offset() -> usize {
 // builder facades still link.
 
 #[inline(never)]
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 extern "C" fn rust_payload_recover_page_fault(frame: *mut X86_64UserExceptionFrame) -> ! {
     // SAFETY: `frame` is the exception frame the kernel built for this vector and
     // the handler is registered for it, so the pointer is live for this call.
@@ -230,7 +230,7 @@ extern "C" fn rust_payload_recover_page_fault(frame: *mut X86_64UserExceptionFra
 }
 
 #[inline(never)]
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 extern "C" fn rust_payload_recover_invalid_opcode(frame: *mut X86_64UserExceptionFrame) -> ! {
     // SAFETY: as the page-fault handler above — the frame of this vector,
     // reached the same way.
@@ -246,7 +246,7 @@ extern "C" fn rust_payload_recover_invalid_opcode(frame: *mut X86_64UserExceptio
 }
 
 #[inline(never)]
-#[link_section = "adastra_demo_program_rust"]
+#[link_section = "protofire_demo_program_rust"]
 extern "C" fn rust_payload_recover_general_protection(frame: *mut X86_64UserExceptionFrame) -> ! {
     // SAFETY: as above — the frame of this vector, reached the same way.
     unsafe {
@@ -291,8 +291,8 @@ unsafe fn trigger_general_protection_once() {
 }
 
 #[inline(never)]
-#[link_section = "adastra_demo_program_rust"]
-extern "C" fn adastra_demo_program_rust_main_from_stack(_initial_stack: usize) -> ! {
+#[link_section = "protofire_demo_program_rust"]
+extern "C" fn protofire_demo_program_rust_main_from_stack(_initial_stack: usize) -> ! {
     write_section_message(
         rip_relative_address!(RUST_PAYLOAD_HELLO_MESSAGE),
         RUST_PAYLOAD_HELLO_MESSAGE.len(),

@@ -172,7 +172,7 @@ require_log_line "[init  ] starting idle process"
 # same way the non-AIA one does, and the proxy it replaced printed
 # `protofire shell (user)`.  The FATAL assertion below is what makes this check
 # more than "the boot printed something".
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 
 # And the wire path works end to end.  The UART's line is not a PLIC source on
 # this machine: the supervisor APLIC turns it into the MSI that carries

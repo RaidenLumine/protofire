@@ -1,6 +1,6 @@
 //! src/kernel/crypto.rs
 //!
-//! Minimal cryptographic primitives for the adAstra kernel.
+//! Minimal cryptographic primitives for the Protofire kernel.
 //!
 //! Provides SHA-256 hashing per NIST FIPS 180-4, plus a deterministic salt
 //! generator for password hashing.

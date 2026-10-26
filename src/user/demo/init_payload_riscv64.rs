@@ -112,6 +112,6 @@ mod tests {
 
     #[test]
     fn the_banner_is_the_line_the_boot_gate_asserts() {
-        assert!(INIT_BANNER.starts_with(b"adastra init (ring 3)"));
+        assert!(INIT_BANNER.starts_with(b"protofire init (ring 3)"));
     }
 }

@@ -44,208 +44,208 @@ macro_rules! rip_relative_address {
     }};
 }
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_HELLO_MESSAGE: [u8; b"[user  ] hello from rust io payload\n".len()] =
     *b"[user  ] hello from rust io payload\n";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_RESUMED_AFTER_YIELD_MESSAGE: [u8;
     b"[user  ] resumed after rust io yield\n".len()] = *b"[user  ] resumed after rust io yield\n";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_APP_ID_PREFIX: [u8; b"[user  ] rust app-id: ".len()] =
     *b"[user  ] rust app-id: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_CWD_PREFIX: [u8; b"[user  ] rust cwd: ".len()] = *b"[user  ] rust cwd: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_IMAGE_PREFIX: [u8; b"[user  ] rust image: ".len()] =
     *b"[user  ] rust image: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_MANIFEST_PREFIX: [u8; b"[user  ] rust manifest: ".len()] =
     *b"[user  ] rust manifest: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_ARG0_PREFIX: [u8; b"[user  ] rust argv0: ".len()] =
     *b"[user  ] rust argv0: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_ENV0_PREFIX: [u8; b"[user  ] rust env0: ".len()] = *b"[user  ] rust env0: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_ARG0_PREFIX: [u8; b"[user  ] rust stack-argv0: ".len()] =
     *b"[user  ] rust stack-argv0: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_ENV0_PREFIX: [u8; b"[user  ] rust stack-env0: ".len()] =
     *b"[user  ] rust stack-env0: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_AUX_PAGESZ_PREFIX: [u8; b"[user  ] rust stack-aux-pagesz: ".len()] =
     *b"[user  ] rust stack-aux-pagesz: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_AUX_ENTRY_PREFIX: [u8; b"[user  ] rust stack-aux-entry: ".len()] =
     *b"[user  ] rust stack-aux-entry: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_FILE_PREFIX: [u8; b"[user  ] rust file: ".len()] = *b"[user  ] rust file: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_DATA_PREFIX: [u8; b"[user  ] rust data: ".len()] = *b"[user  ] rust data: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_MKDIR_PREFIX: [u8; b"[user  ] rust mkdir: ".len()] =
     *b"[user  ] rust mkdir: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_FILE_PREFIX: [u8; b"[user  ] rust session-file: ".len()] =
     *b"[user  ] rust session-file: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_PREFIX: [u8; b"[user  ] rust session: ".len()] =
     *b"[user  ] rust session: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_REMOVED_PREFIX: [u8; b"[user  ] rust removed: ".len()] =
     *b"[user  ] rust removed: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_PID_PREFIX: [u8; b"[user  ] rust wait-pid: ".len()] =
     *b"[user  ] rust wait-pid: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXIT_PREFIX: [u8; b"[user  ] rust wait-exit: ".len()] =
     *b"[user  ] rust wait-exit: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_VECTOR_PREFIX: [u8; b"[user  ] rust wait-vector: ".len()] =
     *b"[user  ] rust wait-vector: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_ERROR_PREFIX: [u8; b"[user  ] rust wait-error: ".len()] =
     *b"[user  ] rust wait-error: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_ADDRESS_PREFIX: [u8; b"[user  ] rust wait-addr: ".len()] =
     *b"[user  ] rust wait-addr: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_PID_PREFIX: [u8; b"[user  ] rust wait-exception-pid: "
     .len()] = *b"[user  ] rust wait-exception-pid: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_VECTOR_PREFIX: [u8;
     b"[user  ] rust wait-exception-vector: ".len()] = *b"[user  ] rust wait-exception-vector: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_ERROR_PREFIX: [u8; b"[user  ] rust wait-exception-error: "
     .len()] = *b"[user  ] rust wait-exception-error: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_ADDRESS_PREFIX: [u8; b"[user  ] rust wait-exception-addr: "
     .len()] = *b"[user  ] rust wait-exception-addr: ";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_CATALOG_PATH: [u8; b"app:demo-launcher-rust@0.1.0".len()] =
     *b"app:demo-launcher-rust@0.1.0";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_ARGV0: [u8; b"demo-launcher-rust-child".len()] =
     *b"demo-launcher-rust-child";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_ARGV1: [u8; b"--spawned-by=rust-io".len()] =
     *b"--spawned-by=rust-io";
 
-#[link_section = "adastra_demo_program_rust_io"]
-static RUST_IO_PAYLOAD_WAIT_CHILD_ENV0: [u8; b"ASTRA_APP_ID=demo-launcher-rust-child".len()] =
-    *b"ASTRA_APP_ID=demo-launcher-rust-child";
+#[link_section = "protofire_demo_program_rust_io"]
+static RUST_IO_PAYLOAD_WAIT_CHILD_ENV0: [u8; b"PROTOFIRE_APP_ID=demo-launcher-rust-child".len()] =
+    *b"PROTOFIRE_APP_ID=demo-launcher-rust-child";
 
-#[link_section = "adastra_demo_program_rust_io"]
-static RUST_IO_PAYLOAD_WAIT_CHILD_ENV1: [u8; b"ASTRA_PARENT=demo-launcher-rust-io".len()] =
-    *b"ASTRA_PARENT=demo-launcher-rust-io";
+#[link_section = "protofire_demo_program_rust_io"]
+static RUST_IO_PAYLOAD_WAIT_CHILD_ENV1: [u8; b"PROTOFIRE_PARENT=demo-launcher-rust-io".len()] =
+    *b"PROTOFIRE_PARENT=demo-launcher-rust-io";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ARGV0: [u8;
     b"demo-launcher-rust-unhandled-page-fault-child".len()] =
     *b"demo-launcher-rust-unhandled-page-fault-child";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ARGV1: [u8; b"--trigger-unhandled-page-fault".len()] =
     *b"--trigger-unhandled-page-fault";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ENV0: [u8;
-    b"ASTRA_APP_ID=demo-launcher-rust-unhandled-page-fault-child".len()] =
-    *b"ASTRA_APP_ID=demo-launcher-rust-unhandled-page-fault-child";
+    b"PROTOFIRE_APP_ID=demo-launcher-rust-unhandled-page-fault-child".len()] =
+    *b"PROTOFIRE_APP_ID=demo-launcher-rust-unhandled-page-fault-child";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_NEWLINE: [u8; b"\n".len()] = *b"\n";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_README_PATH: [u8; b"/system/runtime/README.txt".len()] =
     *b"/system/runtime/README.txt";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_DATA_PATH: [u8; b"/data/users/guest/downloads/ring3-rust-io.txt".len()] =
     *b"/data/users/guest/downloads/ring3-rust-io.txt";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STATE_DIR_PATH: [u8; b"/data/users/guest/downloads/rust-io-state".len()] =
     *b"/data/users/guest/downloads/rust-io-state";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_PATH: [u8;
     b"/data/users/guest/downloads/rust-io-state/session.log".len()] =
     *b"/data/users/guest/downloads/rust-io-state/session.log";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_TEMP_PATH: [u8; b"/data/users/guest/downloads/rust-io-state/temp.bin"
     .len()] = *b"/data/users/guest/downloads/rust-io-state/temp.bin";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_DATA_BYTES: [u8; b"rust io data path roundtrip".len()] =
     *b"rust io data path roundtrip";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_BYTES: [u8; b"rust io session persisted".len()] =
     *b"rust io session persisted";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_TRUNCATED_BYTES: [u8; b"rust io session".len()] =
     *b"rust io session";
 
-#[link_section = "adastra_demo_program_rust_io"]
+#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_TEMP_BYTES: [u8; b"temporary rust io state".len()] =
     *b"temporary rust io state";
 
 unsafe extern "C" {
-    static adastra_demo_program_rust_io_entry: u8;
+    static protofire_demo_program_rust_io_entry: u8;
 
-    #[link_name = "__start_adastra_demo_program_rust_io"]
-    static ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_START: u8;
-    #[link_name = "__stop_adastra_demo_program_rust_io"]
-    static ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_END: u8;
+    #[link_name = "__start_protofire_demo_program_rust_io"]
+    static PROTOFIRE_DEMO_PROGRAM_RUST_IO_SECTION_START: u8;
+    #[link_name = "__stop_protofire_demo_program_rust_io"]
+    static PROTOFIRE_DEMO_PROGRAM_RUST_IO_SECTION_END: u8;
 }
 
-crate::user::syscall::define_x86_64_payload_runtime!("adastra_demo_program_rust_io");
+crate::user::syscall::define_x86_64_payload_runtime!("protofire_demo_program_rust_io");
 
 core::arch::global_asm!(
     r#"
-.section adastra_demo_program_rust_io,"ax",@progbits
-.global adastra_demo_program_rust_io_entry
-.type adastra_demo_program_rust_io_entry,@function
-adastra_demo_program_rust_io_entry:
+.section protofire_demo_program_rust_io,"ax",@progbits
+.global protofire_demo_program_rust_io_entry
+.type protofire_demo_program_rust_io_entry,@function
+protofire_demo_program_rust_io_entry:
     mov rdi, rsp
     jmp {main}
 "#,
-    main = sym adastra_demo_program_rust_io_main_from_stack,
+    main = sym protofire_demo_program_rust_io_main_from_stack,
 );
 
-/// The payload's machine code as it was on 2026-09-27.
+/// The payload's machine code as it was on 2026-10-23.
 ///
 /// With the `abi_frozen_payload` feature the ELF builder ships these bytes
 /// instead of the section this build just compiled, so the boot runs a program
@@ -255,7 +255,7 @@ adastra_demo_program_rust_io_entry:
 ///
 /// ```text
 /// cargo build --target x86_64-unknown-none --features demo-disk
-/// llvm-objcopy -O binary --only-section=adastra_demo_program_rust_io \
+/// llvm-objcopy -O binary --only-section=protofire_demo_program_rust_io \
 ///     target/x86_64-unknown-none/debug/protofire \
 ///     src/user/demo/fixtures/rust_io_payload_x86_64.bin
 /// ```
@@ -285,8 +285,8 @@ pub const fn payload_source() -> &'static str {
 pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: as the other payload sections — the linker's markers bound it.
     unsafe {
-        let start = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_START);
-        let end = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_END);
+        let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_RUST_IO_SECTION_START);
+        let end = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_RUST_IO_SECTION_END);
         let start_addr = start as usize;
         let end_addr = end as usize;
         let len = end_addr
@@ -303,8 +303,8 @@ pub fn payload_bytes() -> &'static [u8] {
 
 #[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_entry_offset() -> usize {
-    let entry = core::ptr::addr_of!(adastra_demo_program_rust_io_entry) as usize;
-    let start = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_START) as usize;
+    let entry = core::ptr::addr_of!(protofire_demo_program_rust_io_entry) as usize;
+    let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_RUST_IO_SECTION_START) as usize;
     entry
         .checked_sub(start)
         .expect("rust io demo payload entry must follow section start")
@@ -451,8 +451,8 @@ fn spawn_child_and_wait(
 }
 
 #[inline(never)]
-#[link_section = "adastra_demo_program_rust_io"]
-extern "C" fn adastra_demo_program_rust_io_main_from_stack(initial_stack: usize) -> ! {
+#[link_section = "protofire_demo_program_rust_io"]
+extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usize) -> ! {
     let read_write_create_flags = crate::user::shared::abi::io::OPEN_FLAG_READ_WRITE_CREATE;
 
     write_section_message(

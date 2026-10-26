@@ -199,7 +199,7 @@ fi
 require_log_line "[fs    ] system: slot b active (build 2)"
 # And a program came off it: a mount alone does not prove the zone's content.
 require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 # The typed answer: the shell read a line and printed it.
 require_log_line "install-check-answered"
 grep -F "[FATAL]" "$log" >/dev/null 2>&1 && fail "the boot reported a fatal error"

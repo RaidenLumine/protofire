@@ -174,7 +174,7 @@ board_online="$(grep -c '\[smp   \] AP cpu_id=.* online' "$board_log" || true)"
 grep -q 'CPU_ON rejected' "$board_log" &&
     board_fail "PSCI refused a core the tree says exists"
 grep -q 'FATAL' "$board_log" && board_fail "the boot reported a fatal fault"
-if ! grep -q 'adastra ring3 shell' "$board_log"; then
+if ! grep -q 'protofire ring3 shell' "$board_log"; then
     board_fail "the machine never reached the shell"
 fi
 rm -f "$board_log"

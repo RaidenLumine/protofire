@@ -3,7 +3,7 @@
 //! SimpleFs core implementation: path lookup, metadata accessors, and the
 //! locked directory-entry / inode-slot primitives.
 //!
-//! These methods are recovered from the original adastra-kernel simplefs
+//! These methods are recovered from the original protofire-kernel simplefs
 //! `fs.rs`; the current tree splits the original file across `path.rs`,
 //! `transaction.rs`, `dir_ops.rs`, `vfs.rs`, and this file.
 

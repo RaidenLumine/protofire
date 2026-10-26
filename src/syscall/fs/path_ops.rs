@@ -219,7 +219,7 @@ pub(super) fn mount(context: &mut super::SyscallContext) -> Result<super::Syscal
 
     super::fs_path::dispatch_path_source(target_source, |normalized_target| {
         super::runtime::with_current_process_security_token_fs(|_security_token, fs| {
-            let device = alloc::format!("/dev/adastra-{}", fstype);
+            let device = alloc::format!("/dev/protofire-{}", fstype);
             fs.mount(&device, &normalized_target, &fstype, flags)
         })?;
         Ok(super::SyscallDispatch::complete(0))

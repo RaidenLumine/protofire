@@ -79,6 +79,6 @@ pub(super) fn sample_launch_context() -> LaunchContext {
         version: "0.1.0".into(),
         working_dir: "/data/users/guest/workspace".into(),
         arguments: vec!["demo-app".into(), "--verbose".into()],
-        environment: vec!["ASTRA_APP_ID=demo-app".into()],
+        environment: vec!["PROTOFIRE_APP_ID=demo-app".into()],
     }
 }

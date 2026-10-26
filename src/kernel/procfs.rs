@@ -41,7 +41,7 @@ use crate::Result;
 
 /// Name procfs registers under, and the synthetic device it is mounted from.
 pub const FS_NAME: &str = "procfs";
-pub const MOUNT_DEVICE: &str = "/dev/adastra-procfs";
+pub const MOUNT_DEVICE: &str = "/dev/protofire-procfs";
 
 // ---------------------------------------------------------------------------
 // Static data VNode
@@ -253,7 +253,7 @@ impl VNode for PidDirVNode {
 
 fn version_data() -> Vec<u8> {
     let version = env!("CARGO_PKG_VERSION");
-    format!("adastra-kernel {}\n", version).into_bytes()
+    format!("protofire-kernel {}\n", version).into_bytes()
 }
 
 fn uptime_data() -> Vec<u8> {
@@ -680,7 +680,7 @@ mod tests {
         let n = vnode.read(0, &mut buf).expect("read");
         assert!(n > 0);
         let s = core::str::from_utf8(&buf[..n]).expect("utf8");
-        assert!(s.starts_with("adastra-kernel "));
+        assert!(s.starts_with("protofire-kernel "));
     }
 
     #[test]

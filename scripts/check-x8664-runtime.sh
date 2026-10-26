@@ -386,12 +386,12 @@ require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
 require_log_line "[fs    ] mounted procfs at /proc"
 require_log_line "[fs    ] mounted kernel logs at /system/logs"
 require_log_line "[fs    ] mounted servicefs at /service"
-require_log_line "adastra init (ring 3): reading /system/rc.d"
+require_log_line "protofire init (ring 3): reading /system/rc.d"
 # The distribution's first install: the disk stages a package in the download
 # cache and init installs it, so a boot shows the whole loop rather than only
 # the host tests showing it.
-require_log_line "adastra init: installed demo-installed@1.0.0"
-require_log_line "adastra init: declared "
+require_log_line "protofire init: installed demo-installed@1.0.0"
+require_log_line "protofire init: declared "
 # The boot registered the declarations and left the start to that program
 # instead of starting them itself: this is the hand-off, and without it the
 # services below would be evidence of the kernel starting them, not of init.
@@ -400,7 +400,7 @@ if [ "$INIT_NO_START" = "1" ]; then
     # The other half of the hand-off, and the only boot that reaches it: an
     # init program that never asks leaves the services pending, and the
     # supervisor starts them when the deadline passes.
-    require_log_line "adastra init: leaving the start to the kernel"
+    require_log_line "protofire init: leaving the start to the kernel"
     require_log_line "init left pending"
 fi
 # The services this boot runs are the ones the disk declares, not the kernel's
@@ -413,7 +413,7 @@ require_log_line "protofire kernel running"
 # prints its own banner and prompt, and the in-kernel host proxy it replaced
 # printed `protofire shell (user)` instead.  Asserting the new lines is what
 # keeps a boot from passing on the proxy after this changed.
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 # Which copy of the shell went on the disk: the one this build compiled, or the
 # one frozen in `src/user/demo/fixtures/`.  The ABI gate runs this same script
 # with `PAYLOAD_SOURCE=frozen`, so the interactive assertions below are then
@@ -424,7 +424,7 @@ require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
 # says the process is in — the manifest's `working_dir`, not something the
 # shell remembered.  A shell that printed a stale or invented path would not
 # have this line.
-require_log_line "adastra:/apps/packages/shell\$ "
+require_log_line "protofire:/apps/packages/shell\$ "
 
 # The typed commands above are answered only if input reached the shell, and
 # the console UART's input arrives on COM1's own interrupt now — this line is
@@ -446,7 +446,7 @@ require_log_line "[serial] RX interrupt carries input"
 # string, and this assertion had been left behind by the change that reworded it
 # — which is why this gate sat red while the product was fine.  Both places have
 # to name the same line, and the *feeder's* is the one that must be right.
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 require_log_exact_line "ring3-shell-answered"
 # The service manager's provenance, read back by a ring-3 program: which
 # declaration file the kernel read the shell's definition from, and the SHA-256
@@ -653,7 +653,7 @@ require_log_line "[mem   ] machine reports 511 MiB "
 require_log_line "[mem   ] the machine has "
 require_log_line " frames stop at "
 require_log_line "Memory manager initialized: "
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 require_log_absent_line "[FATAL"
 log_file="$main_log"
 rm -f "$small_ram_log"
@@ -704,7 +704,7 @@ log_file="$high_ram_log"
 require_log_line "[mem   ] machine reports 2047 MiB "
 require_log_line "[smp   ] RSDT at 0x"
 require_log_line "[smp   ] MADT at 0x"
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 require_log_absent_line "[FATAL"
 log_file="$main_log"
 rm -f "$high_ram_log"

@@ -149,12 +149,12 @@ static RUST_PAYLOAD_CHILD_ARGV1: [u8; b"--trigger-fault=stack-exec".len()] =
     *b"--trigger-fault=stack-exec";
 
 #[link_section = "protofire_demo_program_aarch64_rust"]
-static RUST_PAYLOAD_CHILD_ENV0: [u8; b"ASTRA_APP_ID=demo-launcher-fault-rust-child".len()] =
-    *b"ASTRA_APP_ID=demo-launcher-fault-rust-child";
+static RUST_PAYLOAD_CHILD_ENV0: [u8; b"PROTOFIRE_APP_ID=demo-launcher-fault-rust-child".len()] =
+    *b"PROTOFIRE_APP_ID=demo-launcher-fault-rust-child";
 
 #[link_section = "protofire_demo_program_aarch64_rust"]
-static RUST_PAYLOAD_CHILD_ENV1: [u8; b"ASTRA_PARENT=demo-launcher-rust".len()] =
-    *b"ASTRA_PARENT=demo-launcher-rust";
+static RUST_PAYLOAD_CHILD_ENV1: [u8; b"PROTOFIRE_PARENT=demo-launcher-rust".len()] =
+    *b"PROTOFIRE_PARENT=demo-launcher-rust";
 
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_PERMISSION_LEVEL3: [u8; b"permission fault level 3".len()] =
@@ -537,7 +537,7 @@ fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
     );
 }
 
-/// The payload's machine code as it was on 2026-09-27.
+/// The payload's machine code as it was on 2026-10-23.
 ///
 /// With the `abi_frozen_payload` feature the ELF builder ships these bytes
 /// instead of the section this build compiled, so the boot runs an aarch64

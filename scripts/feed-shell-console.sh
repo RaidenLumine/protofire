@@ -18,6 +18,11 @@
 #   keystroke that arrives before the shell is reading is the guest's to drop,
 #   and "long enough on this machine" is a timing assumption that becomes a
 #   flake on another.
+# * When to send the next line.  It appends a uniquely named `echo` after each
+#   command and waits for that answer as a whole line.  A fixed pause can put
+#   too much input in the console's cooked queue at once, and a prompt is not
+#   reliable on an SMP boot where a kernel log can interrupt its three writes.
+#   The marker is output the shell itself has finished the preceding command.
 # * When to stop.  It holds the console open until the guest stops talking —
 #   the check's assertions are all about output that arrives after the shell is
 #   up, and on a QEMU that ends the machine at end of input the console closing
@@ -27,8 +32,8 @@
 # Usage:
 #   sh scripts/feed-shell-console.sh <log-file> <timeout-seconds> <line>...
 #
-# Each <line> is sent with a carriage return and a pause, so the guest's line
-# discipline sees a whole line.
+# Each <line> is sent with a carriage return and followed by a marker command;
+# the feeder waits for that marker's answer before sending the following line.
 
 set -eu
 
@@ -41,9 +46,21 @@ log_file="$1"
 timeout_seconds="$2"
 shift 2
 
+wait_for_marker() {
+    marker="$1"
+    waited=0
+    while [ "$(LC_ALL=C grep -a -o -F "$marker" "$log_file" 2>/dev/null | wc -l)" -lt 2 ]; do
+        if [ "$waited" -ge "$timeout_seconds" ]; then
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
 waited=0
 while [ "$waited" -lt "$timeout_seconds" ]; do
-    if grep -F "adastra ring3 shell" "$log_file" >/dev/null 2>&1; then
+    if grep -F "protofire ring3 shell" "$log_file" >/dev/null 2>&1; then
         break
     fi
     sleep 1
@@ -51,9 +68,16 @@ while [ "$waited" -lt "$timeout_seconds" ]; do
 done
 
 sleep 1
+index=0
 for line in "$@"; do
+    index=$((index + 1))
+    marker="__protofire_feeder_sync_${index}__"
     printf '%s\r' "$line"
-    sleep 2
+    printf 'echo %s\r' "$marker"
+    if ! wait_for_marker "$marker"; then
+        printf 'shell feeder: no marker after: %s\n' "$line" >&2
+        exit 1
+    fi
 done
 
 # Hold the pipe open while the boot finishes, and stop once the guest has been

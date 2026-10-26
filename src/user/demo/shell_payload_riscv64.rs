@@ -83,7 +83,7 @@ pub extern "C" fn protofire_shell_payload_riscv64_entry(
     shell_main()
 }
 
-/// The payload's machine code and data, as it was on 2026-10-01.
+/// The payload's machine code and data, as it was on 2026-10-24.
 ///
 /// With the `abi_frozen_payload` feature the ELF builder ships these bytes
 /// instead of the section this build compiled, so the boot runs a RISC-V shell
@@ -109,10 +109,10 @@ const FROZEN_PAYLOAD: &[u8] = include_bytes!("fixtures/shell_payload_riscv64.bin
 /// Where the frozen payload's entry point sits inside those bytes.
 ///
 /// Not zero, like the AArch64 copy: the entry here is a function like any other
-/// in the section, so the offset is wherever the compiler put it — 2008 bytes
+/// in the section, so the offset is wherever the compiler put it — 2934 bytes
 /// in, in the frozen copy.
 #[cfg(feature = "abi_frozen_payload")]
-const FROZEN_PAYLOAD_ENTRY_OFFSET: usize = 2008;
+const FROZEN_PAYLOAD_ENTRY_OFFSET: usize = 2934;
 
 /// The payload's machine code and data, out of the kernel image's copy of it.
 #[cfg(not(feature = "abi_frozen_payload"))]

@@ -157,7 +157,7 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
     -machine q35 -cpu max $qemu_machine \
     -kernel "$KERNEL_BIN" \
     -display none -no-reboot -no-shutdown \
-    -serial stdio >"$log" 2>&1
+    -serial "file:$log" >/dev/null 2>&1
 set -e
 
 # The console writes CRLF, and a field the parser never sees is a counter the
