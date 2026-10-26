@@ -46,15 +46,38 @@ log_file="$1"
 timeout_seconds="$2"
 shift 2
 
+# Wait until the shell has *run* the marker command.
+#
+# The marker is a unique name, and it appears in the log twice when everything
+# goes well: once as the console echoes the typed line back, and once in the
+# line the shell prints when it runs `echo`.  Requiring both is what this used to
+# do, and it is why a boot that had done nothing wrong failed about one run in
+# three — the echo is the console echoing *typing*, and a prompt printed at the
+# same moment can interrupt it, leaving the marker as one occurrence while the
+# shell has in fact run the command.
+#
+# The shell's own output is the one that means the command ran, and it carries
+# the prompt's `$ ` immediately before the marker, because the shell prints the
+# prompt and then the echo's output.  The console's echo of the typed line has
+# the word `echo ` there instead.  So the answer is the marker preceded by the
+# prompt's suffix, which is what this waits for.
 wait_for_marker() {
     marker="$1"
-    waited=0
-    while [ "$(LC_ALL=C grep -a -o -F "$marker" "$log_file" 2>/dev/null | wc -l)" -lt 2 ]; do
-        if [ "$waited" -ge "$timeout_seconds" ]; then
+    # `$` and the space the shell writes after it, then the marker: the shell's
+    # own line.
+    wanted="\$ $marker"
+    # A fifth of a second per poll, not a whole one.  The answer usually arrives
+    # within milliseconds of the command being typed, and a boot that types ten
+    # commands pays a whole second of slack on each — on a gate whose budget is
+    # ninety seconds, that is most of the margin.  `seconds` counts polls in
+    # fives so the caller's timeout still means seconds.
+    polls=0
+    while [ "$(LC_ALL=C grep -a -c -F "$wanted" "$log_file" 2>/dev/null || true)" -lt 1 ]; do
+        if [ "$polls" -ge "$((timeout_seconds * 5))" ]; then
             return 1
         fi
-        sleep 1
-        waited=$((waited + 1))
+        sleep 0.2
+        polls=$((polls + 1))
     done
 }
 
