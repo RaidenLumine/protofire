@@ -2092,4 +2092,58 @@ mod host_tests {
         // Inverted: `start > end`.
         assert!(!range_within(20, 10, 0, 100));
     }
+
+    /// The kernel's own PMD covers the demo slots with **supervisor** blocks.
+    ///
+    /// This is not a style note: it is the fact that makes a user fault under
+    /// the kernel root look the way it does.
+    /// `install_runtime_kernel_page_tables` fills the whole RAM window —
+    /// the slot region included — with `normal_pmd_block_entry`, and the
+    /// recorded fatal trap's leaf descriptor for `0x85201bc4` is exactly
+    /// the entry this produces (`0x214800cf`, `V R W X`, `U` clear).  Two
+    /// different defects produce that entry and this test pins the one that
+    /// is *by construction*: whenever a user thread runs on the kernel
+    /// root, its own code is a supervisor block there, and the first fetch
+    /// faults.
+    ///
+    /// So an `entry=` in a fatal line that matches this is evidence the hart
+    /// was on the kernel root — not evidence that a process table lost a
+    /// mapping.  The two are the whole question, and this is what tells them
+    /// apart without a boot.
+    #[test]
+    fn the_kernel_pmd_maps_every_demo_slot_as_a_supervisor_block() {
+        let ram_block_count = KERNEL_RAM_LENGTH / USER_DEMO_REGION_SIZE;
+        for slot_index in 0..USER_DEMO_SLOT_COUNT {
+            let region = KERNEL_RAM_BASE + slot_index * USER_DEMO_REGION_SIZE;
+            let block_index = pmd_index(region);
+            assert!(
+                block_index < ram_block_count,
+                "slot {slot_index} falls outside the window the kernel PMD covers"
+            );
+            let entry = normal_pmd_block_entry(region);
+            assert_ne!(entry & PTE_VALID, 0);
+            assert_ne!(entry & PTE_READ, 0);
+            assert_ne!(entry & PTE_WRITE, 0);
+            assert_ne!(entry & PTE_EXECUTE, 0);
+            assert_eq!(
+                entry & PTE_USER,
+                0,
+                "the kernel root must not mark slot {slot_index} user-accessible"
+            );
+        }
+    }
+
+    /// The recorded fatal descriptor for `0x85201bc4`, reproduced from the
+    /// builders rather than copied from a log.
+    ///
+    /// `docs/status.md` records the leaf as `0x214800cf` for every occurrence.
+    /// Reproducing it here is what turns "the fault address was mapped" into
+    /// "the fault address was mapped *the way the kernel root maps it*".
+    #[test]
+    fn the_recorded_fatal_entry_is_the_kernel_s_own_block() {
+        let fault_address = 0x8520_1bc4usize;
+        let region = fault_address & !(USER_DEMO_REGION_SIZE - 1);
+        assert_eq!(region, 0x8520_0000);
+        assert_eq!(normal_pmd_block_entry(region), 0x2148_00cf);
+    }
 }

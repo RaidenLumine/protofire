@@ -304,6 +304,24 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
         (satp >> 44) & 0xffff,
         crate::arch::mmu::leaf_entry_for(fault_address).unwrap_or(0)
     );
+    // Which root this hart is running on, said outright.  The entry above is
+    // read through `satp`, so a supervisor block there admits two readings:
+    // the process root is active and its slot entry was never turned into a
+    // user page table, or the hart is on the *kernel* root — where every slot
+    // is a supervisor block by construction — while a user thread is running.
+    // Those are different defects and the entry alone cannot tell them apart.
+    // The kernel root is a static address this module knows, so comparing it is
+    // the one bit that separates them.
+    let kernel_root = crate::arch::mmu::prepared_runtime_kernel_page_tables()
+        .map(|prepared| prepared.root_table_address)
+        .unwrap_or(0);
+    let active_root = ((satp & ((1u64 << 44) - 1)) << 12) as usize;
+    println!(
+        "[FATAL] riscv64 root active={:#x} kernel={:#x} on_kernel_root={}",
+        active_root,
+        kernel_root,
+        u8::from(active_root == kernel_root),
+    );
 
     // The trap entry answers "where did this come from" twice, from two
     // different witnesses, and never compares them: `SAVE_ALL` reads

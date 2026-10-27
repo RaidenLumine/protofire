@@ -491,6 +491,24 @@ balancing and runtime stack protection.
   the moment of a U-mode fetch, which points at how the active slot's
   hierarchy is composed rather than at any of the five paths above.
 
+  That entry has now been identified without a boot, and it settles which of
+  two very different defects is being looked at.  Rebuilding the kernel's own
+  PMD from its builder — `install_runtime_kernel_page_tables` fills the whole
+  RAM window with `normal_pmd_block_entry`, slot region included — produces
+  `0x214800cf` for `0x85201bc4` **bit for bit**, which is the descriptor every
+  occurrence has recorded.  So the leaf is not a process table that lost a
+  mapping: it is the *kernel* root's block for that slot.  Two tests hold this
+  still (`the_kernel_pmd_maps_every_demo_slot_as_a_supervisor_block`,
+  `the_recorded_fatal_entry_is_the_kernel_s_own_block`).
+
+  The remaining question is therefore narrow and testable: a U-mode fetch ran
+  with `satp` naming the kernel root.  `Process::activate_address_space_for_thread`
+  falls back to `activate_prepared_runtime_kernel_page_tables()` whenever the
+  process root fails to activate, and the scheduler dispatches the thread
+  either way — so a failed activation produces exactly this fault instead of a
+  reported failure.  The fatal line now prints `on_kernel_root=` beside the
+  root addresses, which is the one bit a boot needs to confirm it.
+
 ---
 
 ### 5. Memory Management
