@@ -183,9 +183,6 @@ static RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ENV0: [u8;
     *b"PROTOFIRE_APP_ID=demo-launcher-rust-unhandled-page-fault-child";
 
 #[link_section = "protofire_demo_program_rust_io"]
-static RUST_IO_PAYLOAD_NEWLINE: [u8; b"\n".len()] = *b"\n";
-
-#[link_section = "protofire_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_README_PATH: [u8; b"/system/runtime/README.txt".len()] =
     *b"/system/runtime/README.txt";
 
@@ -370,9 +367,10 @@ unsafe fn append_to_line(
     let mut written = filled;
     let mut offset = 0;
     while offset < length && written < capacity {
-        // SAFETY: `offset` is inside the caller's `length` readable bytes and
-        // `written` is inside the caller's buffer.
+        // SAFETY: `offset` is inside the caller's `length` readable bytes.
         let byte = unsafe { core::ptr::read(source.wrapping_add(offset) as *const u8) };
+        // SAFETY: `written` is below the caller's capacity, which the loop
+        // condition just checked.
         unsafe { core::ptr::write(buffer.wrapping_add(written) as *mut u8, byte) };
         offset = offset.wrapping_add(1);
         written = written.wrapping_add(1);
@@ -414,6 +412,8 @@ unsafe fn write_prefixed_line(
             RUST_IO_PAYLOAD_LINE_CAPACITY,
         )
     };
+    // SAFETY: `line_ptr` and `filled` are the buffer this frame owns and how
+    // much of it is used, and `value` is the caller's for this call.
     filled = unsafe {
         append_to_line(
             line_ptr,

@@ -651,9 +651,10 @@ unsafe fn shell_builtin_echo(tokens: usize, token_count: usize) {
         let (word, word_len) = unsafe { shell_token(tokens, index) };
         let mut offset = 0;
         while offset < word_len && filled < SHELL_LINE_CAPACITY {
-            // SAFETY: `offset` is inside the token's bytes and `filled` is
-            // inside this frame's buffer.
+            // SAFETY: `offset` is inside the token's bytes.
             let byte = unsafe { core::ptr::read(word.wrapping_add(offset) as *const u8) };
+            // SAFETY: `filled` is below this frame's buffer capacity, which the
+            // loop condition just checked.
             unsafe { core::ptr::write(line_ptr.wrapping_add(filled) as *mut u8, byte) };
             offset = offset.wrapping_add(1);
             filled = filled.wrapping_add(1);
