@@ -403,17 +403,68 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
 /// forever.  The stack-exec trigger pre-arms `x30` with an in-section resume
 /// label before branching, so for that class the handler redirects the frame to
 /// `x30` instead.
+/// Read one field of the abort frame with a plain load.
+///
+/// `core::ptr::read_volatile` is the obvious spelling, but in a debug build it
+/// carries a `precondition_check` whose failure path is `panic_nounwind_fmt` —
+/// and that routine's message lives in the kernel's `.rodata`, outside this
+/// payload's section.  A `bl` to it is a displacement the payload cannot carry
+/// once it is copied out of the section, which is what
+/// `assert_aarch64_adr_targets_are_symbols` refuses.  A load has no such check.
+macro_rules! frame_load {
+    ($frame:expr, $offset:expr) => {{
+        let value: u64;
+        // SAFETY: the caller passes the frame the kernel handed the handler, and
+        // every offset here is one field of `AArch64UserExceptionFrame`.
+        unsafe {
+            core::arch::asm!(
+                "ldr {value}, [{frame}, {offset}]",
+                value = lateout(reg) value,
+                frame = in(reg) $frame,
+                offset = in(reg) $offset,
+                options(nostack, preserves_flags, readonly),
+            );
+        }
+        value
+    }};
+}
+
+/// Write one field of the abort frame with a plain store.
+macro_rules! frame_store {
+    ($frame:expr, $offset:expr, $value:expr) => {{
+        // SAFETY: as above — the frame is the one the kernel handed the handler.
+        unsafe {
+            core::arch::asm!(
+                "str {value}, [{frame}, {offset}]",
+                value = in(reg) $value,
+                frame = in(reg) $frame,
+                offset = in(reg) $offset,
+                options(nostack, preserves_flags),
+            );
+        }
+    }};
+}
+
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
     frame: *mut AArch64UserExceptionFrame,
 ) -> ! {
+    // The frame is read and written through the raw pointer with plain loads and
+    // stores, and never through a `&mut` reborrow or `read_volatile`: a reborrow
+    // of a raw pointer carries a null check, and `read_volatile` carries a
+    // `precondition_check` in a debug build, and both failure paths are a panic
+    // whose message lives in the kernel's `.rodata` — outside the payload's
+    // section, so the `adr` the linker bakes in is a displacement to bytes that
+    // are not copied with the payload.
+    //
     // SAFETY: the kernel passes the abort frame as the sole argument and keeps
     // it alive for the whole handler; `return_from_exception` below resumes it.
-    let frame_ref = unsafe { &mut *frame };
-    if let Some(syndrome) =
-        AArch64AbortSyndrome::from_exception(frame_ref.vector as u8, frame_ref.error_code)
-    {
+    // Every field read or written here is inside that frame.
+    let vector = frame_load!(frame, core::mem::offset_of!(AArch64UserExceptionFrame, vector)) as u8;
+    let error_code =
+        frame_load!(frame, core::mem::offset_of!(AArch64UserExceptionFrame, error_code));
+    if let Some(syndrome) = AArch64AbortSyndrome::from_exception(vector, error_code) {
         // These strings are the payload's own copies — kernel .rodata is
         // not position-independent and would be stale after relocation.
         write_section_message(
@@ -444,11 +495,24 @@ extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
     // See the function-level comment: skip the faulting 4-byte instruction
     // for data aborts, but hand an instruction abort back to the resume
     // label its trigger pre-armed in `x30`.
-    if frame_ref.vector as u8 == AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR {
-        frame_ref.instruction_pointer = frame_ref.x30;
+    //
+    // The `+ 4` wraps, because a checked add links
+    // `core::panicking::panic_const::panic_const_add_overflow` and that
+    // routine's message is in the same off-section `.rodata`.
+    let resume = if vector == AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR {
+        frame_load!(frame, core::mem::offset_of!(AArch64UserExceptionFrame, x30))
     } else {
-        frame_ref.instruction_pointer += 4;
-    }
+        frame_load!(
+            frame,
+            core::mem::offset_of!(AArch64UserExceptionFrame, instruction_pointer)
+        )
+        .wrapping_add(4)
+    };
+    frame_store!(
+        frame,
+        core::mem::offset_of!(AArch64UserExceptionFrame, instruction_pointer),
+        resume
+    );
     // SAFETY: resume the adjusted abort frame; only reachable after the frame
     // has been redirected to the correct resume point above.
     unsafe { return_from_exception(frame) }
