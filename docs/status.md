@@ -491,23 +491,41 @@ balancing and runtime stack protection.
   the moment of a U-mode fetch, which points at how the active slot's
   hierarchy is composed rather than at any of the five paths above.
 
-  That entry has now been identified without a boot, and it settles which of
-  two very different defects is being looked at.  Rebuilding the kernel's own
-  PMD from its builder — `install_runtime_kernel_page_tables` fills the whole
-  RAM window with `normal_pmd_block_entry`, slot region included — produces
+  That entry has now been identified without a boot, and the result narrows the
+  fault — but less than it first appears to.  Rebuilding the kernel's own PMD
+  from its builder — `install_runtime_kernel_page_tables` fills the whole RAM
+  window with `normal_pmd_block_entry`, slot region included — produces
   `0x214800cf` for `0x85201bc4` **bit for bit**, which is the descriptor every
-  occurrence has recorded.  So the leaf is not a process table that lost a
-  mapping: it is the *kernel* root's block for that slot.  Two tests hold this
-  still (`the_kernel_pmd_maps_every_demo_slot_as_a_supervisor_block`,
+  occurrence has recorded.  Two tests hold that still
+  (`the_kernel_pmd_maps_every_demo_slot_as_a_supervisor_block`,
   `the_recorded_fatal_entry_is_the_kernel_s_own_block`).
 
-  The remaining question is therefore narrow and testable: a U-mode fetch ran
-  with `satp` naming the kernel root.  `Process::activate_address_space_for_thread`
-  falls back to `activate_prepared_runtime_kernel_page_tables()` whenever the
-  process root fails to activate, and the scheduler dispatches the thread
-  either way — so a failed activation produces exactly this fault instead of a
-  reported failure.  The fatal line now prints `on_kernel_root=` beside the
-  root addresses, which is the one bit a boot needs to confirm it.
+  What it does *not* settle is which root produced it, and that is the part
+  worth writing down for the next reader: **the same descriptor comes out of
+  two different roots**.  On the kernel root the walk is PGD[2] → kernel PMD →
+  PMD[41], a block, answered at PMD level.  On a *process* root built for a
+  different slot — say slot 0 at `0x8540_0000` — the walk is PGD[2] → that
+  process's PMD → PMD[41], which `prepare_runtime_process_address_space` left
+  as `normal_pmd_block_entry(0x8520_0000)` because only the active slot's entry
+  is spliced.  Both walks return `0x214800cf`.  So the recorded descriptor is
+  consistent with "the hart was on the kernel root" *and* with "the hart was on
+  a process root that was prepared for the wrong slot", and no amount of
+  re-reading it separates them.
+
+  That is what the fatal line's `on_kernel_root=` is for: it prints
+  `active_root`, the kernel root, and whether they are equal, which is the one
+  bit neither reading of the descriptor can supply.  Until a boot prints it,
+  both candidates stay open.
+
+  The most recent measurement was 40 four-CPU boots with the new line in
+  place, and **none of them faulted**, so the bit has not been read yet.  That
+  is not evidence the fault is gone: at the recorded 1-in-40 rate, 40 clean
+  boots happen about a third of the time, which is exactly the mistake this row
+  already records twice.  What the run does say is that the diagnostic is in
+  every one of those boots and changed nothing about them — the boot-time cost
+  is a `csrr` and two `println!`s on a path that stops the machine — and that
+  the next occurrence will carry the answer.  Running it again is cheap and
+  should be done until a boot prints the line.
 
 ---
 
