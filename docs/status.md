@@ -564,17 +564,51 @@ balancing and runtime stack protection.
   state*, with the kernel root already installed **before** the `sret` that
   returns to U-mode.  The trap is a consequence, not the event.
 
-  That rules out the last thing the frame could not settle: nothing switches
-  the root between the `sret` and the fault, because the probe reads `satp`
-  first and already sees the kernel's.  The defect is upstream, in whatever
-  let a user thread's trap frame be returned with the kernel root installed —
-  and the 5% rate (3 of 60) makes it reproducible enough to chase from here.
+  A later run added the value the dispatch installed, and it sharpened that
+  claim — partly by breaking it.  Two different shapes have now been seen:
 
-  The next probe, if one is needed, belongs in
-  `Scheduler::activate_thread_address_space`: it is the only thing that
-  installs a root for a dispatch, so recording the thread, whether it has a
-  user start and what `activate_address_space_for_thread` returned there would
-  name the dispatch that dispatched a user frame onto the kernel root.
+  - `installed=0x807fb000`, failing at slot 1 + `0xbe6` (`read_fd`): the CPU
+    *did* dispatch a user thread and install its root, and something replaced
+    it before the `sret`.
+  - `installed=0x0`, failing at slot 1 + `0x280` (`current_dir`): the CPU
+    never recorded installing a root for a user thread at all, yet returned a
+    user frame to U-mode on the kernel's.
+
+  So `sepc` is not a constant after all, and the two frames are not the same
+  event: the first says "a correct root was replaced", the second says "no
+  root was ever installed here".  What they share is the outcome — a user
+  frame returned on a root that cannot execute it — and the fact that the
+  faulting instruction is ordinary shell code (`read_fd`, `current_dir`) in
+  both.  That part is still worth keeping: the fault is not tied to one
+  instruction, so it is not a bad branch or a corrupted payload.
+
+  That settles the one thing the trap frame could not: nothing switches the
+  root between the `sret` and the fault, because the probe reads `satp` first
+  and already sees the kernel's.  The defect is upstream — a user frame
+  returned on the wrong root — and the rate (2 to 3 in 60) makes it
+  reproducible enough to chase.
+
+  The dispatcher is not the half that is broken.  A probe that compared the
+  root `activate_thread_address_space` left behind against the process's own
+  root was watched for 60 boots and never fired, including on a boot that
+  faulted: the activation installs the right root.  (`prepare_thread_address_space_for_dispatch`
+  also refuses a user thread with no address space before that, so the
+  neighbouring hypothesis was already excluded by the gate itself.)
+
+  What is left is `restore_kernel_address_space`, the only writer of `satp`
+  besides the two activations, and the run that produced `installed=0x807fb000`
+  narrowed it to "this call, before the `sret`".  Its seven call sites read
+  alike from a trap, so it now records its return address per CPU and the
+  fatal line prints it as `restore_from=`.  One number names the caller; the
+  run that reads it is the next measurement, not a guess.
+
+  One candidate is worth naming because it is the only path that replaces the
+  root while a user frame is still live on a kernel stack: a timer interrupt
+  that preempts a user thread calls `restore_kernel_address_space()` and then
+  `switch_context` away, leaving that thread's trap frame behind.  It is
+  resumed later by a dispatch that activates the thread's root first, so the
+  ordering is right — but it is also the only shape that can produce this
+  frame, which is what `restore_from=` will confirm or rule out.
 
 ---
 
