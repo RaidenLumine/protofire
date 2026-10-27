@@ -24,21 +24,7 @@ impl Scheduler {
         // the caller only asks whether the switch happened.
         #[cfg(target_os = "none")]
         {
-            let activated = thread.process().activate_address_space_for_thread();
-            // A user thread that ends up on the kernel root is about to `sret`
-            // into a page it cannot execute: the kernel root maps the demo
-            // slots as supervisor blocks, so the first fetch faults, and the
-            // trap reports an instruction page fault in the payload rather than
-            // the dispatch failure that caused it. Say so at the dispatch that
-            // did it, where the thread and its state are still known.
-            if thread.user_start().is_some() && !thread.process().has_user_address_space() {
-                crate::println!(
-                    "[sched ] dispatching a user thread with no address space pid={} tid={}",
-                    thread.pid(),
-                    thread.tid()
-                );
-            }
-            activated
+            thread.process().activate_address_space_for_thread()
         }
         #[cfg(not(target_os = "none"))]
         {
