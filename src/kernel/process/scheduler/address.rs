@@ -32,16 +32,16 @@ impl Scheduler {
         }
     }
 
+    /// A `#[inline(never)]` boundary, because the caller's identity is read
+    /// from `ra` below: inlined into its callers there is no frame, and `ra`
+    /// belongs to whatever function the optimizer merged this into.
+    #[inline(never)]
     pub(crate) fn restore_kernel_address_space(&self) {
         #[cfg(target_os = "none")]
         {
             // Record who asked, so a later trap can say which path replaced a
             // user thread's root.  The seven call sites all look alike from a
             // trap frame; the return address does not.
-            //
-            // The `ra` read is inline in this function on purpose: a helper
-            // would return its own caller's address, which is this function,
-            // and that names no call site at all.
             #[cfg(all(target_arch = "riscv64", target_os = "none"))]
             {
                 let ra: usize;
