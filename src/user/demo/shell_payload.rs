@@ -615,20 +615,57 @@ unsafe fn shell_builtin_cd(cwd: usize, cwd_capacity: usize, path: usize, path_le
 }
 
 /// `echo`: print the words after the command, space-separated.
+///
+/// The whole line is assembled in this frame and written **once**, because the
+/// console serialises writes and nothing else.  Writing the words here and the
+/// newline there leaves a window in which another thread's output lands between
+/// them, and the answer then shares a line with bytes that are not its own.
+/// Measured on `make check-x8664-init-no-start`, one boot in six read
+///
+///     __protofire_feeder_sync_4__[service] restarting demo-launcher-fault
+///
+/// — every byte of the answer present, no longer a line.  `cat` never failed
+/// that way, and the difference is this one: it hands the console the file's
+/// bytes, newline included, in a single call.
+///
+/// The buffer is this frame's, because the payload's section is executable but
+/// not writable; the copies are byte loops, because a bulk copy links `memcpy`;
+/// and the arithmetic wraps, because a checked add links a panic — all three
+/// would put a reference outside the payload, which is what
+/// `make check-payload-relocations` refuses.
 #[inline(never)]
 #[link_section = $section]
 unsafe fn shell_builtin_echo(tokens: usize, token_count: usize) {
+    let mut line = MaybeUninit::<[u8; SHELL_LINE_CAPACITY]>::uninit();
+    let line_ptr = line.as_mut_ptr() as usize;
+    let mut filled = 0;
     let mut index = 1;
     while index < token_count {
-        if index > 1 {
-            shell_message!(SHELL_SPACE);
+        if index > 1 && filled < SHELL_LINE_CAPACITY {
+            // SAFETY: `filled` is below the buffer's capacity, which is the
+            // condition just checked.
+            unsafe { core::ptr::write(line_ptr.wrapping_add(filled) as *mut u8, b' ') };
+            filled = filled.wrapping_add(1);
         }
-        // SAFETY: `index` is below the token count.
+        // SAFETY: `index` is below the token count the caller checked.
         let (word, word_len) = unsafe { shell_token(tokens, index) };
-        write_section_message(word, word_len);
+        let mut offset = 0;
+        while offset < word_len && filled < SHELL_LINE_CAPACITY {
+            // SAFETY: `offset` is inside the token's bytes and `filled` is
+            // inside this frame's buffer.
+            let byte = unsafe { core::ptr::read(word.wrapping_add(offset) as *const u8) };
+            unsafe { core::ptr::write(line_ptr.wrapping_add(filled) as *mut u8, byte) };
+            offset = offset.wrapping_add(1);
+            filled = filled.wrapping_add(1);
+        }
         index = index.wrapping_add(1);
     }
-    shell_message!(SHELL_NEWLINE);
+    if filled < SHELL_LINE_CAPACITY {
+        // SAFETY: `filled` is below the buffer's capacity.
+        unsafe { core::ptr::write(line_ptr.wrapping_add(filled) as *mut u8, b'\n') };
+        filled = filled.wrapping_add(1);
+    }
+    write_section_message(line_ptr, filled);
 }
 
 /// The signal the async test sends itself: `SIGUSR1`.

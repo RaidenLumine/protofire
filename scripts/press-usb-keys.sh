@@ -43,27 +43,27 @@ expected_markers="$5"
 waited=0
 while [ "$waited" -lt "$timeout_seconds" ]; do
     # The evidence that the serial half is finished: the shell has printed the
-    # feeder's marker on its own line for the *last* command, which means the
-    # whole queue has been read and answered.
+    # feeder's markers, one per command, which means the whole queue has been
+    # read and answered.
     #
-    # This used to look for a whole line reading `serial-done` — the output of
-    # the last command the check types.  That line does not survive contact with
-    # a busy console: the feeder appends an `echo` of its marker after every
-    # command, so the last two lines are typed back to back, and a prompt
-    # printed between them puts the second command's characters into the first
-    # one's output.  Measured on a real boot, one line carried the word
-    # serial-done with two other lines' bytes through it — so an exact-line wait
-    # could never return, and the injector spent its whole budget on a guest
-    # that was sitting at the prompt the entire time.
+    # The marker appears twice — once in the console's echo of the typed
+    # `echo <marker>` line, once in the line the shell prints when it runs it —
+    # so counting occurrences would count both.  The answer is the one on a line
+    # of its own, which is what this counts: the echo carries `echo ` before the
+    # marker and a trailing CR, so it never matches.
     #
-    # A marker line, by contrast, is printed by the shell *after* it has run the
-    # command, and the feeder waits for that before typing the next one — so
-    # seeing the last one means the queue is empty.
+    # This used to look for the prompt's `$ ` followed by the marker, because
+    # the feeder typed the marker while the previous command was still running
+    # and a prompt sat between them.  The feeder now keeps one line in flight,
+    # so the answer follows the typed line directly and stands alone — a
+    # stronger thing to require, and the same one the checks make of every other
+    # answer.
     #
-    # The dollar sign and the space after it, then the marker: the shell's own
-    # line, which the console's echo of the typed command does not produce.
-    wanted_marker='$ __protofire_feeder_sync_'
-    found="$(LC_ALL=C grep -a -c -F "$wanted_marker" "$log_file" 2>/dev/null || true)"
+    # Before that it waited for a whole line reading `serial-done`, and that
+    # line did not survive contact with a busy console: an exact-line wait could
+    # never return, and the injector spent its whole budget on a guest sitting
+    # at the prompt the entire time.
+    found="$(LC_ALL=C grep -a -c -E '^__protofire_feeder_sync_[0-9]+__$' "$log_file" 2>/dev/null || true)"
     if [ "${found:-0}" -ge "$expected_markers" ]; then
         break
     fi
