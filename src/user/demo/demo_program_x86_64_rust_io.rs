@@ -337,31 +337,164 @@ fn ensure_ok_or_already_exists(status: usize, _exit_code: usize) {
     let _ = status;
 }
 
+/// Capacity of the buffer a prefixed line is assembled in before it is written.
+///
+/// It has to hold the longest prefix (37 bytes, `rust wait-exception-vector: `),
+/// the longest value a caller passes (a `READ_BUFFER_CAPACITY` string, 256), a
+/// newline, and nothing else — rounded up so the arithmetic never has to think
+/// about the exact boundary.  A line longer than this is truncated rather than
+/// split: a truncated line is still one line, and the alternative is the defect
+/// below.
+const RUST_IO_PAYLOAD_LINE_CAPACITY: usize = 320;
+
+/// Append `length` bytes from `source` to the line at `buffer[filled..]`.
+///
+/// The copies are byte loops and the arithmetic wraps, for the same reason the
+/// buffer is a local: a bulk copy links `memcpy` and a checked add links a panic
+/// routine, and either would put a reference outside the payload section, which
+/// `make check-payload-relocations` refuses.
+///
+/// # Safety
+///
+/// `source` must name `length` readable bytes, and the caller must pass a
+/// `filled` no greater than the buffer's capacity; bytes past the capacity are
+/// dropped.
+#[link_section = "protofire_demo_program_rust_io"]
+unsafe fn append_to_line(
+    buffer: usize,
+    filled: usize,
+    source: usize,
+    length: usize,
+    capacity: usize,
+) -> usize {
+    let mut written = filled;
+    let mut offset = 0;
+    while offset < length && written < capacity {
+        // SAFETY: `offset` is inside the caller's `length` readable bytes and
+        // `written` is inside the caller's buffer.
+        let byte = unsafe { core::ptr::read(source.wrapping_add(offset) as *const u8) };
+        unsafe { core::ptr::write(buffer.wrapping_add(written) as *mut u8, byte) };
+        offset = offset.wrapping_add(1);
+        written = written.wrapping_add(1);
+    }
+    written
+}
+
+/// Write a prefixed line as **one** console write.
+///
+/// The prefix, the value and the newline used to be three writes.  The console
+/// serialises a write and nothing else, so another thread's output — the shell
+/// answering a typed command, here — lands between them, and the line stops
+/// being a line.  Measured on `make check-x8664-init-no-start`, one boot in
+/// twelve read
+///
+///     [user  ] rust session-file: __protofire_feeder_sync_1__
+///
+/// with the shell's answer spliced into the payload's own line.  Assembling the
+/// line in this frame and writing it once is what `cat` already did, and it is
+/// why `cat`'s answers never failed that way.
+#[inline(never)]
+#[link_section = "protofire_demo_program_rust_io"]
+unsafe fn write_prefixed_line(
+    prefix: usize,
+    prefix_len: usize,
+    value: usize,
+    value_len: usize,
+) {
+    let mut line = MaybeUninit::<[u8; RUST_IO_PAYLOAD_LINE_CAPACITY]>::uninit();
+    let line_ptr = line.as_mut_ptr() as usize;
+    // SAFETY: `line_ptr` names `RUST_IO_PAYLOAD_LINE_CAPACITY` writable bytes in
+    // this frame, and the prefix and value are the caller's for this call.
+    let mut filled = unsafe {
+        append_to_line(
+            line_ptr,
+            0,
+            prefix,
+            prefix_len,
+            RUST_IO_PAYLOAD_LINE_CAPACITY,
+        )
+    };
+    filled = unsafe {
+        append_to_line(
+            line_ptr,
+            filled,
+            value,
+            value_len,
+            RUST_IO_PAYLOAD_LINE_CAPACITY,
+        )
+    };
+    if filled < RUST_IO_PAYLOAD_LINE_CAPACITY {
+        // SAFETY: `filled` is below the buffer's capacity, which is the
+        // condition just checked.
+        unsafe { core::ptr::write(line_ptr.wrapping_add(filled) as *mut u8, b'\n') };
+        filled = filled.wrapping_add(1);
+    }
+    write_section_message(line_ptr, filled);
+}
+
+#[inline(always)]
 fn write_prefixed_bytes(prefix: usize, prefix_len: usize, bytes: usize, byte_len: usize) {
-    write_section_message(prefix, prefix_len);
-    write_section_message(bytes, byte_len);
-    write_section_message(
-        rip_relative_address!(RUST_IO_PAYLOAD_NEWLINE),
-        RUST_IO_PAYLOAD_NEWLINE.len(),
-    );
+    // SAFETY: the caller passes a prefix and a byte string it holds for the
+    // whole call, which is what the two raw pointers describe.
+    unsafe {
+        write_prefixed_line(prefix, prefix_len, bytes, byte_len);
+    }
 }
 
+#[inline(always)]
 fn write_prefixed_c_string(prefix: usize, prefix_len: usize, c_string: usize) {
-    write_section_message(prefix, prefix_len);
-    payload_runtime_write_c_string(c_string);
-    write_section_message(
-        rip_relative_address!(RUST_IO_PAYLOAD_NEWLINE),
-        RUST_IO_PAYLOAD_NEWLINE.len(),
-    );
+    // The runtime's own writer is one `write` for the whole string, so the
+    // prefix and the newline are what would have been split off it.  The string
+    // is measured here rather than copied, because it is already NUL-terminated
+    // and lives in this payload.
+    let mut length = 0;
+    // SAFETY: a C string the caller holds; the loop stops at its terminator.
+    while unsafe { core::ptr::read(c_string.wrapping_add(length) as *const u8) } != 0 {
+        length = length.wrapping_add(1);
+    }
+    // SAFETY: as above — the prefix and the measured string are the caller's.
+    unsafe {
+        write_prefixed_line(prefix, prefix_len, c_string, length);
+    }
 }
 
+#[inline(always)]
 fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
-    write_section_message(prefix, prefix_len);
-    payload_runtime_write_hex(value);
-    write_section_message(
-        rip_relative_address!(RUST_IO_PAYLOAD_NEWLINE),
-        RUST_IO_PAYLOAD_NEWLINE.len(),
-    );
+    // The hex digits are built here rather than by the shared writer so the
+    // whole line is one write.  Lower-case, `0x`-prefixed, no leading zeros —
+    // the shape the shared writer produces and the gates read back.
+    let mut digits = MaybeUninit::<[u8; 2 + core::mem::size_of::<usize>() * 2]>::uninit();
+    let digits_ptr = digits.as_mut_ptr() as usize;
+    let width = core::mem::size_of::<usize>() * 2;
+    let mut index = 0;
+    // SAFETY: `digits` holds exactly `2 + width` bytes, which is what the
+    // writes below cover.
+    unsafe {
+        core::ptr::write(digits_ptr as *mut u8, b'0');
+        core::ptr::write(digits_ptr.wrapping_add(1) as *mut u8, b'x');
+    }
+    while index < width {
+        let shift = width.wrapping_sub(1).wrapping_sub(index).wrapping_mul(4);
+        let nibble = (value >> shift) & 0xf;
+        // The digit is computed, not looked up: a `let hex = b"0123..."` is a
+        // local the compiler places in `.rodata`, and a `movzbl` from there is
+        // an absolute reference the payload cannot carry out of its section.
+        let digit = if nibble < 10 {
+            b'0'.wrapping_add(nibble as u8)
+        } else {
+            b'a'.wrapping_add(nibble as u8 - 10)
+        };
+        // SAFETY: `2 + index` is inside the buffer for every `index < width`.
+        unsafe {
+            core::ptr::write(digits_ptr.wrapping_add(2usize.wrapping_add(index)) as *mut u8, digit);
+        }
+        index = index.wrapping_add(1);
+    }
+    // SAFETY: the prefix is the caller's, and the digits are this frame's for
+    // the whole call.
+    unsafe {
+        write_prefixed_line(prefix, prefix_len, digits_ptr, 2usize.wrapping_add(width));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
