@@ -56,11 +56,8 @@ fn a_build_without_demo_disk_says_so() {
     let _fs = fixture(false);
 
     let scheduler = Box::new(Scheduler::new());
-    let _thread = scheduler.spawn_named_with_security_token(
-        "probe",
-        SecurityToken::system(),
-        0x1000,
-    );
+    let _thread =
+        scheduler.spawn_named_with_security_token("probe", SecurityToken::system(), 0x1000);
     // SAFETY: the test lock serialises every test that shares the global
     // scheduler slot, and this test installs its own scheduler before touching
     // it, so the pointer is only read while the box is alive.
