@@ -518,14 +518,41 @@ balancing and runtime stack protection.
   both candidates stay open.
 
   The most recent measurement was 40 four-CPU boots with the new line in
-  place, and **none of them faulted**, so the bit has not been read yet.  That
-  is not evidence the fault is gone: at the recorded 1-in-40 rate, 40 clean
-  boots happen about a third of the time, which is exactly the mistake this row
-  already records twice.  What the run does say is that the diagnostic is in
-  every one of those boots and changed nothing about them — the boot-time cost
-  is a `csrr` and two `println!`s on a path that stops the machine — and that
-  the next occurrence will carry the answer.  Running it again is cheap and
-  should be done until a boot prints the line.
+  place, and **none of them faulted**.  A second run of 60 then faulted twice,
+  and both occurrences carried the answer the row had been waiting for.
+
+  **`on_kernel_root=1`.**  Both failures print
+
+      [FATAL] riscv64 trap scause=0x0c sepc=0x85201be6 stval=0x85201be6
+              sstatus=0x200000020 sp=0x853ffbe0
+      [FATAL] riscv64 fault va=0x85201be6 satp=0x8000000000080486 asid=0
+              entry=0x214800cf
+      [FATAL] riscv64 root active=0x80486000 kernel=0x80486000 on_kernel_root=1
+      [FATAL] riscv64 provenance spp_user=1 kernel_sp=0xc0062bd0 sscratch=0x0
+
+  byte for byte except the CPU number and the pid of the thread read after the
+  fact.  So the answer to "which root" is the kernel's, and the reading of the
+  descriptor is finally not ambiguous: a process running out of demo slot 1
+  reached U-mode on the kernel root, where that slot is a supervisor block and
+  no fetch can succeed.
+
+  Three things the pair of frames rules out, and one they do not.  `SPP=0`
+  says the fault came *from* U-mode, and `sp=0x853ffbe0` is in slot 1's own
+  stack (0x420 bytes below its top), so this is a real user thread mid-run and
+  not a kernel thread taking a stray fault.  The invariant `sepc` — the same
+  instruction every time, slot 1 + `0xbe6`, which lands on a `ret` inside the
+  shell payload — says this is a deterministic path, not a race: a timing
+  window would fault at different instructions.  And `entry=0x214800cf` is the
+  kernel root's block, so nothing was corrupted; the mapping was simply absent
+  where U-mode tried to execute.
+
+  What the frames do not say is *which* `sret` entered U-mode on that root —
+  the one that did it is not the one that trapped.  The probe for that is
+  `report_kernel_root_user_return`, called from every return to U-mode: it
+  reads `satp` before the `sret` and prints `returning to U-mode on the kernel
+  root` when the root is the kernel's.  That line did not appear in the 60-run
+  session, because those two failures were captured before it existed; the next
+  session that faults should print it first, and that is the line to look for.
 
 ---
 

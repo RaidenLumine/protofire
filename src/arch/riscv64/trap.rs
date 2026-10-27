@@ -383,7 +383,45 @@ fn validate_user_entry_frame_or_terminate(frame: &TrapFrame, entered_from_user: 
 }
 
 fn validate_user_return_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool) {
+    report_kernel_root_user_return(frame, entered_from_user);
     validate_user_frame_or_terminate(frame, entered_from_user, "return");
+}
+
+/// Say so when a frame is about to `sret` to U-mode on the kernel root.
+///
+/// The trap that follows such a return is the one `check-riscv64-smp-runtime`
+/// has been failing on: an instruction page fault in a demo slot, with the
+/// leaf a supervisor block, because the kernel root maps every slot that way.
+/// By the time that fault is reported the `sret` is long gone, so the frame
+/// cannot say which code path left the hart on the wrong root — that is what
+/// this reports, at the one point every return to U-mode passes through.
+///
+/// It is a `println!`, not a panic: the machine is about to fault anyway, and
+/// a line that arrives before the fatal one is what makes the two readable
+/// together.  A boot that prints this and then recovers was one return away
+/// from the failure this whole row is about.
+fn report_kernel_root_user_return(frame: &TrapFrame, entered_from_user: bool) {
+    if !entered_from_user {
+        return;
+    }
+    let Some(kernel_root) = crate::arch::mmu::prepared_runtime_kernel_page_tables()
+        .map(|prepared| prepared.root_table_address)
+    else {
+        return;
+    };
+    let satp: u64;
+    // SAFETY: `satp` is a supervisor CSR; reading it has no memory side
+    // effects and nothing is written.
+    unsafe {
+        asm!("csrr {satp}, satp", satp = out(reg) satp, options(nomem, nostack, preserves_flags));
+    }
+    let active_root = ((satp & ((1u64 << 44) - 1)) << 12) as usize;
+    if active_root == kernel_root {
+        println!(
+            "[FATAL] riscv64 returning to U-mode on the kernel root sepc={:#018x} sstatus={:#018x} sp={:#018x}",
+            frame.sepc, frame.sstatus, frame.stack_pointer,
+        );
+    }
 }
 
 fn validate_user_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool, phase: &str) {
