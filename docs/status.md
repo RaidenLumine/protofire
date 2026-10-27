@@ -599,8 +599,25 @@ balancing and runtime stack protection.
   besides the two activations, and the run that produced `installed=0x807fb000`
   narrowed it to "this call, before the `sret`".  Its seven call sites read
   alike from a trap, so it now records its return address per CPU and the
-  fatal line prints it as `restore_from=`.  One number names the caller; the
-  run that reads it is the next measurement, not a guess.
+  fatal line prints it as `restore_from=`.
+
+  Getting that number to mean anything took two corrections, and both are
+  worth recording because the failure mode is silent.  Read inside a helper,
+  `ra` is the helper's own return address; read in a function the optimizer
+  inlined into its callers, it belongs to whatever the caller was merged into.
+  `addr2line` on the captured value landed in `arch/riscv64/percpu.rs`, inside
+  the probe itself, both times.  The function carries `#[inline(never)]` now
+  and is a separate symbol in the image, so the next capture names a call
+  site — but **no capture has been taken with it yet**: the 60-boot run that
+  followed produced one failure, and that one was the `kworker-syscall-fs`
+  miss below, not this fault.
+
+  Across every run made so far — 439 boots in eight sessions — the page fault
+  appeared 9 times, about 2%, and never in the two most recent runs.  That is
+  the base rate to plan against: a run has to be long enough for a 2% event,
+  and 60 boots catches one about 70% of the time.  The instrumentation has
+  not made it more frequent; if anything the opposite, which is what a probe
+  on the dispatch path does.
 
   One candidate is worth naming because it is the only path that replaces the
   root while a user frame is still live on a kernel stack: a timer interrupt
@@ -609,6 +626,13 @@ balancing and runtime stack protection.
   resumed later by a dispatch that activates the thread's root first, so the
   ordering is right — but it is also the only shape that can produce this
   frame, which is what `restore_from=` will confirm or rule out.
+
+  A second, unrelated intermittent has also appeared in these runs and is
+  **not** the bug above: one boot in roughly 60 ends with
+  `[service] kworker-syscall-fs stopped` missing, sometimes with the
+  scheduler's own line about `kernel-maintenance` being `Waiting` with no
+  thread in any queue.  It has its own signature (no fatal trap at all) and
+  belongs to whoever picks up the maintenance thread's wake path.
 
 ---
 
