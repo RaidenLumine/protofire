@@ -12,9 +12,13 @@
 //! only with that feature; without it the library carries the `Unsupported`
 //! stub, and every test here would fail saying "the install syscall:
 //! Unsupported" — which describes the build, not the defect the reader is
-//! looking for.  The `compile_error!` below is what turns that into a build
-//! failure that names the real problem.  `make test` and `make test-fast` pass
-//! the feature; a bare `cargo test` does not.
+//! looking for.  A test below asserts the feature is on, so that is the message
+//! a mis-built run gets.  `make test` and `make test-fast` pass the feature; a
+//! bare `cargo test` does not.
+//!
+//! That check is a test rather than a `compile_error!` because `make clippy`
+//! lints every target without `demo-disk`, and a build failure there would
+//! make the lint gate red for a configuration the gate never runs.
 
 use std::sync::Arc;
 
@@ -32,12 +36,54 @@ use protofire::syscall::SyscallNumber;
 use protofire::syscall::Table;
 use protofire::Error;
 
-#[cfg(not(feature = "demo-disk"))]
-compile_error!(
-    "tests/syscall/install.rs needs --features demo-disk: the install syscall \
-     is compiled only with it, so every test here would exercise the \
-     `Unsupported` stub instead of the path it is about"
-);
+/// Fail first, and say why, when this suite was built without its feature.
+///
+/// Every other test here would fail too, with a message about the install
+/// returning `Unsupported` — which is what a build without the handler looks
+/// like, not a defect in it.  This one names the real cause, and it runs before
+/// the others because its name sorts first.
+///
+/// The probe is the syscall itself: a build with the handler answers
+/// `NotFound` for a path that is not there, and a build without it answers
+/// `Unsupported` before it ever looks.  Asking the library is the only way to
+/// know — `cfg!(feature = ...)` reads *this* crate's features, and the handler
+/// lives in the library the test links.
+#[test]
+fn a_build_without_demo_disk_says_so() {
+    let _guard = test_lock();
+    // The fixture installs the global filesystem the syscall reaches; nothing
+    // else here reads it, which is why the binding is a `_`.
+    let _fs = fixture(false);
+
+    let scheduler = Box::new(Scheduler::new());
+    let _thread = scheduler.spawn_named_with_security_token(
+        "probe",
+        SecurityToken::system(),
+        0x1000,
+    );
+    // SAFETY: the test lock serialises every test that shares the global
+    // scheduler slot, and this test installs its own scheduler before touching
+    // it, so the pointer is only read while the box is alive.
+    unsafe { scheduler.install_global_unchecked() };
+    scheduler.schedule();
+
+    let path = "/data/downloads/absent@1.0.0";
+    let mut table = Table::new();
+    table.init();
+    let mut context = SyscallContext::new(
+        SyscallNumber::InstallPackage as usize,
+        [path.as_ptr() as usize, path.len(), 0, 0, 0, 0],
+    );
+    let result = table.dispatch(&mut context);
+
+    assert_ne!(
+        result,
+        Err(Error::Unsupported),
+        "tests/syscall/install.rs needs --features demo-disk: the install \
+         syscall is compiled only with it, so every test here would exercise \
+         the `Unsupported` stub instead of the path it is about"
+    );
+}
 
 const PAYLOAD: &[u8] = b"a package handed to the kernel\n";
 const SOURCE: &str = "/data/downloads/demo@1.0.0";
