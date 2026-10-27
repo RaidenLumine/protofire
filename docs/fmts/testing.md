@@ -228,6 +228,13 @@ Most integration tests need `--features demo-disk` so the in-memory demo volumes
 exist; the Makefile passes it for you. If you invoke `cargo test` directly, match
 the target: `cargo test --features demo-disk`.
 
+A suite whose subject is compiled out without the feature says so at build time
+rather than through its assertions.  `tests/syscall/install.rs` is the one that
+does: without the feature the library carries the `Unsupported` handler and all
+five of its tests fail with "the install syscall: Unsupported", which reads like
+a defect in the install path and is not one.  It raises `compile_error!` now, so
+the message names the missing feature.
+
 ### What the gate runs
 
 | Gate | Test content |

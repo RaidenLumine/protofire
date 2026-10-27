@@ -7,6 +7,14 @@
 //! records it leaves under `/apps`.  The app zone here is writable — built for
 //! the test, because the demo's is mounted read-only — so the success case and
 //! the refusal case are both reachable.
+//!
+//! This file needs `--features demo-disk`.  The install handler is compiled
+//! only with that feature; without it the library carries the `Unsupported`
+//! stub, and every test here would fail saying "the install syscall:
+//! Unsupported" — which describes the build, not the defect the reader is
+//! looking for.  The `compile_error!` below is what turns that into a build
+//! failure that names the real problem.  `make test` and `make test-fast` pass
+//! the feature; a bare `cargo test` does not.
 
 use std::sync::Arc;
 
@@ -23,6 +31,13 @@ use protofire::syscall::SyscallContext;
 use protofire::syscall::SyscallNumber;
 use protofire::syscall::Table;
 use protofire::Error;
+
+#[cfg(not(feature = "demo-disk"))]
+compile_error!(
+    "tests/syscall/install.rs needs --features demo-disk: the install syscall \
+     is compiled only with it, so every test here would exercise the \
+     `Unsupported` stub instead of the path it is about"
+);
 
 const PAYLOAD: &[u8] = b"a package handed to the kernel\n";
 const SOURCE: &str = "/data/downloads/demo@1.0.0";
