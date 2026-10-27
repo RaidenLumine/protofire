@@ -433,6 +433,31 @@ fn page_permissions_from_entry(entry: u64) -> PagePermissions {
     permissions
 }
 
+/// The permissions a user page carries **in both processes** after `fork`.
+///
+/// A writable page becomes copy-on-write: the frame keeps being shared, and
+/// neither process may write it.  Every other shape is unchanged — read-only
+/// code stays read-only and is shared as itself.
+///
+/// This is a function rather than a line inside `fork_clone` so the rule can be
+/// tested without a boot: `fork_clone` needs a demo slot and the linker's slot
+/// symbols, neither of which a host has, and the defect this replaces was in
+/// exactly this decision.  It was "the parent becomes read-only, the child
+/// keeps write access" — which is not copy-on-write, because the child then
+/// writes the parent's live stack through a permission the MMU will not trap
+/// on.
+fn fork_child_permissions(permissions: PagePermissions) -> PagePermissions {
+    if permissions.contains(PagePermissions::WRITE) {
+        if permissions.contains(PagePermissions::EXECUTE) {
+            PagePermissions::READ_EXECUTE
+        } else {
+            PagePermissions::READ
+        }
+    } else {
+        permissions
+    }
+}
+
 const fn align_down(value: usize, align: usize) -> usize {
     value & !(align - 1)
 }
@@ -2249,8 +2274,8 @@ impl PreparedProcessAddressSpace {
         child_l2.0[active_block_index] =
             table_entry(child_l3.as_ref() as *const TranslationTable as usize);
 
-        // User-writable pages become copy-on-write in the parent; the child
-        // keeps write access.  Shared read-only (code) pages map into both.
+        // User-writable pages become copy-on-write on **both** sides.  Shared
+        // read-only (code) pages map into both unchanged.
         let mut shared_pages = Vec::new();
         let mut all_child_pages = Vec::new();
         for page_index in 0..USER_DEMO_REGION_PAGE_COUNT {
@@ -2262,20 +2287,25 @@ impl PreparedProcessAddressSpace {
             let pa = (entry & 0x0000_FFFF_FFFF_F000) as usize;
             let permissions = page_permissions_from_entry(entry);
             if permissions.contains(PagePermissions::WRITE) {
-                // Parent loses write access (copy-on-write).  Child keeps RW.
-                let read_only = if permissions.contains(PagePermissions::EXECUTE) {
-                    PagePermissions::READ_EXECUTE
-                } else {
-                    PagePermissions::READ
-                };
+                // Both sides lose write access.  A copy-on-write page is shared
+                // until someone writes it, and "shared" has to mean the same
+                // physical frame on both sides — so neither may keep write
+                // permission on it.  Leaving the child writable, which this did
+                // before, is not copy-on-write at all: the child's first store
+                // goes straight into the parent's live stack, and the parent's
+                // next read sees the child's data.  x86_64's `fork_clone`
+                // states the rule in one line — the child entry is
+                // `entry & !PAGE_ENTRY_WRITABLE` — and this now matches it.
+                let read_only = fork_child_permissions(permissions);
                 self.user_l3.0[page_index] = user_page_entry(pa, read_only);
+                child_l3.0[page_index] = user_page_entry(pa, read_only);
                 // The parent's live L3 is active while fork runs; flush the
                 // stale (previously writable) TLB entry so the read-only CoW
                 // mapping takes effect immediately — otherwise the parent
                 // keeps writing the shared frame through a stale RW TLB.
                 flush_tlb_page(va);
                 shared_pages.push((va, pa, read_only));
-                all_child_pages.push((va, pa, permissions));
+                all_child_pages.push((va, pa, read_only));
             } else {
                 all_child_pages.push((va, pa, permissions));
             }
@@ -2557,5 +2587,75 @@ mod host_tests {
         assert!(!range_within(9, 20, 10, 100));
         assert!(!range_within(10, 101, 10, 100));
         assert!(!range_within(20, 10, 0, 100));
+    }
+
+    /// A writable page must become read-only in **both** processes at fork.
+    ///
+    /// The rule the defect broke: `fork_clone` used to demote the parent and
+    /// leave the child writable, on the same physical frame.  A writable child
+    /// is not copy-on-write — its first store lands in the parent's live stack
+    /// and the MMU does not trap it, because the child's entry admits EL0
+    /// writes through `AP`.
+    ///
+    /// The test asks the function `fork_clone` asks, so a regression here is a
+    /// regression there.
+    #[test]
+    fn a_writable_page_becomes_read_only_for_the_child() {
+        let child = fork_child_permissions(PagePermissions::READ_WRITE);
+        assert!(
+            !child.contains(PagePermissions::WRITE),
+            "the child kept write access to a shared frame"
+        );
+        assert!(
+            child.contains(PagePermissions::READ),
+            "the child lost read access to its own pages"
+        );
+    }
+
+    /// Read-only code is shared as itself: no write bit to drop, nothing to
+    /// change.  A fork that demoted these would make every child re-fault on
+    /// its first instruction fetch.
+    #[test]
+    fn a_read_only_page_is_unchanged_for_the_child() {
+        for permissions in [PagePermissions::READ, PagePermissions::READ_EXECUTE] {
+            assert_eq!(
+                fork_child_permissions(permissions),
+                permissions,
+                "a read-only page changed under fork: {permissions:?}"
+            );
+        }
+    }
+
+    /// Demotion keeps execute when the page had it and drops only write.
+    #[test]
+    fn demotion_keeps_execute_and_drops_only_write() {
+        let demoted = fork_child_permissions(PagePermissions::READ_WRITE_EXECUTE);
+        assert!(demoted.contains(PagePermissions::EXECUTE));
+        assert!(demoted.contains(PagePermissions::READ));
+        assert!(!demoted.contains(PagePermissions::WRITE));
+    }
+
+    /// The encoded child entry must not admit an EL0 store the MMU will not
+    /// trap.  On this architecture that is `AP != 0b01`: only that encoding
+    /// grants EL0 write, and the fault path relies on its absence.
+    #[test]
+    fn the_encoded_child_entry_traps_on_write() {
+        let page = 0x9000_1000usize;
+        for requested in [
+            PagePermissions::READ_WRITE,
+            PagePermissions::READ_WRITE_EXECUTE,
+        ] {
+            let entry = user_page_entry(page, fork_child_permissions(requested));
+            let ap = (entry >> 6) & 0x3;
+            assert_ne!(
+                ap, 0b01,
+                "encoded child entry still admits EL0 writes for {requested:?}"
+            );
+            assert_eq!(
+                entry & 0x0000_FFFF_FFFF_F000,
+                page as u64,
+                "the child lost the shared physical page"
+            );
+        }
     }
 }
