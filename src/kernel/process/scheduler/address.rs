@@ -38,28 +38,21 @@ impl Scheduler {
             // Record who asked, so a later trap can say which path replaced a
             // user thread's root.  The seven call sites all look alike from a
             // trap frame; the return address does not.
-            let caller = riscv64_caller_address();
-            crate::arch::mmu::note_kernel_restore_caller(caller);
+            //
+            // The `ra` read is inline in this function on purpose: a helper
+            // would return its own caller's address, which is this function,
+            // and that names no call site at all.
+            #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+            {
+                let ra: usize;
+                // SAFETY: reading the return-address register the ABI reserves
+                // for it; no memory is touched.
+                unsafe {
+                    core::arch::asm!("mv {ra}, ra", ra = out(reg) ra, options(nomem, nostack, preserves_flags));
+                }
+                crate::arch::mmu::note_kernel_restore_caller(ra);
+            }
             let _ = crate::arch::mmu::activate_prepared_runtime_kernel_page_tables();
         }
-    }
-}
-
-/// The address this function was called from, as the architecture can see it.
-#[cfg(target_os = "none")]
-fn riscv64_caller_address() -> usize {
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        let ra: usize;
-        // SAFETY: reading the return-address register the ABI reserves for it;
-        // no memory is touched.
-        unsafe {
-            core::arch::asm!("mv {ra}, ra", ra = out(reg) ra, options(nomem, nostack, preserves_flags));
-        }
-        ra
-    }
-    #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
-    {
-        0
     }
 }
