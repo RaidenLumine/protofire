@@ -240,15 +240,17 @@ pub struct DemoUserSlotLayout {
     pub stack_pointer: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
+/// One address space's claim on a demo slot.
+///
+/// More than one of these can name the same slot: `fork` gives the child a
+/// clone, and the two share the underlying region.  Each clone is one
+/// reference, and the region is returned to the pool when the last one drops —
+/// see [`DEMO_SLOT_REFS`].
 pub struct PreparedDemoUserSlot {
     slot_index: usize,
     layout: DemoUserSlotLayout,
     payload_len: usize,
-    /// When true, the Drop impl skips `release_demo_user_slot`.  Set on
-    /// both parent and child slots during fork — the slot stays allocated
-    /// for the kernel's lifetime (it is shared by both processes).
-    forked: bool,
 }
 
 pub struct PreparedProcessAddressSpace {
@@ -1632,6 +1634,18 @@ pub fn active_runtime_kernel_page_table_check(
 
 static DEMO_SLOT_TAKEN: AtomicU64 = AtomicU64::new(0);
 
+/// How many address spaces hold each demo slot.
+///
+/// A slot is one physical region, and `fork` shares it: the child's pages map
+/// the same frames the parent's do, so the region must outlive *both*.  Without
+/// this count the only two options were both wrong — release on either side's
+/// exit hands a live process's stack to whatever allocates the slot next, and
+/// releasing on neither (what `forked` did) reserves the slot for the life of
+/// the kernel.  Every `PreparedDemoUserSlot` holds one reference, and the last
+/// drop returns the index to the pool.
+static DEMO_SLOT_REFS: [AtomicUsize; USER_DEMO_SLOT_COUNT] =
+    [const { AtomicUsize::new(0) }; USER_DEMO_SLOT_COUNT];
+
 extern "C" {
     static __demo_slots_start: u8;
     static __demo_slots_end: u8;
@@ -1673,16 +1687,40 @@ fn allocate_demo_user_slot_index() -> Option<usize> {
             .compare_exchange(taken, taken | mask, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
+            // The index is ours; the count starts at the holder about to be
+            // built.  `store` rather than `fetch_add` because the bitmap is the
+            // lock: no other holder of this index exists yet, and a stale value
+            // from a previous generation would over-count.
+            DEMO_SLOT_REFS[slot_index].store(1, Ordering::Release);
             return Some(slot_index);
         }
         // CAS failed — someone else took a slot; retry with a fresh snapshot.
     }
 }
 
+/// Record one more address space sharing `slot_index`.
+fn retain_demo_user_slot(slot_index: usize) {
+    if slot_index < USER_DEMO_SLOT_COUNT {
+        DEMO_SLOT_REFS[slot_index].fetch_add(1, Ordering::AcqRel);
+    }
+}
+
 /// Return a claimed demo slot to the pool.
+///
+/// The index is released when the *last* holder drops it.  Releasing on the
+/// first would hand a live process's pages to whatever allocates the slot next:
+/// `allocate_demo_user_slot` zeroes the whole region and copies a new payload
+/// into it, and the frames a surviving child still maps would then hold another
+/// program's bytes.
 fn release_demo_user_slot(slot_index: usize) {
     if slot_index < USER_DEMO_SLOT_COUNT {
-        DEMO_SLOT_TAKEN.fetch_and(!(1u64 << slot_index), Ordering::AcqRel);
+        // `AcqRel`: this is the last read-modify-write the slot's lifetime
+        // depends on, and it must both see the other holders' decrements and
+        // publish this one before the index goes back to the bitmap below.
+        let previous = DEMO_SLOT_REFS[slot_index].fetch_sub(1, Ordering::AcqRel);
+        if previous <= 1 {
+            DEMO_SLOT_TAKEN.fetch_and(!(1u64 << slot_index), Ordering::AcqRel);
+        }
     }
 }
 
@@ -1846,7 +1884,6 @@ pub fn allocate_demo_user_slot(
             ..layout
         },
         payload_len: payload.len(),
-        forked: false,
     })
 }
 
@@ -2133,8 +2170,23 @@ impl PreparedDemoUserSlot {
 
 impl Drop for PreparedDemoUserSlot {
     fn drop(&mut self) {
-        if !self.forked {
-            release_demo_user_slot(self.slot_index);
+        // Every holder drops once, and the index returns to the pool when the
+        // last one does.  A forked child is a holder like any other; there is
+        // no case where a slot is held but must never be released.
+        release_demo_user_slot(self.slot_index);
+    }
+}
+
+impl Clone for PreparedDemoUserSlot {
+    fn clone(&self) -> Self {
+        // A clone is another address space sharing this region, so it takes a
+        // reference.  Deriving `Clone` would copy the fields and leave the
+        // count short — the slot would be released while a clone still maps it.
+        retain_demo_user_slot(self.slot_index);
+        Self {
+            slot_index: self.slot_index,
+            layout: self.layout,
+            payload_len: self.payload_len,
         }
     }
 }
@@ -2318,9 +2370,11 @@ impl PreparedProcessAddressSpace {
 
         // Both parent and child keep the slot allocated for the kernel's
         // lifetime (they share the underlying region).
-        let mut child_slot = self.slot.clone();
-        child_slot.forked = true;
-        self.slot.forked = true;
+        // The child holds its own claim on the same region.  `Clone` takes a
+        // reference, so the slot outlives both and returns to the pool when the
+        // last of them drops — which is what makes a child that outlives its
+        // parent safe *and* leaves the slot reusable afterwards.
+        let child_slot = self.slot.clone();
 
         let child = PreparedProcessAddressSpace {
             l1: child_l1,
@@ -2385,7 +2439,142 @@ impl Drop for PreparedProcessAddressSpace {
 
 #[cfg(test)]
 mod host_tests {
+    use core::sync::atomic::AtomicBool;
+
     use super::*;
+
+    /// The demo-slot bitmap and its reference counts are one global, so the
+    /// tests below that touch them take this lock.  Everything else in this
+    /// module reads no state and runs alongside.
+    static SLOT_TEST_LOCK: AtomicBool = AtomicBool::new(false);
+
+    struct SlotTestGuard;
+
+    impl Drop for SlotTestGuard {
+        fn drop(&mut self) {
+            SLOT_TEST_LOCK.store(false, Ordering::Release);
+        }
+    }
+
+    fn slot_test_lock() -> SlotTestGuard {
+        while SLOT_TEST_LOCK
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        SlotTestGuard
+    }
+
+    /// A test slot built by hand, because `demo_user_slot_layout` reads the
+    /// linker's slot symbols and a host has none.  Only the index and the
+    /// payload length matter to the reference count.
+    fn test_slot(index: usize) -> PreparedDemoUserSlot {
+        PreparedDemoUserSlot {
+            slot_index: index,
+            layout: DemoUserSlotLayout {
+                region_start: 0,
+                region_length: USER_DEMO_REGION_SIZE,
+                entry_point: 0,
+                stack_bottom: 0,
+                stack_top: 0,
+                exception_stack_bottom: 0,
+                exception_stack_top: 0,
+                stack_pointer: 0,
+            },
+            payload_len: 0,
+        }
+    }
+
+    /// A slot is returned to the pool only when the **last** holder drops it.
+    #[test]
+    fn a_forked_slot_survives_until_both_holders_drop() {
+        let _guard = slot_test_lock();
+
+        let index = allocate_demo_user_slot_index().expect("a slot must be free");
+        assert_ne!(
+            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            0,
+            "an allocated slot must be marked taken"
+        );
+
+        retain_demo_user_slot(index);
+
+        release_demo_user_slot(index);
+        assert_ne!(
+            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            0,
+            "the slot was released while a second holder still mapped it"
+        );
+
+        release_demo_user_slot(index);
+        assert_eq!(
+            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            0,
+            "the slot was not released after its last holder dropped"
+        );
+    }
+
+    /// `Clone` is what `fork` uses to hand the child the same region, so it is
+    /// the operation that must take the reference.
+    #[test]
+    fn cloning_a_slot_takes_a_reference() {
+        let _guard = slot_test_lock();
+
+        let index = allocate_demo_user_slot_index().expect("a slot must be free");
+        let parent = test_slot(index);
+        let child = parent.clone();
+
+        drop(parent);
+        assert_ne!(
+            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            0,
+            "the slot was freed while its clone still held it"
+        );
+
+        drop(child);
+        assert_eq!(
+            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            0,
+            "the slot was not freed after its last holder dropped"
+        );
+    }
+
+    /// A slot with one holder is released by that holder — the un-forked case,
+    /// which must not leave the index reserved for the life of the kernel.
+    #[test]
+    fn an_unforked_slot_returns_to_the_pool_on_drop() {
+        let _guard = slot_test_lock();
+
+        let index = allocate_demo_user_slot_index().expect("a slot must be free");
+        release_demo_user_slot(index);
+        assert_eq!(
+            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            0,
+            "a slot with a single holder stayed taken after that holder dropped"
+        );
+    }
+
+    /// A reused slot starts its count over; a stale count would make the next
+    /// fork wait for a drop that never comes.
+    #[test]
+    fn a_reused_slot_starts_its_count_over() {
+        let _guard = slot_test_lock();
+
+        let index = allocate_demo_user_slot_index().expect("a slot must be free");
+        retain_demo_user_slot(index);
+        release_demo_user_slot(index);
+        release_demo_user_slot(index);
+
+        let reused = allocate_demo_user_slot_index().expect("the slot must be reusable");
+        assert_eq!(reused, index, "the lowest free index should come back");
+        release_demo_user_slot(reused);
+        assert_eq!(
+            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << reused),
+            0,
+            "a reused slot carried a stale reference count"
+        );
+    }
 
     /// A table descriptor names a table and nothing else.  Its type field must
     /// be `0b11`; `0b01` would be a block, and a walk that followed a block as

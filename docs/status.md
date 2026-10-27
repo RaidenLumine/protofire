@@ -536,23 +536,28 @@ disk-backed swap, compression, and defragmentation.
   table.
 - **Virtual memory**: demand paging with swap-out, automatic
   2 MiB / 1 GiB huge-page selection, kernel stack guard pages on all threads;
-  mlock/munlock (#131-132) and madvise (#133).  CoW fork is in that list for
-  its *tables* and still not for its *slot*: `Process::fork` returns a child
-  with its own root, and since `fork_child_permissions` demotes the writable
-  pages of **both** parent and child to read-only, a write on either side now
-  faults and is copied exactly once.  It used to demote only the parent and
-  leave the child writable on the same frame, which is not copy-on-write at
-  all — the child's first store landed in the parent's live stack and the MMU
-  did not trap it, because the child's entry said writable.  Measured before
-  the fix by forking once from a kernel thread at boot: the fork succeeded
-  (child root `0x127d000`, parent `0xd9e000`) and the boot then lost its shell
-  to a write-protection fault at a user stack address.  What remains is the
-  shared demo slot: both sides still name `child_slot = self.slot.clone()`, so
-  the frame they copy from is the same one, and a child that outlives its
-  parent keeps that slot reserved for the kernel's lifetime.  Nothing in the
-  tree issues `Fork` (#62) except the launch pipeline, so no boot has reached
-  this; the demotion is tested on the host for both architectures, the slot
-  sharing is not resolved.
+  mlock/munlock (#131-132) and madvise (#133).  CoW fork is in that list:
+  `Process::fork` returns a child with its own root, `fork_child_permissions`
+  demotes the writable pages of **both** parent and child to read-only so a
+  write on either side faults and is copied exactly once, and the demo slot the
+  two share is reference counted (`DEMO_SLOT_REFS`) so it returns to the pool
+  when the *last* holder drops it.  Each of those replaced a defect that the
+  two architectures without a fork test carried on their own — the same shape
+  as the missing table re-pointing `0caee67` fixed.  The demotion used to leave
+  the child writable on the same frame, which is not copy-on-write at all: the
+  child's first store landed in the parent's live stack and the MMU did not
+  trap it.  Measured before that fix, forking once from a kernel thread at
+  boot: the fork succeeded (child root `0x127d000`, parent `0xd9e000`) and the
+  boot then lost its shell to a write-protection fault at a user stack
+  address.  The slot used to be freed by neither side (`forked` suppressed
+  both `Drop`s), which reserved it for the kernel's lifetime; releasing it on
+  either side alone would have been worse, because the allocator zeroes the
+  region and copies a new payload into it under a process that still maps it.
+  The reference count is tested on the host for both architectures, including
+  that `Clone` takes a reference — dropping that one line turns a test red.
+  Nothing in the tree issues `Fork` (#62) except the launch pipeline, so no
+  boot has reached any of this; the tests run against the functions the fork
+  path calls, not against a forked process.
 - **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
   and automatic topology discovery (ACPI SRAT/SLIT on x86_64; FDT numa-node-id
   / distance-map on AArch64 and RISC-V); a default single-node topology always
