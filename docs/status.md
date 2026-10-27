@@ -242,26 +242,28 @@ block-cache management.
 - **I/O paths verified under emulation only**: the blocks a boot reads and
   writes are counted and gated (`make check-perf-baseline`), but no latency or
   throughput under load has been measured on real disks or SSDs.
-- **Console output from two threads interleaves, and a prompt is three
-  writes**: the shell prints `protofire:`, the working directory and `$ `
-  separately, so anything else writing at that moment lands between them.  The
-  demo boot always has something: `demo-launcher-fault` is a program meant to
-  fault, and its supervisor restarts it while the shell sits at the prompt.
-  That cost `make check-x8664-audit-persist` about one boot in three — a
-  feeder waiting for the console's echo of what it typed — and the fix there
-  was to wait for the shell's own line instead.  `make
-  check-x8664-init-no-start` carries a *second* failure that outlived that
-  fix: it types its commands back to back, so two input lines are in the
-  console at once, and because the console echoes each typed *character* as
-  its own write, the next line's echo interleaves with the answers the checks
-  require on a line of their own.  Measured 2 of 12 boots, both reading
-  `echo __protofire_feeder_sync_ring3-shell-answered` — every byte of the
-  answer present, on the wrong line.  The bytes are never damaged (an answer
-  is one `write`, and writes are serialised); what a second input line breaks
-  is the answer's *boundaries*.  The cause still stands: one `write` for a
-  prompt, and a feeder that keeps one line in flight, are both worth doing,
-  and the three constraints that make the payload half non-trivial — a
-  section that is executable but not writable, no checked arithmetic because
+- **Console output from two threads interleaves; a prompt, and now every
+  answered line, is one write**: the console serialises a write and nothing
+  else, so two writers at once put their bytes in each other's lines.  The
+  shell's prompt is still three `write`s — `protofire:`, the working
+  directory, `$ ` — so anything printing at that moment lands between them,
+  and the demo boot always has something: `demo-launcher-fault` is a program
+  meant to fault, and its supervisor restarts it while the shell sits at the
+  prompt.  That is the weakness.  What is no longer a weakness is a line's
+  *boundaries* once written: the shell's answers, its `echo` builtin and the
+  payloads' `key: value` lines are each one `write` now, where the two later
+  ones used to be three.  The three that were split cost two gates about one
+  boot in three before the feeder learned to wait for the shell's own line,
+  and `make check-x8664-init-no-start` kept failing 2 of 12 boots after that
+  because the feeder typed two input lines at once and `echo` split its own
+  output.  Both are fixed: measured 12 of 12 boots, with every answer on a
+  line of its own.  The split also hid a real defect in a payload — the
+  aarch64 exception handler reached into the kernel's `.rodata` through a
+  panic path, which
+  `src/user/demo/payload_test_support.rs` catches from the instructions.
+  What still stands is the prompt: one `write` for it would close the last
+  window, and the three constraints that make that non-trivial in a payload —
+  a section that is executable but not writable, no checked arithmetic because
   a panic is a link outside the payload, and no bulk copy because that is
   `memcpy` — are in `docs/kernel/drivers.md` for whoever does it.
 
