@@ -72,6 +72,15 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
 
 fail() {
     printf 'riscv64 SMP check failed: %s\n' "$1" >&2
+    # The fatal lines first, and all of them.  They are what the failure is
+    # about, and they are not always near the end of the log: a fault on one
+    # CPU is followed by whatever the others were doing, so a fixed tail can
+    # cut out the very lines a reader needs.  This check failed for a long
+    # time while its own report hid the evidence.
+    if grep -a -F "[FATAL]" "$log_file" >/dev/null 2>&1; then
+        printf '  fatal lines from the log:\n' >&2
+        grep -a -F "[FATAL]" "$log_file" | tr -d '\000' >&2
+    fi
     printf '  last lines of the log:\n' >&2
     tail -n 12 "$log_file" | tr -d '\000' >&2
     exit 1

@@ -550,9 +550,31 @@ balancing and runtime stack protection.
   the one that did it is not the one that trapped.  The probe for that is
   `report_kernel_root_user_return`, called from every return to U-mode: it
   reads `satp` before the `sret` and prints `returning to U-mode on the kernel
-  root` when the root is the kernel's.  That line did not appear in the 60-run
-  session, because those two failures were captured before it existed; the next
-  session that faults should print it first, and that is the line to look for.
+  root` when the root is the kernel's.
+
+  That probe fired.  A 60-boot run with it in place faulted **three times**,
+  and all three carry the same pair of lines:
+
+      returning to U-mode on the kernel root sepc=0x85201be6 sstatus=0x200000020 sp=0x853ffbe0
+      trap scause=0x0c sepc=0x85201be6 stval=0x85201be6 sstatus=0x200000020 sp=0x853ffbe0
+
+  Deduplicated across the three, those are one line each — the CPU number is
+  the only field that varies (`cpu1` once, `cpu2` twice).  So this is not a
+  race window that narrows with timing: every occurrence reaches the *same
+  state*, with the kernel root already installed **before** the `sret` that
+  returns to U-mode.  The trap is a consequence, not the event.
+
+  That rules out the last thing the frame could not settle: nothing switches
+  the root between the `sret` and the fault, because the probe reads `satp`
+  first and already sees the kernel's.  The defect is upstream, in whatever
+  let a user thread's trap frame be returned with the kernel root installed —
+  and the 5% rate (3 of 60) makes it reproducible enough to chase from here.
+
+  The next probe, if one is needed, belongs in
+  `Scheduler::activate_thread_address_space`: it is the only thing that
+  installs a root for a dispatch, so recording the thread, whether it has a
+  user start and what `activate_address_space_for_thread` returned there would
+  name the dispatch that dispatched a user frame onto the kernel root.
 
 ---
 
