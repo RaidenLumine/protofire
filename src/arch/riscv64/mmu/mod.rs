@@ -324,6 +324,55 @@ static KERNEL_STACK_WINDOW_PMD: AlignedKernelTranslationTable =
     AlignedKernelTranslationTable::new(PageTable::zeroed());
 
 static PREPARED_ROOT_TABLE: AtomicUsize = AtomicUsize::new(0);
+
+/// The root each CPU last installed for a *user* thread, or zero.
+///
+/// A user thread's trap frame can only be returned to U-mode on the root its
+/// dispatch installed.  When that is not what `satp` holds, the question is
+/// not "did the dispatch install it" — it did — but "what replaced it", and
+/// the only way to answer that from a trap is to have recorded the value the
+/// dispatch left behind.  Indexed by `cpu_id`, so two CPUs racing do not
+/// overwrite each other's answer.
+pub static USER_ROOT_INSTALLED: [AtomicUsize; crate::kernel::MAX_CPUS] =
+    [const { AtomicUsize::new(0) }; crate::kernel::MAX_CPUS];
+
+/// Record the root a user thread was dispatched on, for the sret check.
+pub fn note_user_root_installed(root: usize) {
+    let cpu = crate::kernel::percpu::get().cpu_id as usize;
+    if let Some(slot) = USER_ROOT_INSTALLED.get(cpu) {
+        slot.store(root, Ordering::Release);
+    }
+}
+
+/// The return address of the last `restore_kernel_address_space` on this CPU.
+pub static KERNEL_RESTORE_CALLER: [AtomicUsize; crate::kernel::MAX_CPUS] =
+    [const { AtomicUsize::new(0) }; crate::kernel::MAX_CPUS];
+
+/// Record where the last kernel-root restore was called from.
+pub fn note_kernel_restore_caller(ra: usize) {
+    let cpu = crate::kernel::percpu::get().cpu_id as usize;
+    if let Some(slot) = KERNEL_RESTORE_CALLER.get(cpu) {
+        slot.store(ra, Ordering::Release);
+    }
+}
+
+/// Where this CPU last restored the kernel root from, or zero.
+pub fn kernel_restore_caller() -> usize {
+    let cpu = crate::kernel::percpu::get().cpu_id as usize;
+    KERNEL_RESTORE_CALLER
+        .get(cpu)
+        .map(|slot| slot.load(Ordering::Acquire))
+        .unwrap_or(0)
+}
+
+/// What this CPU last installed for a user thread, or zero.
+pub fn user_root_installed() -> usize {
+    let cpu = crate::kernel::percpu::get().cpu_id as usize;
+    USER_ROOT_INSTALLED
+        .get(cpu)
+        .map(|slot| slot.load(Ordering::Acquire))
+        .unwrap_or(0)
+}
 static PREPARED_WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_MAPPED_PAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -1575,7 +1624,6 @@ fn activate_prepared_process_address_space_impl(
 ) -> Option<ActivatedProcessAddressSpace> {
     let previous_root_table_address = current_root_table_address();
     let already_active = previous_root_table_address == address_space.root_table_address();
-
     if !already_active {
         let satp = satp_with_asid(
             (address_space.root_table_address() as u64) >> 12,
@@ -1600,6 +1648,10 @@ fn activate_prepared_process_address_space_impl(
         let _ = satp;
         sfence_vma_all();
     }
+
+    // Remember what this CPU now holds, so a later sret can say whether it
+    // still holds it.
+    note_user_root_installed(address_space.root_table_address());
 
     Some(ActivatedProcessAddressSpace {
         previous_root_table_address,
