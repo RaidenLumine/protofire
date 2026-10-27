@@ -1111,7 +1111,7 @@ numbers it decodes against come from the shared copy.
 
 | Category | Now | Missing |
 |----------|-----|---------|
-| Unit tests (in-module) | Per-module behaviour, registered by feature | — |
+| Unit tests (in-module) | Per-module behaviour, registered by feature.  The aarch64 and riscv64 MMUs are among them: `src/arch/mod.rs` compiles both under `aarch64_mmu_host` and `riscv64_mmu_host` when the test harness builds the library, so their page-table arithmetic — the indexes, what a leaf encodes, what decoding a leaf returns, which descriptor type a walk may follow — is tested on the host.  The rest of each architecture module stays bare-metal: trap vectors and CSR reads are what a host has not. | — |
 | Integration tests | Filesystem, I/O, memory, process, network and syscall areas | Host-side only; the bare-metal side is covered by the runtime smokes, not by these |
 | Fault injection | SimpleFs single- and dual-fault matrix, including V4's xattr table and two-phase superblock writes | Deterministic and bounded; the other filesystems have no equivalent matrix |
 | Recovery tests | Crash and replay scenarios | — |
