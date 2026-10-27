@@ -20,6 +20,10 @@
 //!                                            leaf per usable page, guards left
 //!                                            unfilled)
 
+// The translation tables, ASID helpers and demo user slots are bare-metal
+// only; a host build compiles them but never maps anything.
+#![cfg_attr(not(target_os = "none"), allow(dead_code))]
+
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 use core::arch::asm;
 use core::ptr;
@@ -1923,5 +1927,169 @@ impl PreparedProcessAddressSpace {
 impl Drop for PreparedProcessAddressSpace {
     fn drop(&mut self) {
         free_asid(self.asid);
+    }
+}
+
+#[cfg(test)]
+mod host_tests {
+    use super::*;
+
+    /// Sv39 splits a virtual address into three nine-bit indexes and a
+    /// twelve-bit offset.  Each index must select the entry the architecture
+    /// says it does, or a walk lands in the wrong table — which is a mapping
+    /// that resolves to the wrong physical page, not a mapping that fails.
+    #[test]
+    fn sv39_indexes_select_the_architecture_s_entries() {
+        // Zero addresses select entry zero at every level.
+        assert_eq!(pgd_index(0), 0);
+        assert_eq!(pmd_index(0), 0);
+        assert_eq!(pte_index(0), 0);
+
+        // Each level's stride is its own shift: 1 GiB, 2 MiB, 4 KiB.
+        assert_eq!(pgd_index(1 << 30), 1);
+        assert_eq!(pmd_index(1 << 21), 1);
+        assert_eq!(pte_index(1 << 12), 1);
+
+        // A bit below a level's stride does not move that level's index.
+        assert_eq!(pgd_index((1 << 30) - 1), 0);
+        assert_eq!(pmd_index((1 << 21) - 1), 0);
+        assert_eq!(pte_index((1 << 12) - 1), 0);
+
+        // The last byte of the 39-bit space lands in the last entry of every
+        // level; the address one bit below the PGD stride only fills the lower
+        // two, which is what makes the three indexes independent.
+        assert_eq!(pgd_index((1 << 39) - 1), 0x1FF);
+        assert_eq!(pmd_index((1 << 39) - 1), 0x1FF);
+        assert_eq!(pte_index((1 << 39) - 1), 0x1FF);
+        assert_eq!(pgd_index(0x0000_003F_FFFF_F000), 0xFF);
+    }
+
+    /// A descriptor's physical page base is its PPN field, shifted back into an
+    /// address.  Reading it wrong is the difference between a table entry that
+    /// points at its child and one that points at the page before it.
+    #[test]
+    fn a_descriptor_s_physical_base_is_its_ppn_shifted_back() {
+        let address = 0x0000_0000_8000_1000usize;
+        let entry = table_entry(address);
+        assert_eq!(page_base_address(entry), address);
+
+        // Only PPN bits survive: the flags in the low ten bits are not part of
+        // the address, and a descriptor with every flag set decodes the same.
+        assert_eq!(page_base_address(entry | 0x3FF), address);
+
+        // The PPN mask bounds the address, so a descriptor cannot claim a
+        // physical address the field cannot hold: 44 PPN bits, shifted back to
+        // a byte address, is 56 bits of reachable physical memory and no more.
+        assert_eq!(page_base_address(u64::MAX), 0x00FF_FFFF_FFFF_F000);
+    }
+
+    /// A table descriptor is valid and nothing else: an entry with any of RWX
+    /// set would be a leaf, and a walk that read it as a table would follow a
+    /// physical address that is not a table.
+    #[test]
+    fn a_table_descriptor_is_valid_without_read_write_or_execute() {
+        let entry = table_entry(0x8000_2000);
+        assert_ne!(entry & PTE_VALID, 0);
+        assert_eq!(entry & (PTE_READ | PTE_WRITE | PTE_EXECUTE), 0);
+        assert_eq!(entry & PTE_USER, 0);
+    }
+
+    /// The 2 MiB block the runtime tables use for the kernel windows: readable,
+    /// writable, executable, and supervisor-only.  It is a leaf at PMD level,
+    /// which is what the walk's RWX test relies on.
+    #[test]
+    fn a_block_descriptor_is_a_supervisor_leaf() {
+        let entry = normal_pmd_block_entry(0x8000_0000);
+        assert_ne!(entry & PTE_VALID, 0);
+        assert_ne!(entry & PTE_READ, 0);
+        assert_ne!(entry & PTE_WRITE, 0);
+        assert_ne!(entry & PTE_EXECUTE, 0);
+        assert_eq!(entry & PTE_USER, 0);
+        assert_eq!(page_base_address(entry), 0x8000_0000);
+    }
+
+    /// A user page never has both `W` and `X`, because Sv39 gives a page
+    /// writable-or-executable but not both — and the kernel relies on it:
+    /// a payload's own code faulting on a write is what the demo exercises.
+    #[test]
+    fn a_user_page_is_writable_or_executable_never_both() {
+        let writable = user_page_entry(0x9000_0000, PagePermissions::READ_WRITE);
+        assert_ne!(writable & PTE_WRITE, 0);
+        assert_eq!(writable & PTE_EXECUTE, 0);
+        assert_ne!(writable & PTE_USER, 0);
+
+        let executable = user_page_entry(0x9000_1000, PagePermissions::READ_EXECUTE);
+        assert_ne!(executable & PTE_EXECUTE, 0);
+        assert_eq!(executable & PTE_WRITE, 0);
+        assert_ne!(executable & PTE_USER, 0);
+
+        // Read-only is the third case, and it must not pick up either bit.
+        let read_only = user_page_entry(0x9000_2000, PagePermissions::READ);
+        assert_eq!(read_only & PTE_WRITE, 0);
+        assert_eq!(read_only & PTE_EXECUTE, 0);
+        assert_ne!(read_only & PTE_READ, 0);
+    }
+
+    /// A user page always carries `U`.  Without it the page is supervisor-only
+    /// and a ring-3 fetch faults on its own code — which is the shape of a boot
+    /// that loads a payload and then dies at its entry point.
+    #[test]
+    fn every_user_page_is_user_accessible() {
+        for permissions in [
+            PagePermissions::READ,
+            PagePermissions::READ_WRITE,
+            PagePermissions::READ_EXECUTE,
+            PagePermissions::READ_WRITE_EXECUTE,
+        ] {
+            let entry = user_page_entry(0x9000_3000, permissions);
+            assert_ne!(
+                entry & PTE_USER,
+                0,
+                "a user page without U is not user-accessible: {permissions:?}"
+            );
+        }
+    }
+
+    /// Decoding a leaf's permissions is the inverse of encoding them, for the
+    /// shapes this module can produce.  A round trip that loses a bit would
+    /// make `translate_user` answer a permission the entry does not grant.
+    #[test]
+    fn decoding_permissions_inverts_encoding_them() {
+        for (requested, expected) in [
+            (PagePermissions::READ, PagePermissions::READ),
+            (PagePermissions::READ_WRITE, PagePermissions::READ_WRITE),
+            (PagePermissions::READ_EXECUTE, PagePermissions::READ_EXECUTE),
+        ] {
+            let entry = user_page_entry(0x9000_4000, requested);
+            assert_eq!(
+                page_permissions_from_entry(entry),
+                expected,
+                "round trip lost a bit for {requested:?}"
+            );
+        }
+    }
+
+    /// `align_up` rounds to the next multiple and refuses to wrap.
+    #[test]
+    fn align_up_rounds_up_and_refuses_to_overflow() {
+        assert_eq!(align_up(0, 4096), Some(0));
+        assert_eq!(align_up(1, 4096), Some(4096));
+        assert_eq!(align_up(4096, 4096), Some(4096));
+        assert_eq!(align_up(4097, 4096), Some(8192));
+        assert_eq!(align_up(usize::MAX, 4096), None);
+    }
+
+    /// `range_within` is the containment test the layout validator uses, and
+    /// its `start <= end` clause is what makes an inverted range fail rather
+    /// than pass vacuously.
+    #[test]
+    fn range_within_rejects_outside_and_inverted_ranges() {
+        assert!(range_within(10, 20, 0, 100));
+        assert!(range_within(0, 100, 0, 100));
+        // One byte outside on either side.
+        assert!(!range_within(9, 20, 10, 100));
+        assert!(!range_within(10, 101, 10, 100));
+        // Inverted: `start > end`.
+        assert!(!range_within(20, 10, 0, 100));
     }
 }

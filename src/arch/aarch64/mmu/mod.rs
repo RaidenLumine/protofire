@@ -2352,3 +2352,210 @@ impl Drop for PreparedProcessAddressSpace {
         free_asid(self.asid);
     }
 }
+
+#[cfg(test)]
+mod host_tests {
+    use super::*;
+
+    /// A table descriptor names a table and nothing else.  Its type field must
+    /// be `0b11`; `0b01` would be a block, and a walk that followed a block as
+    /// a table would read a physical address that is not one.
+    #[test]
+    fn a_table_descriptor_is_a_table_and_no_other_type() {
+        let entry = table_entry(0x4000_0000);
+        assert_eq!(entry & 0x3, DESCRIPTOR_TABLE);
+        assert_ne!(entry & 0x3, DESCRIPTOR_BLOCK);
+        // The address survives, page-aligned, and the low bits are the type.
+        assert_eq!(entry & 0x0000_FFFF_FFFF_F000, 0x4000_0000);
+    }
+
+    /// The two leaf types differ by one bit and mean different things: `0b11`
+    /// is a page at L3, `0b01` a block above it.  An entry built with the wrong
+    /// type is a mapping the architecture resolves at the wrong level.
+    #[test]
+    fn a_page_and_a_block_carry_their_own_type() {
+        let page = user_page_entry(0x5000_0000, PagePermissions::READ);
+        assert_eq!(page & 0x3, DESCRIPTOR_PAGE);
+
+        let block = kernel_l2_block_entry(0x8000_0000);
+        assert_eq!(block & 0x3, DESCRIPTOR_BLOCK);
+    }
+
+    /// A block descriptor's address field masks at its own size: a 2 MiB block
+    /// has 21 bits of offset that are part of the descriptor, not the address.
+    #[test]
+    fn a_two_megabyte_block_masks_at_two_megabytes() {
+        let entry = kernel_l2_block_entry(0x8000_0000 + 0x1F_FFFF);
+        assert_eq!(entry & 0x0000_FFFF_FFE0_0000, 0x8000_0000);
+
+        // One byte past the block starts the next one.
+        let entry = kernel_l2_block_entry(0x8000_0000 + 0x20_0000);
+        assert_eq!(entry & 0x0000_FFFF_FFE0_0000, 0x8020_0000);
+
+        // The 21-bit offset is not part of the address field.  What lives in
+        // those bits of the descriptor is the low part of the flags, so this
+        // asserts on the address, not on the raw word.
+        assert_eq!(
+            kernel_l2_block_entry(0x8000_0000 + 0x1F_FFFF) & 0x0000_FFFF_FFE0_0000,
+            kernel_l2_block_entry(0x8000_0000) & 0x0000_FFFF_FFE0_0000
+        );
+    }
+
+    /// A 1 GiB device block masks at one gigabyte, which is a different mask
+    /// from the 2 MiB one — and the low window is the one it covers.
+    #[test]
+    fn a_one_gigabyte_block_masks_at_one_gigabyte() {
+        // 0x3FFFFFFF is the last byte of the first gigabyte, so its address
+        // field is zero and the next byte starts the second.
+        let entry = device_l1_block_entry(0x3FFF_FFFF);
+        assert_eq!(entry & 0x0000_FFFF_C000_0000, 0);
+
+        let entry = device_l1_block_entry(0x4000_0000);
+        assert_eq!(entry & 0x0000_FFFF_C000_0000, 0x4000_0000);
+    }
+
+    /// The kernel's own block descriptor is RWX and EL0-inaccessible; the user
+    /// page is the other way round.  This is the pair whose confusion is a
+    /// privilege escalation, so each half is asserted on its own.
+    #[test]
+    fn kernel_and_user_descriptors_differ_in_privilege() {
+        let kernel = kernel_l2_block_entry(0x8000_0000);
+        assert_eq!(kernel & (0b11 << 6), AP_EL1_RW, "kernel must be EL1-only");
+        assert_eq!(kernel & UXN_EXECUTE_NEVER, 0, "kernel text is executable");
+
+        let user = user_page_entry(0x9000_0000, PagePermissions::READ_WRITE);
+        assert_eq!(
+            user & (0b11 << 6),
+            AP_EL1_EL0_RW,
+            "a user page must admit EL0"
+        );
+    }
+
+    /// `AP[2:1] = 0b01` is the only encoding that grants EL0 write; the other
+    /// two are read-only for EL0.  A builder that emitted `0b00` for a writable
+    /// page would hand user space a page it cannot write.
+    #[test]
+    fn only_one_access_permission_encoding_admits_el0_writes() {
+        for (permissions, admits_write) in [
+            (PagePermissions::READ, false),
+            (PagePermissions::READ_WRITE, true),
+            (PagePermissions::READ_EXECUTE, false),
+        ] {
+            let entry = user_page_entry(0x9000_1000, permissions);
+            let ap = (entry >> 6) & 0x3;
+            assert_eq!(
+                ap == 0b01,
+                admits_write,
+                "EL0 write access wrong for {permissions:?}"
+            );
+        }
+    }
+
+    /// A user page is never both writable and executable: the builder clears
+    /// `UXN` only for the executable case and only grants write in the other.
+    #[test]
+    fn a_user_page_is_never_writable_and_executable() {
+        let writable = user_page_entry(0x9000_2000, PagePermissions::READ_WRITE);
+        assert_ne!(writable & UXN_EXECUTE_NEVER, 0, "writable page must be UXN");
+        assert_eq!((writable >> 6) & 0x3, 0b01);
+
+        let executable = user_page_entry(0x9000_3000, PagePermissions::READ_EXECUTE);
+        assert_eq!(
+            executable & UXN_EXECUTE_NEVER,
+            0,
+            "executable page is not UXN"
+        );
+        assert_eq!((executable >> 6) & 0x3, 0b11, "executable page is EL0 RO");
+    }
+
+    /// A user page is marked not-global and access-flagged.  Without `AF` the
+    /// first access faults; without `nG` the entry survives an address-space
+    /// switch, which is a stale mapping in another process.
+    #[test]
+    fn every_user_page_is_access_flagged_and_not_global() {
+        for permissions in [
+            PagePermissions::READ,
+            PagePermissions::READ_WRITE,
+            PagePermissions::READ_EXECUTE,
+        ] {
+            let entry = user_page_entry(0x9000_4000, permissions);
+            assert_ne!(entry & AF_ACCESS, 0, "missing access flag: {permissions:?}");
+            assert_ne!(entry & NG_NOT_GLOBAL, 0, "global mapping: {permissions:?}");
+        }
+    }
+
+    /// Decoding a leaf's permissions inverts encoding it.
+    #[test]
+    fn decoding_permissions_inverts_encoding_them() {
+        for requested in [
+            PagePermissions::READ,
+            PagePermissions::READ_WRITE,
+            PagePermissions::READ_EXECUTE,
+        ] {
+            let entry = user_page_entry(0x9000_5000, requested);
+            assert_eq!(
+                page_permissions_from_entry(entry),
+                requested,
+                "round trip lost a bit for {requested:?}"
+            );
+        }
+    }
+
+    /// The device and normal descriptors differ in the memory attribute.  A
+    /// device page marked normal is cached, and a cached read of a controller
+    /// register is not the read the device sees.
+    #[test]
+    fn a_device_page_is_not_marked_normal_memory() {
+        let device = device_page_entry(0x0A00_0000);
+        let normal = normal_l3_page_entry(0x8000_0000);
+        // The attribute index is `MAIR_ATTR_*`, which the builders shift into
+        // place; what reaches the descriptor's low bits also carries the
+        // descriptor type, so the two are compared where the index lives.
+        assert_eq!(
+            device & MAIR_ATTR_DEVICE,
+            MAIR_ATTR_DEVICE,
+            "device attr lost"
+        );
+        assert_eq!(
+            normal & MAIR_ATTR_NORMAL,
+            MAIR_ATTR_NORMAL,
+            "normal attr lost"
+        );
+        assert_ne!(
+            device & MAIR_ATTR_DEVICE,
+            normal & MAIR_ATTR_DEVICE,
+            "device and normal memory must differ"
+        );
+    }
+
+    /// `user_block_index` answers `None` outside the text window rather than an
+    /// index into a table that does not cover the address.
+    #[test]
+    fn user_block_index_is_bounded_by_the_text_window() {
+        assert_eq!(user_block_index(KERNEL_TEXT_BASE), Some(0));
+        assert_eq!(user_block_index(KERNEL_TEXT_BASE - 1), None);
+        assert_eq!(user_block_index(KERNEL_TEXT_END), None);
+        assert_eq!(user_block_index(0), None);
+        assert_eq!(user_block_index(usize::MAX), None);
+    }
+
+    /// `align_up` rounds to the next multiple and refuses to wrap.
+    #[test]
+    fn align_up_rounds_up_and_refuses_to_overflow() {
+        assert_eq!(align_up(0, 4096), Some(0));
+        assert_eq!(align_up(1, 4096), Some(4096));
+        assert_eq!(align_up(4096, 4096), Some(4096));
+        assert_eq!(align_up(4097, 4096), Some(8192));
+        assert_eq!(align_up(usize::MAX, 4096), None);
+    }
+
+    /// `range_within` rejects an inverted range instead of passing it.
+    #[test]
+    fn range_within_rejects_outside_and_inverted_ranges() {
+        assert!(range_within(10, 20, 0, 100));
+        assert!(range_within(0, 100, 0, 100));
+        assert!(!range_within(9, 20, 10, 100));
+        assert!(!range_within(10, 101, 10, 100));
+        assert!(!range_within(20, 10, 0, 100));
+    }
+}

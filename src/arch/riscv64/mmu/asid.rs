@@ -14,6 +14,7 @@
 //! 3. Free ASIDs via `free_asid()` when destroying address spaces.
 //! 4. Use `satp_with_asid(ppn, asid)` to construct SATP register values.
 
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
 use core::arch::asm;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;

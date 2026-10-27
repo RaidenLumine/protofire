@@ -47,6 +47,29 @@ pub mod riscv64;
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64;
 
+/// The other two machines' MMUs, compiled on the host so their translation can
+/// be tested.
+///
+/// A page table is arithmetic over a `[u64; 512]`: which entry a virtual
+/// address indexes, what a leaf encodes, and what a walk returns.  None of that
+/// needs the machine, and until now none of it could be tested anywhere but on
+/// the machine — the x86_64 paging code has host tests and these two had none.
+/// The modules already split themselves on `target_os = "none"` (the CSR and
+/// `sfence` paths are behind it, the table paths are not), so what was missing
+/// was a way in.
+///
+/// They are compiled under their own names rather than by making the whole
+/// architecture module buildable on a host: the rest of `arch/riscv64/` and
+/// `arch/aarch64/` is trap vectors and CSR reads, and a host has neither.  This
+/// is the part that does not need them.
+#[cfg(all(test, not(target_arch = "riscv64")))]
+#[path = "riscv64/mmu/mod.rs"]
+pub mod riscv64_mmu_host;
+
+#[cfg(all(test, not(target_arch = "aarch64")))]
+#[path = "aarch64/mmu/mod.rs"]
+pub mod aarch64_mmu_host;
+
 // Re-export the per-architecture interrupt load-balancing dispatcher at the
 // top level so `kernel::irq_balance` can call `crate::arch::irq_balance::*`
 // uniformly across targets (each arch module is host-safe).
