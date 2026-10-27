@@ -622,7 +622,9 @@ unsafe fn shell_builtin_cd(cwd: usize, cwd_capacity: usize, path: usize, path_le
 /// them, and the answer then shares a line with bytes that are not its own.
 /// Measured on `make check-x8664-init-no-start`, one boot in six read
 ///
-///     __protofire_feeder_sync_4__[service] restarting demo-launcher-fault
+/// ```text
+/// __protofire_feeder_sync_4__[service] restarting demo-launcher-fault
+/// ```
 ///
 /// — every byte of the answer present, no longer a line.  `cat` never failed
 /// that way, and the difference is this one: it hands the console the file's

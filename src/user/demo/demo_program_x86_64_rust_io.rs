@@ -386,7 +386,9 @@ unsafe fn append_to_line(
 /// being a line.  Measured on `make check-x8664-init-no-start`, one boot in
 /// twelve read
 ///
-///     [user  ] rust session-file: __protofire_feeder_sync_1__
+/// ```text
+/// [user  ] rust session-file: __protofire_feeder_sync_1__
+/// ```
 ///
 /// with the shell's answer spliced into the payload's own line.  Assembling the
 /// line in this frame and writing it once is what `cat` already did, and it is
