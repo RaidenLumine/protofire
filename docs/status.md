@@ -1058,8 +1058,6 @@ control that are unusual in a hobby kernel.
   filesystem under the *caller's* token, so a program installs exactly what it
   can read and exactly where it can write — and the demo's app zone, mounted
   read-only, refuses a guest before anything is written.
-- **Stack canary**: a random 64-bit canary per thread, verified by
-  `check_stack_canary()` before each context switch back to the scheduler.
 - **Audit subsystem**: classified event types (Syscall, FileOp, Process,
   Network, Auth, MacDenial), a ring buffer for record storage, and dedicated
   syscalls (AuditSetEnable #143 / AuditReadLog #144). The ring buffer is
@@ -1069,6 +1067,13 @@ control that are unusual in a hobby kernel.
 
 **Weaknesses:**
 
+- **The stack canary is not wired**: the build does not enable
+  `-C stack-protector`, and `__stack_chk_guard` in `src/lib.rs` exists only so
+  that a build which did enable it would link.  `Thread::canary` is initialised
+  and never read.  The field and the link slot are both there; the check
+  between them is not.  (The heap's block canary is real and is a different
+  mechanism.)  This was listed as a strength before — a reader had no way to
+  tell, which is what `check-docs.sh` now refuses for this document.
 - **Default allow**: until a MAC policy is loaded, the default is to allow;
   deny-by-default requires an explicit policy.
 - **Audit log is memory-only unless the boot asks otherwise**: the ring buffer

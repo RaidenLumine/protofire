@@ -39,6 +39,13 @@
 # 6. A backticked `make <target>` is an instruction a reader will run, so the
 #    target has to exist.  Prose ("make sure") is not backticked and is not
 #    this check's business.
+# 7. A backticked function name — `foo()` — in `docs/status.md` names a
+#    function the tree defines.  That document says what the tree does today,
+#    so a name in it is a claim, and `check_stack_canary()` sat in its strength
+#    list for as long as it did because nothing could tell a name from a ghost.
+#    Only the status document is checked: an RFC quotes names from the tree as
+#    it was when it decided something, and `docs/fmts/` names shell functions
+#    as often as Rust ones — a rule for one document, not for the directory.
 #
 # What is not checked
 # -------------------
@@ -70,7 +77,9 @@
 # by this script.
 #
 # There is no baseline.  A citation either names a file that exists or it does
-# not, so unlike the ratchets there is nothing to re-record.
+# not, so unlike the ratchets there is nothing to re-record.  Check (7) counts
+# Rust functions, Rust macros and shell functions as definitions: a document
+# writes all three as `name()`.
 #
 # Usage:
 #   sh scripts/check-docs.sh
@@ -109,6 +118,7 @@ trap cleanup EXIT INT TERM
 : > "$work/stale"
 : > "$work/paths"
 : > "$work/make"
+: > "$work/functions"
 
 # Every Markdown file in the tree, not just the ones under `docs/`: the root
 # documents cite the code as often as the reference pages do.  `target/` is
@@ -177,10 +187,40 @@ for doc in $(find . -name '*.md' -not -path './target/*' -not -path './.git/*' |
             }
         }
     ' "$doc" >> "$work/make"
+
+    # (7): a backticked function name — `foo()` — in the *status* document is
+    # a claim that the function exists, because that document says what the
+    # tree does today.  `check_stack_canary()` sat in its strength list for as
+    # long as it did because nothing here could tell a name from a ghost, and a
+    # reader has no way to check one either.  Only `docs/status.md` is
+    # collected: an RFC quotes names from the tree as it was when the decision
+    # was made, and `docs/fmts/` names shell functions as often as Rust ones.
+    if [ "$doc" = "./docs/status.md" ]; then
+        awk '
+            {
+                rest = $0
+                while (match(rest, /`[a-z_][a-z0-9_]*\(\)`/)) {
+                    matched = substr(rest, RSTART, RLENGTH)
+                    name = substr(matched, 2, length(matched) - 4)
+                    printf "%s %d %s\n", FILENAME, NR, name
+                    rest = substr(rest, RSTART + RLENGTH)
+                }
+            }
+        ' "$doc" >> "$work/functions"
+    fi
 done
 
 # The targets a Makefile declares, for the check below.
 awk -F: '/^[a-z][a-z0-9-]*:/ { print $1 }' Makefile | sort -u > "$work/targets"
+
+# Every name the tree defines, for check (7): Rust functions, macros and shell
+# functions all read as `name()` in a document, so all three count.
+{
+    grep -rhoE '\b(fn|macro_rules!)[[:space:]]+[a-z_][a-z0-9_]*' --include=*.rs src/ tests/ 2>/dev/null |
+        sed -E 's/^(fn|macro_rules!)[[:space:]]+//'
+    grep -rhoE '^[a-z_][a-z0-9_]*\(\)' --include=*.sh scripts/ 2>/dev/null |
+        sed -E 's/\(\)$//'
+} | sort -u > "$work/defined"
 
 citations=0
 links=0
@@ -260,6 +300,13 @@ while read -r doc line target; do
     grep -qx "$target" "$work/targets" || printf '%s:%s: `make %s` is not a target the Makefile has\n' \
         "$doc" "$line" "$target" >> "$work/stale"
 done < "$work/make"
+
+# (7): the name inside backticks before `()`.
+while read -r doc line name; do
+    [ -n "${name:-}" ] || continue
+    grep -qx "$name" "$work/defined" || printf '%s:%s: `%s()` names no function the tree defines\n' \
+        "$doc" "$line" "$name" >> "$work/stale"
+done < "$work/functions"
 
 if [ -s "$work/stale" ]; then
     printf 'check-docs: the documents name things the tree does not have\n\n' >&2
