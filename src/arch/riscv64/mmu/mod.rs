@@ -348,12 +348,36 @@ pub fn note_user_root_installed(root: usize) {
 pub static KERNEL_RESTORE_CALLER: [AtomicUsize; crate::kernel::MAX_CPUS] =
     [const { AtomicUsize::new(0) }; crate::kernel::MAX_CPUS];
 
-/// Record where the last kernel-root restore was called from.
-pub fn note_kernel_restore_caller(ra: usize) {
+/// How many times this CPU has restored the kernel root.
+///
+/// A restore's return address is evidence about a fault only if that restore
+/// happened *after* the user frame which faulted was built.  Without a count
+/// the recorded address can be arbitrarily old: the idle path restores on
+/// every empty pass of the dispatch loop, so its address is the one most
+/// likely to be sitting in the slot when a fault is reported, whether or not
+/// it had anything to do with the fault.  Counting the restores lets a report
+/// say how stale its `restore_from=` is.
+pub static KERNEL_RESTORE_COUNT: [AtomicUsize; crate::kernel::MAX_CPUS] =
+    [const { AtomicUsize::new(0) }; crate::kernel::MAX_CPUS];
+
+/// Record one restore of the kernel root, and where it was called from.
+pub fn note_kernel_restore(ra: usize) {
     let cpu = crate::kernel::percpu::get().cpu_id as usize;
     if let Some(slot) = KERNEL_RESTORE_CALLER.get(cpu) {
         slot.store(ra, Ordering::Release);
     }
+    if let Some(slot) = KERNEL_RESTORE_COUNT.get(cpu) {
+        slot.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// How many kernel-root restores this CPU has made, or zero.
+pub fn kernel_restore_count() -> usize {
+    let cpu = crate::kernel::percpu::get().cpu_id as usize;
+    KERNEL_RESTORE_COUNT
+        .get(cpu)
+        .map(|slot| slot.load(Ordering::Acquire))
+        .unwrap_or(0)
 }
 
 /// Where this CPU last restored the kernel root from, or zero.

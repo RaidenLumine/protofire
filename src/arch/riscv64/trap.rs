@@ -420,8 +420,13 @@ fn report_kernel_root_user_return(frame: &TrapFrame, entered_from_user: bool) {
         let installed = crate::arch::mmu::user_root_installed();
         let caller = crate::arch::mmu::kernel_restore_caller();
         println!(
-            "[FATAL] riscv64 returning to U-mode on the kernel root sepc={:#018x} sstatus={:#018x} sp={:#018x} installed={:#x} restore_from={:#x}",
-            frame.sepc, frame.sstatus, frame.stack_pointer, installed, caller,
+            "[FATAL] riscv64 returning to U-mode on the kernel root sepc={:#018x} sstatus={:#018x} sp={:#018x} installed={:#x} restore_from={:#x} restores={}",
+            frame.sepc,
+            frame.sstatus,
+            frame.stack_pointer,
+            installed,
+            caller,
+            crate::arch::mmu::kernel_restore_count(),
         );
     }
 }

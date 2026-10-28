@@ -607,32 +607,72 @@ balancing and runtime stack protection.
   inlined into its callers, it belongs to whatever the caller was merged into.
   `addr2line` on the captured value landed in `arch/riscv64/percpu.rs`, inside
   the probe itself, both times.  The function carries `#[inline(never)]` now
-  and is a separate symbol in the image, so the next capture names a call
-  site — but **no capture has been taken with it yet**: the 60-boot run that
-  followed produced one failure, and that one was the `kworker-syscall-fs`
-  miss below, not this fault.
+  and is a separate symbol in the image, so a capture names a call site.
 
-  Across every run made so far — 439 boots in eight sessions — the page fault
-  appeared 9 times, about 2%, and never in the two most recent runs.  That is
-  the base rate to plan against: a run has to be long enough for a 2% event,
-  and 60 boots catches one about 70% of the time.  The instrumentation has
-  not made it more frequent; if anything the opposite, which is what a probe
-  on the dispatch path does.
+  **The first three captures have now been taken**, over 160 four-hart boots,
+  and they agree with each other:
 
-  One candidate is worth naming because it is the only path that replaces the
-  root while a user frame is still live on a kernel stack: a timer interrupt
-  that preempts a user thread calls `restore_kernel_address_space()` and then
-  `switch_context` away, leaving that thread's trap frame behind.  It is
-  resumed later by a dispatch that activates the thread's root first, so the
-  ordering is right — but it is also the only shape that can produce this
-  frame, which is what `restore_from=` will confirm or rule out.
+      installed=0x0 restore_from=0x80378278 restores=12
+      installed=0x0 restore_from=0x80378278 restores=1534
+      ...                                   restores=<12..1534>
+
+  `addr2line` resolves both addresses to the **idle branch** of
+  `schedule_bare_metal` (`src/kernel/process/scheduler/dispatch.rs`), the one that runs when this CPU
+  has no runnable thread and nothing to steal: it restores the kernel root and
+  `return`s.  So the last thing that touched `satp` before the `sret` was a
+  *scheduler idle pass*, not a dispatch and not a preemption.
+
+  The `installed=0x0` is the part that changes the shape of the question.  The
+  row previously had two readings of this fault — "a correct root was
+  replaced" (`installed` non-zero) and "no root was ever installed"
+  (`installed` zero) — and treated them as two events.  All three captures are
+  the second kind.  `note_user_root_installed` runs inside
+  `activate_prepared_process_address_space_impl`, so a zero says this CPU
+  never activated a *process* root since it last recorded one; and
+  `activate_address_space_for_thread` falls back to the kernel root when a
+  thread has no user address space, which a kernel thread like
+  `kernel-net-rx` never does.
+
+  That pair is consistent with one reading, and it is not a race: the CPU is
+  running a **kernel** thread (`kernel-net-rx` is the thread the fatal line
+  names in all three captures, and its `user_start=false`), the scheduler's
+  idle branch has just put the kernel root in `satp`, and then an `sret` takes
+  a frame that belongs to some *other* thread's user execution back to U-mode.
+  The `sp` in those frames (`0x853ffbe0`, `0x853ffc10`) is in demo slot 1's
+  stack, which is not the kernel thread's stack.  So the frame being returned
+  is not the frame of the thread the CPU believes it is running.
+
+
+  Across every run made so far — 599 boots in nine sessions — the page fault
+  appeared 12 times, about 2%.  That is the base rate to plan against: a run
+  has to be long enough for a 2% event, and 60 boots catches one about 70% of
+  the time.  Two runs of 40 and of 20 in the last session caught none, which
+  at 2% is the ordinary outcome and not evidence of anything.
+
+  The candidate the row named — a timer interrupt preempting a user thread,
+  restoring the kernel root, and switching away with the trap frame still
+  live — is **not** what the captures show.  `restore_from` names the idle
+  branch in all three, and a preemption's restore is
+  `preempt_current_thread_from_interrupt`, a different call site.  That does not clear the preemption path of blame —
+  the idle branch is reached *after* a preemption has already switched the
+  CPU onto the scheduler's own context, and the user thread's frame stays on
+  its kernel stack across that switch — but the restore that ran last is the
+  idle one, so the next question is which stack `schedule_bare_metal` is
+  running on when it returns, not which call site replaced the root.
 
   A second, unrelated intermittent has also appeared in these runs and is
   **not** the bug above: one boot in roughly 60 ends with
   `[service] kworker-syscall-fs stopped` missing, sometimes with the
   scheduler's own line about `kernel-maintenance` being `Waiting` with no
-  thread in any queue.  It has its own signature (no fatal trap at all) and
-  belongs to whoever picks up the maintenance thread's wake path.
+  thread in any queue.  The line is
+  `[sched ] a thread was terminated with no current thread on this CPU
+  (reason=None): parking with interrupts enabled`, and `park_after_termination`
+  leaves the CPU in an `idle()` loop for the rest of the boot — on the boot
+  CPU that takes the machine's clock with it.  Measured separately, the line
+  fires in about 2 of 20 four-hart boots, which is ten times the page fault's
+  rate and does not need a fatal trap to see; on the two boots where both
+  happened, the park came first.  That makes it the cheaper thing to chase,
+  and it is likely the same defect seen earlier.
 
 ---
 

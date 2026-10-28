@@ -95,7 +95,7 @@ pub fn note_kernel_restore_caller_from_this_frame() {
         unsafe {
             core::arch::asm!("mv {ra}, ra", ra = out(reg) ra, options(nomem, nostack, preserves_flags));
         }
-        super::riscv64::mmu::note_kernel_restore_caller(ra);
+        super::riscv64::mmu::note_kernel_restore(ra);
     }
 }
 
