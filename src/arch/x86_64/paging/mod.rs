@@ -891,6 +891,33 @@ mod tests {
         );
     }
 
+    /// Every page a fork demotes is also dropped from the TLB.
+    ///
+    /// Clearing the WRITE bit in the parent's tables does not change what the
+    /// CPU already translated, so without the invalidation the parent's next
+    /// store skips its copy-on-write fault and lands in the frame the child is
+    /// mapped on.  That is a race against scheduling — measured, it corrupted
+    /// the child's stack on about one boot in four — so the runtime gate
+    /// cannot catch it reliably.  This can: the list the flush is driven from
+    /// must name every demoted page, and it must not invent one that was not
+    /// demoted.
+    #[test]
+    fn demoting_a_page_also_invalidates_it() {
+        let shared = vec![
+            (0x401000usize, 0x10_0000usize, PagePermissions::READ),
+            (0x7fff_ffff_e000, 0x20_0000, PagePermissions::READ),
+        ];
+        let demoted = demote_and_invalidate(&shared);
+        assert_eq!(
+            demoted,
+            vec![0x401000usize, 0x7fff_ffff_e000],
+            "the invalidation must name every demoted page, in order"
+        );
+
+        // An empty share demotes nothing; it must not panics or invent a page.
+        assert!(demote_and_invalidate(&[]).is_empty());
+    }
+
     #[test]
     fn prepared_process_address_space_rejects_kernel_user_overlap() {
         let kernel_plan = KernelPagePlan::heap_only((0x401000, 0x402000)).expect("kernel plan");

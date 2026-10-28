@@ -583,20 +583,28 @@ fi
 #
 # The `fork` builtin prints one line per side: the child, resumed inside the
 # same call, and the parent, which also reports the pid the kernel gave the
-# child.  Both lines are required, because each one alone is a different
-# failure.  A child line with no parent line means the parent never came back —
-# the shape this gate saw when fork held the memory-manager lock across the
-# child thread's construction, which deadlocked the shell with no output at all.
-# A parent line with no child line means the child was created and never ran,
-# which is what a wrong resume context produced.  Neither line, together with
-# the boot still finishing, would mean the command never reached the syscall.
+# child.  Both are required, because each alone is a different failure.  A
+# child answer with no parent answer means the parent never came back — the
+# shape this gate saw when fork held the memory-manager lock across the child
+# thread's construction, which deadlocked the shell with no output at all.  A
+# parent answer with no child answer means the child was created and never ran,
+# which is what a wrong resume context produced.  Neither, on a boot that still
+# finished, would mean the command never reached the syscall.
 #
-# `fork: parent of pid N` also carries the pid, so the line is matched with its
-# digits: the payload assembles it in one write, which is what makes a whole-line
-# match meaningful here.
+# The answers are matched as fragments, not as whole lines.  The console
+# serialises a *write*, and fork is the one command in this boot that has two
+# processes writing to the same console: the child's answer can arrive while
+# the shell is printing its prompt, and the log then reads
+#
+#     protofire:/apps/packages/shell$ fork: child resumed
+#
+# — the child's whole write, present, on a line that also holds a prompt.  That
+# is the same shape `require_log_value_follows_prefix` was written for, and a
+# whole-line match was red once in the field with every byte of the answer in
+# the log.
 if [ "$PAYLOAD_SOURCE" != "frozen" ]; then
-    require_log_exact_line "fork: child resumed"
-    if ! LC_ALL=C grep -a -E -x 'fork: parent of pid [0-9]+' "$log_file" >/dev/null 2>&1; then
+    require_log_line "fork: child resumed"
+    if ! LC_ALL=C grep -a -E 'fork: parent of pid [0-9]+' "$log_file" >/dev/null 2>&1; then
         fail_with_log "the fork parent did not report a child pid"
     fi
     # The child exits rather than looping for commands, so its exit is one of

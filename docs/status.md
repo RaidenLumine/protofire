@@ -724,11 +724,13 @@ disk-backed swap, compression, and defragmentation.
     with the right stack pointer and then fetched from an address off its own
     stack (`rip=0x7fffffffed38`, its `rbx` value), 3 of 6 boots, whenever the
     parent happened to store first.  `fork_clone` now invalidates each demoted
-    page.  This one has no host test and cannot have one — a TLB is hardware
-    state — so its guard is the runtime gate: `check-x8664-runtime` types
-    `fork` and requires both the child's `fork: child resumed` and the parent's
-    pid line, and removing the flush turns that gate red (`fork: child resumed`
-    appeared 0 times in the run that was measured).
+    page.  Its guard is `demoting_a_page_also_invalidates_it`: the flush is
+    driven from the same list the call returns, and the test asserts that list
+    names every demoted page, so emptying it turns the test red — measured.  The
+    runtime gate also types `fork` and requires both the child's
+    `fork: child resumed` and the parent's pid line, but it alone was not
+    enough: with the flush removed it still passed 3 of 4 boots, because
+    whether the corruption happens depends on which side stores first.
 
   The child exits after printing rather than looping for commands: there is one
   console, and a second copy reading the same fd would race the first for every

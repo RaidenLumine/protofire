@@ -358,17 +358,17 @@ impl PreparedProcessAddressSpace {
         // aarch64's fork_clone does the equivalent with `tlbi`; riscv64's
         // prepare path rewrites the whole `satp` root, which the hardware
         // treats as a fresh address space.
+        //
         // Per page rather than one range request: the shared pages are
         // scattered (image at the bottom of the user half, stack at the top),
         // and a range request spanning both would ask every other CPU to drop
         // hundreds of GiB of translations for eighty pages.
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        for &(va, _, _) in &shared_pages {
-            // SAFETY: `va` names a page this hierarchy maps and this CPU has
-            // translated; the call only drops that translation, here and on the
-            // other CPUs at their next kernel entry.
-            unsafe { super::runtime::invalidate_tlb(va) };
-        }
+        //
+        // Every page demoted above is dropped from this CPU's TLB, and the
+        // call returns the pages it did that for.
+        let _demoted_pages = demote_and_invalidate(&shared_pages);
+
+        // ── Build child address space ────────────────────────────────────
 
         // ── Build child address space ────────────────────────────────────
 
@@ -688,6 +688,45 @@ impl Drop for PreparedProcessAddressSpace {
         // Box<RawPageTable> and Vec<PreparedUser*> heap allocations are
         // freed by their own Drop impls.
     }
+}
+
+/// Demote a fork's shared pages in this CPU's TLB, and say which ones.
+///
+/// Clearing the WRITE bit in the parent's page tables does not change what the
+/// CPU has already translated: the TLB keeps the old, writable entry, so the
+/// parent's next store to a shared page succeeds without faulting — straight
+/// into the frame the child is now also mapped on.  That is not
+/// "copy-on-write with a lost fault"; it is two processes writing one frame,
+/// and what it produced was a child whose stack had been overwritten by its
+/// parent before it ran: measured, the child entered ring 3 at the right
+/// instruction with the right stack pointer and then fetched from an address
+/// off its own stack (`rip=0x7fffffffed38`, its `rbx`), whenever the parent
+/// happened to store first.
+///
+/// The pages are named one by one rather than as one range: they are scattered
+/// (image at the bottom of the user half, stack at the top), and a range
+/// request spanning both would ask every other CPU to drop hundreds of GiB of
+/// translations for eighty pages.  A full flush is wrong for the other reason —
+/// it would drop the kernel's own mappings that this CPU is running on.
+///
+/// The returned list is the input list, page for page.  It exists so the host
+/// test can assert that this function records every page it is given: a TLB is
+/// hardware state and a host has none, so the record is as close as a unit test
+/// can come to the flush, and the runtime gate that *does* reach the hardware
+/// catches a missing flush only about one boot in four (it depends on which
+/// side happens to store first).
+pub(crate) fn demote_and_invalidate(
+    shared_pages: &[(usize, usize, PagePermissions)],
+) -> Vec<usize> {
+    let demoted: Vec<usize> = shared_pages.iter().map(|&(va, _, _)| va).collect();
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    for &va in &demoted {
+        // SAFETY: `va` names a page this hierarchy maps and this CPU has
+        // translated; the call only drops that translation, here and on the
+        // other CPUs at their next kernel entry.
+        unsafe { super::runtime::invalidate_tlb(va) };
+    }
+    demoted
 }
 
 /// Validate kernel/user page-table boundary invariants.
