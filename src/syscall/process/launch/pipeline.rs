@@ -358,9 +358,18 @@ pub(crate) fn fork(
     let scheduler = super::super::runtime::global_scheduler()?;
     let process = super::super::runtime::current_process()?;
     let thread = super::super::runtime::current_thread()?;
-    let mut memory = crate::memory::global_mut().ok_or(Error::InternalError)?;
 
-    let child = process.fork(&mut memory, scheduler.allocate_pid())?;
+    // The memory-manager guard must not outlive this block.  `Process::fork`
+    // is its only consumer, and the rest of this handler allocates — the
+    // child thread's kernel stack comes from the frame allocator — through
+    // `MemoryManager::global_mut`, which spins until the lock is free.  On one
+    // CPU that spin never ends: the caller is the holder.  Holding the guard
+    // across `new_fork_thread` did exactly that, and every `fork` from the
+    // console stopped the shell with no output at all.
+    let child = {
+        let mut memory = crate::memory::global_mut().ok_or(Error::InternalError)?;
+        process.fork(&mut memory, scheduler.allocate_pid())?
+    };
 
     child.set_parent_pid(process.pid());
     process.add_child(child.pid());

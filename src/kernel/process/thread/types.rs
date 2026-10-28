@@ -46,14 +46,44 @@ impl UserThreadStart {
     /// preparation validates through here (`src/arch/thread.rs` and the
     /// per-architecture modules), so the list of architectures that used to
     /// gate it was the list of targets this crate has, written out.
+    ///
+    /// This is the rule for a *fresh* thread, whose stack pointer is the value
+    /// the first instruction runs with.  The ABI lets the compiler assume that
+    /// value is 16-byte aligned, because whoever calls the entry makes it so.
+    /// A context taken from a thread that is already running is a different
+    /// claim, and [`validate_resumed`](Self::validate_resumed) is its rule.
     pub(crate) fn validate(self) -> Result<Self> {
+        self.check_addresses(true)
+    }
+
+    /// Check a start taken from a thread that is already running.
+    ///
+    /// The only difference from [`validate`](Self::validate) is the stack
+    /// alignment, and that is a fact about x86_64's ABI rather than a
+    /// relaxation: `rsp` is 16-byte aligned at a call instruction and 8 mod 16
+    /// inside the callee, so a context captured anywhere but at a call site is
+    /// *expected* to fail the fresh-entry rule.  Forking from a syscall is
+    /// exactly such a capture, and applying the fresh-entry rule there refused
+    /// every fork whose parent was mid-function.
+    ///
+    /// The rest of the address checks stay: a resumption still needs a
+    /// non-zero, canonical instruction pointer and stack pointer.  Each
+    /// architecture has already applied its own rule to the captured context
+    /// (`validate_runtime_state`), which is what a resumption must satisfy;
+    /// this repeats only the part that every architecture shares.
+    pub(crate) fn validate_resumed(self) -> Result<Self> {
+        self.check_addresses(false)
+    }
+
+    fn check_addresses(self, require_stack_alignment: bool) -> Result<Self> {
         if self.instruction_pointer == 0 || !is_canonical_user_address(self.instruction_pointer) {
             return Err(Error::InvalidArgument);
         }
 
         if self.stack_pointer == 0
             || !is_canonical_user_address(self.stack_pointer)
-            || !is_user_thread_stack_pointer_aligned(self.stack_pointer)
+            || (require_stack_alignment
+                && !is_user_thread_stack_pointer_aligned(self.stack_pointer))
         {
             return Err(Error::InvalidArgument);
         }
@@ -61,7 +91,8 @@ impl UserThreadStart {
         if let Some(exception_stack_pointer) = self.exception_stack_pointer {
             if exception_stack_pointer == 0
                 || !is_canonical_user_address(exception_stack_pointer)
-                || !is_user_thread_stack_pointer_aligned(exception_stack_pointer)
+                || (require_stack_alignment
+                    && !is_user_thread_stack_pointer_aligned(exception_stack_pointer))
             {
                 return Err(Error::InvalidArgument);
             }

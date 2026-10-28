@@ -116,6 +116,44 @@ fn try_new_user_rejects_misaligned_stack_pointer() {
     ));
 }
 
+/// A resume accepts the stack pointer a fork actually captures.
+///
+/// x86_64's ABI puts `rsp` at 8 mod 16 inside a function body and at 0 mod 16
+/// only at a call instruction, so a context captured at a syscall from
+/// mid-function — which is where `fork` runs — is misaligned by the
+/// fresh-entry rule's own definition.  Applying that rule to a resume refused
+/// every fork whose parent was not at a call site, which from the console is
+/// all of them; measured, `fork` printed `fork: refused` on 9 of 9 boots
+/// before this test existed.
+#[test]
+fn resumed_start_accepts_a_captured_stack_pointer() {
+    let start = UserThreadStart::new(0x1000, 0x2004, None);
+    assert!(matches!(start.validate(), Err(Error::InvalidArgument)));
+    assert_eq!(start.validate_resumed().unwrap().stack_pointer, 0x2004);
+}
+
+/// A resume still refuses addresses no thread could run at.
+///
+/// The alignment is the only check the two rules disagree about; dropping it
+/// must not drop the rest.  A zero or non-canonical pointer is as invalid on a
+/// resume as on a fresh entry, and a resume that accepted one would put the
+/// machine somewhere it cannot come back from.
+#[test]
+fn resumed_start_still_refuses_unusable_addresses() {
+    assert!(UserThreadStart::new(0x1000, 0, None)
+        .validate_resumed()
+        .is_err());
+    assert!(UserThreadStart::new(0, 0x2000, None)
+        .validate_resumed()
+        .is_err());
+    assert!(UserThreadStart::new(0x0000_8000_0000_0000, 0x2000, None)
+        .validate_resumed()
+        .is_err());
+    assert!(UserThreadStart::new(0x1000, 0x7fff_ffff_ffff_fffc, None)
+        .validate_resumed()
+        .is_err());
+}
+
 #[test]
 fn new_thread_on_terminated_process_is_terminated() {
     // Thread construction on a dead process cannot register the tid; the

@@ -683,23 +683,42 @@ disk-backed swap, compression, and defragmentation.
 
   `Fork` (#62) now has a caller: `sys_fork` in `src/user/shared/syscall.rs` and
   a `fork` builtin in the shell payload, so it can be run from a console
-  rather than only reasoned about.  Running it **does not work yet**, and the
-  way it fails is the useful part:
+  rather than only reasoned about.  Running it found three defects the host
+  tests could not, and two are now fixed:
 
-  - On a refusal the shell prints `fork: refused` and keeps running.  That is
-    the syscall answering, the wrapper decoding it, and the builtin reporting
-    it — the whole path works when the kernel says no.
-  - About one run in three, `fork` produces no output at all and the service
-    manager reports `[service] shell stopped`.  No fatal trap, no panic: the
-    calling process is simply gone.  Measured 3 of 3 boots on one CPU with one
-    such run and 2 of 2 on two CPUs with the shell stopping on the second —
-    so this is not a multi-CPU race, and the rate is high enough to chase
-    without a long run.
-
-  So the activation is right and the refusal path is right; what is missing is
-  the copy.  The three defects this row lists above were all real and all
-  fixed, and none of them explains a caller disappearing without a word, which
-  makes that the next question rather than a re-reading of the old ones.
+  - **The console refused every fork.**  `new_user_fork` checked the child's
+    resumed context with `UserThreadStart::validate`, the rule for a *fresh*
+    thread, which requires a 16-byte-aligned stack pointer.  x86_64's ABI puts
+    `rsp` at 0 mod 16 only at a call instruction and 8 mod 16 inside the callee,
+    so a context captured at the syscall — which is where `fork` runs — is
+    misaligned by definition: measured `0x7fffffffec18` on every boot, and
+    `fork: refused` on 9 of 9.  `validate_resumed` is now the rule for a
+    captured context: it keeps the zero and canonical-address checks and drops
+    only the alignment.  Both halves are pinned by
+    `resumed_start_accepts_a_captured_stack_pointer` and
+    `resumed_start_still_refuses_unusable_addresses`; reverting the flag turns
+    the first red.
+  - **The caller then stopped with no output at all**, which was the
+    "no output, shell stopped" shape this row used to record, and it was a
+    deadlock rather than a crash.  `fork` held the memory-manager guard across
+    `new_fork_thread`, whose `KernelStack::new` allocates through
+    `MemoryManager::global_mut`; on one CPU that spin never ends because the
+    caller is the holder.  The guard now closes before the thread is built.
+  - **What is left is the copy**, and it is a bug in the software page table
+    rather than in the MMU: after the two fixes the child runs
+    (`fork: child resumed`) and the *parent* is then terminated by a
+    write-protection fault on its own stack
+    (`addr=0x7fffffffec20 ... diagnosis=protection-fault-on-writable-page`).
+    `PageTable` is one global table keyed by virtual address with no process
+    identity, so `register_user_pages` — which silently *unmaps* an existing
+    user mapping at the same address — lets a fork's child registration
+    replace the parent's entries.  The hardware root still says writable, so
+    the write faults, and the software table then says the page is anonymous
+    rather than CoW, so `resolve_page_fault` declines to copy it and the
+    process dies.  Fixing that means giving the software table a process
+    identity; it is not a local patch, and this row will say so until it is
+    done.
+- **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
 - **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
   and automatic topology discovery (ACPI SRAT/SLIT on x86_64; FDT numa-node-id
   / distance-map on AArch64 and RISC-V); a default single-node topology always

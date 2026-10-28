@@ -82,12 +82,18 @@ impl Thread {
     /// The child resumes with the parent's saved register state rather than at
     /// a fresh user start; which context that is, and how it is handed over, is
     /// the architecture's business — see [`UserForkContext`].
+    ///
+    /// The start is checked with [`UserThreadStart::validate_resumed`], not the
+    /// fresh-entry rule: a fork captures the parent mid-execution, where
+    /// x86_64's ABI puts `rsp` at 8 mod 16, so the fresh-entry rule refuses
+    /// every fork.  The two methods' docs say why that is a fact about
+    /// resumption rather than a relaxed check.
     #[cfg_attr(not(target_os = "none"), allow(dead_code))] // bare-metal fork path only
     pub(crate) fn new_user_fork<C: UserForkContext>(
         process: Arc<Process>,
         context: C,
     ) -> Result<Arc<Self>> {
-        let start = context.user_thread_start().validate()?;
+        let start = context.user_thread_start().validate_resumed()?;
         let thread = Self::new_inner(process, start.instruction_pointer, None, Some(start));
         context.install(&thread);
         Ok(thread)
