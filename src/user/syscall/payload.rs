@@ -423,7 +423,12 @@ macro_rules! define_aarch64_payload_runtime {
             )
         }
 
+        // The only caller is the shell payload, which a host build does not
+        // expand; a bare-metal build of the same architecture does, and clippy
+        // lints both.  The allow is on the item rather than the file because
+        // the rest of the stubs are reached either way.
         #[inline(never)]
+        #[allow(dead_code)]
         #[link_section = $section]
         fn fork_process() -> usize {
             payload_runtime_invoke_raw_status(
@@ -593,7 +598,12 @@ macro_rules! define_riscv64_payload_runtime {
             )
         }
 
+        // The only caller is the shell payload, which a host build does not
+        // expand; a bare-metal build of the same architecture does, and clippy
+        // lints both.  The allow is on the item rather than the file because
+        // the rest of the stubs are reached either way.
         #[inline(never)]
+        #[allow(dead_code)]
         #[link_section = $section]
         fn fork_process() -> usize {
             payload_runtime_invoke_raw_status(
@@ -1444,7 +1454,12 @@ macro_rules! define_x86_64_payload_runtime {
             )
         }
 
+        // The only caller is the shell payload, which a host build does not
+        // expand; a bare-metal build of the same architecture does, and clippy
+        // lints both.  The allow is on the item rather than the file because
+        // the rest of the stubs are reached either way.
         #[inline(never)]
+        #[allow(dead_code)]
         #[link_section = $section]
         fn fork_process() -> usize {
             payload_runtime_invoke_raw_status(

@@ -52,7 +52,10 @@ if [ "${1:-}" = "--record" ]; then
             '# This is a ratchet, not a budget: the number is what the tree has, and' \
             '# the argument for each remaining item is that it is either generated' \
             '# (the payload macro emits a fixed set per architecture) or part of an' \
-            '# interface that a host build cannot reach.' \
+            '# interface that a host build cannot reach.  THREE of the payload' \
+            '# macro copies are `fork_process`: the shell payload is their only' \
+            '# caller and a host build does not expand it, so the host lint sees no' \
+            '# caller while the bare-metal build has one.' \
             '#'
         census
     } > "$BASELINE"

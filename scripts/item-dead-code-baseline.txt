@@ -8,7 +8,10 @@
 # This is a ratchet, not a budget: the number is what the tree has, and
 # the argument for each remaining item is that it is either generated
 # (the payload macro emits a fixed set per architecture) or part of an
-# interface that a host build cannot reach.
+# interface that a host build cannot reach.  THREE of the payload
+# macro copies are `fork_process`: the shell payload is their only
+# caller and a host build does not expand it, so the host lint sees no
+# caller while the bare-metal build has one.
 #
 1 src/arch/aarch64/mmu/asid.rs
 2 src/arch/aarch64/psci.rs
@@ -79,5 +82,5 @@
 1 src/syscall/memory/user.rs
 3 src/user/program/install.rs
 1 src/user/program/loader/mod.rs
-89 src/user/syscall/payload.rs
+92 src/user/syscall/payload.rs
 7 tests/simplefs/support/mod.rs
