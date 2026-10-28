@@ -150,13 +150,23 @@ fi
 # The console is typed at, so the check is not merely "the boot printed a
 # banner": a byte arrives from outside the machine, reaches the shell, and
 # the shell's answer is the shell having read it.
+#
+# The log the feeder reads is a parameter, and every boot passes its own.  It
+# used to be the global `$log` unconditionally, which was right for the first
+# section and wrong for the second: that boot writes `$blank_log`, so the
+# feeder counted prompts in the *first* boot's log — already holding four of
+# them — while waiting for a fifth that this boot would never print twice.
+# The symptom was `the shell did not finish` on a boot that had answered
+# perfectly, with the command, its answer and the next prompt all present in
+# the log it was not reading.
 shell_commands() {
-    sh ./scripts/feed-shell-console.sh "$log" "$TIMEOUT_SECONDS" \
+    feeder_log="$1"
+    sh ./scripts/feed-shell-console.sh "$feeder_log" "$TIMEOUT_SECONDS" \
         'echo install-check-answered'
 }
 
 set +e
-shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+shell_commands "$log" | timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
     -machine q35 \
     -cpu max \
     -smp 1 \
@@ -327,7 +337,7 @@ fi
 # And it boots: the same typed-answer boot as the first section, over the
 # table this kernel wrote from nothing.
 set +e
-shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+shell_commands "$blank_log" | timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
     -machine q35 \
     -cpu max \
     -smp 1 \
