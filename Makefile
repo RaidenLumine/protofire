@@ -153,6 +153,7 @@ help:
 		'  make check-layering                   - fail if a module gained a dependency the census does not have' \
 		'  make check-arch-fanout                - fail if the architecture census outside `src/arch/` grew' \
 		'  make check-dead-code-allows           - fail if a file-level allow(dead_code) has no reason' \
+		'  make check-item-dead-code             - fail if item-level allow(dead_code) counts grow' \
 		'  make check-status-rows                - fail if a row of the census in docs/status.md grew past what one may be' \
 		'  make check-feature-matrix             - build every configuration the manifest declares' \
 		'  make check-abi-mirror                 - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
@@ -335,7 +336,8 @@ test-service:
 .PHONY: check-repo-integrity check-docs check-make-targets check-rfcs \
 	check-payload-relocations check-kaslr-relocs check-reproducible-build \
 	check-unsafe-comments check-user-access-windows check-layering \
-	check-arch-fanout check-dead-code-allows check-status-rows \
+	check-arch-fanout check-dead-code-allows check-item-dead-code \
+	check-status-rows \
 	check-feature-matrix \
 	check-abi-mirror check-abi-frozen-payload \
 	check-abi-frozen-payload-aarch64 check-abi-frozen-payload-riscv64 \
@@ -461,6 +463,15 @@ check-arch-fanout:
 # allows in this tree outlived their reasons before it existed.
 check-dead-code-allows:
 	sh ./scripts/check-dead-code-allows.sh
+
+# The file-level check above says what it does not cover: an item-level
+# `#[allow(dead_code)]` names one item, so the next unused item in the file
+# still reports.  True one item at a time, false in aggregate — 276 of them
+# means an item can be added, silenced and never seen again.  This is the same
+# ratchet as `check-layering`, against that count: a file may not grow past its
+# recorded number, and a shrink is re-recorded in the change that made it.
+check-item-dead-code:
+	sh ./scripts/check-item-dead-code.sh
 
 # Hold the line on how long one row of the census may get.  `docs/status.md` is
 # the per-module census, and a row that grows into the story of what landed in

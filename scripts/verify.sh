@@ -229,6 +229,7 @@ run_p3() {
     # load segments silently cost the table 45 entries no gate could see.
     run_make_step "make check-kaslr-relocs" check-kaslr-relocs
     run_make_step "make check-dead-code-allows" check-dead-code-allows
+    run_make_step "make check-item-dead-code" check-item-dead-code
     run_make_step "make check-status-rows" check-status-rows
     run_make_step "make check-ntfs-image" check-ntfs-image
     # And every configuration the manifest declares, which is the one gate
