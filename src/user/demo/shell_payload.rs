@@ -102,8 +102,8 @@ static SHELL_DIRECTORY_MARK: [u8; b"/".len()] = *b"/";
 static SHELL_ROOT_PATH: [u8; b"/".len()] = *b"/";
 
 #[link_section = $section]
-static SHELL_HELP: [u8; b"protofire shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n"
-    .len()] = *b"protofire shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n";
+static SHELL_HELP: [u8; b"protofire shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  fork           copy this shell into a child process\n  exit           stop the shell\n"
+    .len()] = *b"protofire shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  fork           copy this shell into a child process\n  exit           stop the shell\n";
 
 #[link_section = $section]
 static SHELL_UNKNOWN_PREFIX: [u8; b"shell: unknown command: ".len()] = *b"shell: unknown command: ";
@@ -231,6 +231,18 @@ static SHELL_WORD_CAT: [u8; b"cat".len()] = *b"cat";
 
 #[link_section = $section]
 static SHELL_WORD_EXIT: [u8; b"exit".len()] = *b"exit";
+
+#[link_section = $section]
+static SHELL_WORD_FORK: [u8; b"fork".len()] = *b"fork";
+
+#[link_section = $section]
+static SHELL_FORK_PARENT: [u8; b"fork: parent of pid ".len()] = *b"fork: parent of pid ";
+
+#[link_section = $section]
+static SHELL_FORK_CHILD: [u8; b"fork: child resumed\n".len()] = *b"fork: child resumed\n";
+
+#[link_section = $section]
+static SHELL_FORK_FAILED: [u8; b"fork: refused\n".len()] = *b"fork: refused\n";
 
 /// Write the prompt: the shell's name, the working directory, and `$ `.
 #[inline(never)]
@@ -612,6 +624,75 @@ unsafe fn shell_builtin_cd(cwd: usize, cwd_capacity: usize, path: usize, path_le
     // SAFETY: the caller's buffer is still its own; re-reading it reports the
     // directory the shell is in, which on the failure path is where it was.
     unsafe { shell_load_cwd(cwd, cwd_capacity) }
+}
+
+/// Write a decimal number, the smallest-first digits reversed into place.
+///
+/// The payload cannot use `format!` or even a checked divide: a panic routine
+/// is a link outside the section, which `check-payload-relocations` refuses.
+/// The digits go into this frame's buffer and come out forwards.
+#[inline(never)]
+#[link_section = $section]
+fn shell_write_decimal(value: usize) {
+    let mut digits = MaybeUninit::<[u8; 20]>::uninit();
+    let digits_ptr = digits.as_mut_ptr() as usize;
+    let mut count = 0;
+    let mut remaining = value;
+    loop {
+        let digit = remaining.wrapping_rem(10);
+        // SAFETY: `count` only grows while it is below the buffer's length.
+        unsafe {
+            core::ptr::write(
+                digits_ptr.wrapping_add(count) as *mut u8,
+                b'0'.wrapping_add(digit as u8),
+            );
+        }
+        count = count.wrapping_add(1);
+        remaining = remaining.wrapping_div(10);
+        if remaining == 0 || count >= 20 {
+            break;
+        }
+    }
+    // The digits are least-significant first; write them back to front in one
+    // buffer so the number is one write and reads the right way round.
+    let mut line = MaybeUninit::<[u8; 20]>::uninit();
+    let line_ptr = line.as_mut_ptr() as usize;
+    let mut index = 0;
+    while index < count {
+        // SAFETY: `index < count <= 20`, and the source index counts down
+        // inside the same buffer.
+        unsafe {
+            let byte = core::ptr::read(digits_ptr.wrapping_add(count - 1 - index) as *const u8);
+            core::ptr::write(line_ptr.wrapping_add(index) as *mut u8, byte);
+        }
+        index = index.wrapping_add(1);
+    }
+    write_section_message(line_ptr, count);
+}
+
+/// `fork`: copy this shell into a child process.
+///
+/// The syscall returns the child's pid in the parent and zero in the child —
+/// both from the same call site, because the child is a copy of this very
+/// frame.  Each side prints which it is, so a boot's log shows both halves
+/// having run rather than assuming the child scheduled.
+#[inline(never)]
+#[link_section = $section]
+fn shell_builtin_fork() {
+    let pid = fork_process();
+    if payload_runtime_status_is_error(pid) {
+        shell_message!(SHELL_FORK_FAILED);
+        return;
+    }
+    if pid == 0 {
+        // The child: same code, same stack copy, and this is its first
+        // statement after the kernel resumed it.
+        shell_message!(SHELL_FORK_CHILD);
+    } else {
+        shell_message!(SHELL_FORK_PARENT);
+        shell_write_decimal(pid);
+        shell_message!(SHELL_NEWLINE);
+    }
 }
 
 /// `echo`: print the words after the command, space-separated.
@@ -1097,6 +1178,13 @@ extern "C" fn shell_main() -> ! {
                     shell_builtin_cat(path, path_len);
                 }
             }
+        } else if shell_word_at_is(
+            tokens_ptr,
+            0,
+            shell_address!(SHELL_WORD_FORK),
+            SHELL_WORD_FORK.len(),
+        ) {
+            shell_builtin_fork();
         } else if shell_word_at_is(
             tokens_ptr,
             0,

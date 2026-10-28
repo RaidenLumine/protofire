@@ -255,6 +255,23 @@ pub fn sys_getpid() -> Result<usize, isize> {
     decode(rc)
 }
 
+/// Fork the calling process.
+///
+/// Returns the child's pid in the parent and `0` in the child, the way the
+/// POSIX call does — both return through the *same* point in the caller, which
+/// is what makes a fork usable from a program rather than only from a launcher
+/// that holds the child's handle.
+///
+/// The child is a copy at the moment of the call: its own address-space root,
+/// its own copy-on-write view of the parent's pages, and its own thread
+/// resuming at this instruction.  The kernel refuses when the caller has more
+/// than one thread, because a copy of a multi-threaded process has threads the
+/// caller did not ask about.
+pub fn sys_fork() -> Result<usize, isize> {
+    let rc = __shell_syscall0(SYS_FORK);
+    decode(rc)
+}
+
 /// Get current user ID.
 pub fn sys_getuid() -> Result<usize, isize> {
     let rc = __shell_syscall0(SYS_GETUID);

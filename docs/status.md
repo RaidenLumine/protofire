@@ -680,9 +680,26 @@ disk-backed swap, compression, and defragmentation.
   region and copies a new payload into it under a process that still maps it.
   The reference count is tested on the host for both architectures, including
   that `Clone` takes a reference — dropping that one line turns a test red.
-  Nothing in the tree issues `Fork` (#62) except the launch pipeline, so no
-  boot has reached any of this; the tests run against the functions the fork
-  path calls, not against a forked process.
+
+  `Fork` (#62) now has a caller: `sys_fork` in `src/user/shared/syscall.rs` and
+  a `fork` builtin in the shell payload, so it can be run from a console
+  rather than only reasoned about.  Running it **does not work yet**, and the
+  way it fails is the useful part:
+
+  - On a refusal the shell prints `fork: refused` and keeps running.  That is
+    the syscall answering, the wrapper decoding it, and the builtin reporting
+    it — the whole path works when the kernel says no.
+  - About one run in three, `fork` produces no output at all and the service
+    manager reports `[service] shell stopped`.  No fatal trap, no panic: the
+    calling process is simply gone.  Measured 3 of 3 boots on one CPU with one
+    such run and 2 of 2 on two CPUs with the shell stopping on the second —
+    so this is not a multi-CPU race, and the rate is high enough to chase
+    without a long run.
+
+  So the activation is right and the refusal path is right; what is missing is
+  the copy.  The three defects this row lists above were all real and all
+  fixed, and none of them explains a caller disappearing without a word, which
+  makes that the next question rather than a re-reading of the old ones.
 - **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
   and automatic topology discovery (ACPI SRAT/SLIT on x86_64; FDT numa-node-id
   / distance-map on AArch64 and RISC-V); a default single-node topology always

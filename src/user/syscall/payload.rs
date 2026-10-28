@@ -424,6 +424,16 @@ macro_rules! define_aarch64_payload_runtime {
         }
 
         #[inline(never)]
+        #[link_section = $section]
+        fn fork_process() -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Fork as usize,
+            0, 0, 0, 0, 0, 0,
+            )
+        }
+
+
+        #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getppid() -> usize {
@@ -577,6 +587,20 @@ macro_rules! define_riscv64_payload_runtime {
             path,
             length,
             flags,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[link_section = $section]
+        fn fork_process() -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Fork as usize,
+            0,
+            0,
+            0,
             0,
             0,
             0,
@@ -1419,6 +1443,21 @@ macro_rules! define_x86_64_payload_runtime {
             0,
             )
         }
+
+        #[inline(never)]
+        #[link_section = $section]
+        fn fork_process() -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Fork as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
+        }
+
 
         #[inline(never)]
         #[allow(dead_code)]
