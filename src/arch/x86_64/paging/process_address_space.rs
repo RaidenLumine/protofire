@@ -337,6 +337,39 @@ impl PreparedProcessAddressSpace {
             }
         }
 
+        // Drop every cached translation of the pages just demoted.
+        //
+        // Clearing the WRITE bit in the parent's tables does not change what
+        // the CPU has already translated: the TLB keeps the old, writable
+        // entry, so the parent's next store to a shared page succeeds without
+        // faulting — straight into the frame the child is now also mapped on.
+        // That is not "copy-on-write with a lost fault"; it is two processes
+        // writing one frame, and what it produced here was a child whose stack
+        // had been overwritten by its parent before it ran: measured, the
+        // child entered ring 3 at the right instruction with the right stack
+        // pointer and then fetched from an address off its own stack
+        // (`rip=0x7fffffffed38`, its `rbx`), 3 of 6 boots, whenever the parent
+        // happened to store first.
+        //
+        // The windows are exact — each demoted page is invalidated in its own
+        // right — because a full TLB flush would also drop the kernel's own
+        // mappings that this CPU is running on right now.
+        //
+        // aarch64's fork_clone does the equivalent with `tlbi`; riscv64's
+        // prepare path rewrites the whole `satp` root, which the hardware
+        // treats as a fresh address space.
+        // Per page rather than one range request: the shared pages are
+        // scattered (image at the bottom of the user half, stack at the top),
+        // and a range request spanning both would ask every other CPU to drop
+        // hundreds of GiB of translations for eighty pages.
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        for &(va, _, _) in &shared_pages {
+            // SAFETY: `va` names a page this hierarchy maps and this CPU has
+            // translated; the call only drops that translation, here and on the
+            // other CPUs at their next kernel entry.
+            unsafe { super::runtime::invalidate_tlb(va) };
+        }
+
         // ── Build child address space ────────────────────────────────────
 
         // --- Child combined hierarchy ---

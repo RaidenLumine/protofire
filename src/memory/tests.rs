@@ -2,6 +2,7 @@
 //!
 //! Unit tests for the memory manager and its software page table.
 
+use super::paging::AddressSpaceId;
 use super::paging::MappingKind;
 use super::paging::PagePermissions;
 use super::paging::PAGE_SIZE;
@@ -57,6 +58,7 @@ fn register_user_pages_adds_anonymous_mappings() {
     let mut memory = MemoryManager::new();
     memory.page_table.init();
 
+    let owner = 0x1_0000usize;
     let entries = [
         (
             0x1000_0000,
@@ -72,22 +74,118 @@ fn register_user_pages_adds_anonymous_mappings() {
         ),
     ];
 
-    let registered = memory.register_user_pages(&entries);
+    let registered = memory.register_user_pages(owner, &entries);
     assert_eq!(registered, 2);
 
     let (phys, perms, kind) = memory
-        .page_table
-        .lookup_mapping(0x1000_0000)
+        .lookup_mapping_for(owner, 0x1000_0000)
         .expect("first user mapping present");
     assert_eq!(phys, 0x2000_0000);
     assert_eq!(perms, PagePermissions::READ_WRITE);
     assert_eq!(kind, MappingKind::Anonymous);
 
     let (phys, _, _) = memory
-        .page_table
-        .lookup_mapping(0x1000_1000)
+        .lookup_mapping_for(owner, 0x1000_1000)
         .expect("second user mapping present");
     assert_eq!(phys, 0x2000_1000);
+}
+
+/// Two processes may map the same virtual address without disturbing each
+/// other.
+///
+/// This is the defect fork exposed: every process's image and stack live at the
+/// same virtual addresses, and the software page table used to key a mapping by
+/// the address alone.  Whichever process registered second silently replaced
+/// the first one's entry, and the first then faulted on its own stack because
+/// the software table described the *other* process's page.
+///
+/// Both directions are asserted, because a lookup that answers with the wrong
+/// owner is as broken as a registration that overwrites: the parent must still
+/// see its frame, the child must see its own, and a third address space must
+/// see neither.
+#[test]
+fn two_address_spaces_can_map_the_same_virtual_address() {
+    let mut memory = MemoryManager::new();
+    memory.page_table.init();
+
+    let parent = 0x2_0000usize;
+    let child = 0x3_0000usize;
+    let stranger = 0x4_0000usize;
+    let va = 0x7fff_ffff_e000;
+
+    memory.register_user_pages(
+        parent,
+        &[(
+            va,
+            0x10_0000,
+            PagePermissions::READ_WRITE,
+            MappingKind::Anonymous,
+        )],
+    );
+    memory.register_user_pages(
+        child,
+        &[(
+            va,
+            0x20_0000,
+            PagePermissions::READ_WRITE,
+            MappingKind::Anonymous,
+        )],
+    );
+
+    assert_eq!(
+        memory
+            .lookup_mapping_for(parent, va)
+            .map(|(phys, _, _)| phys),
+        Some(0x10_0000),
+        "the parent's registration must survive the child's"
+    );
+    assert_eq!(
+        memory
+            .lookup_mapping_for(child, va)
+            .map(|(phys, _, _)| phys),
+        Some(0x20_0000),
+        "the child must see its own page"
+    );
+    assert_eq!(
+        memory.lookup_mapping_for(stranger, va),
+        None,
+        "an unrelated address space must not see either"
+    );
+
+    // Tearing the child down leaves the parent's mapping in place.
+    memory.unregister_user_page_range(child, va, PAGE_SIZE);
+    assert_eq!(
+        memory
+            .lookup_mapping_for(parent, va)
+            .map(|(phys, _, _)| phys),
+        Some(0x10_0000),
+        "the child's teardown must not unmap the parent's page"
+    );
+    assert_eq!(memory.lookup_mapping_for(child, va), None);
+}
+
+/// Page content is per address space too.
+///
+/// The demand-paging content store is the software page table's neighbour and
+/// had the same key: saving one process's page under a bare virtual address
+/// would let the next process fault it back in as its own.
+#[test]
+fn stored_page_content_is_per_address_space() {
+    let mut memory = MemoryManager::new();
+    let first = AddressSpaceId::from_root_table(0x5_0000);
+    let second = AddressSpaceId::from_root_table(0x6_0000);
+    let va = 0x1000_0000;
+
+    memory.store_page_content(first, va, alloc::vec![0xAA_u8; PAGE_SIZE]);
+    memory.store_page_content(second, va, alloc::vec![0xBB_u8; PAGE_SIZE]);
+
+    assert_eq!(memory.get_page_content(first, va).unwrap()[0], 0xAA);
+    assert_eq!(memory.get_page_content(second, va).unwrap()[0], 0xBB);
+    assert!(memory
+        .get_page_content(AddressSpaceId::from_root_table(0x7_0000), va)
+        .is_none());
+
+    memory.clear_page_content();
 }
 
 #[test]
@@ -113,12 +211,14 @@ fn register_user_pages_skips_kernel_mapping_conflicts() {
     )];
 
     // register_user_pages must refuse to overwrite kernel-space mappings.
-    let registered = memory.register_user_pages(&entries);
+    let owner = 0x8_0000usize;
+    let registered = memory.register_user_pages(owner, &entries);
     assert_eq!(registered, 0);
 
+    // The kernel mapping is visible from every address space, so the owner's
+    // own lookup finds it too.
     let (phys, _, kind) = memory
-        .page_table
-        .lookup_mapping(0x8000_0000)
+        .lookup_mapping_for(owner, 0x8000_0000)
         .expect("kernel mapping preserved");
     assert_eq!(phys, 0x8000_0000);
     assert_eq!(kind, MappingKind::KernelHeap);

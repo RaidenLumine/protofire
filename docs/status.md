@@ -683,8 +683,8 @@ disk-backed swap, compression, and defragmentation.
 
   `Fork` (#62) now has a caller: `sys_fork` in `src/user/shared/syscall.rs` and
   a `fork` builtin in the shell payload, so it can be run from a console
-  rather than only reasoned about.  Running it found three defects the host
-  tests could not, and two are now fixed:
+  rather than only reasoned about.  Running it found four defects the host
+  tests could not, and all four are fixed:
 
   - **The console refused every fork.**  `new_user_fork` checked the child's
     resumed context with `UserThreadStart::validate`, the rule for a *fresh*
@@ -698,27 +698,41 @@ disk-backed swap, compression, and defragmentation.
     `resumed_start_accepts_a_captured_stack_pointer` and
     `resumed_start_still_refuses_unusable_addresses`; reverting the flag turns
     the first red.
-  - **The caller then stopped with no output at all**, which was the
-    "no output, shell stopped" shape this row used to record, and it was a
-    deadlock rather than a crash.  `fork` held the memory-manager guard across
+  - **The caller then stopped with no output at all**, and it was a deadlock
+    rather than a crash: `fork` held the memory-manager guard across
     `new_fork_thread`, whose `KernelStack::new` allocates through
     `MemoryManager::global_mut`; on one CPU that spin never ends because the
     caller is the holder.  The guard now closes before the thread is built.
-  - **What is left is the copy**, and it is a bug in the software page table
-    rather than in the MMU: after the two fixes the child runs
-    (`fork: child resumed`) and the *parent* is then terminated by a
-    write-protection fault on its own stack
-    (`addr=0x7fffffffec20 ... diagnosis=protection-fault-on-writable-page`).
-    `PageTable` is one global table keyed by virtual address with no process
-    identity, so `register_user_pages` — which silently *unmaps* an existing
-    user mapping at the same address — lets a fork's child registration
-    replace the parent's entries.  The hardware root still says writable, so
-    the write faults, and the software table then says the page is anonymous
-    rather than CoW, so `resolve_page_fault` declines to copy it and the
-    process dies.  Fixing that means giving the software table a process
-    identity; it is not a local patch, and this row will say so until it is
-    done.
-- **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
+  - **The software page table had no process identity.**  It is one table for
+    the machine keyed by virtual address, and every process maps its image at
+    `0x100001000` and its stack at the top of the user half, so a spawn, an
+    exec or an exit in one process rewrote or dropped another's entries.
+    Measured before the fix: on 4 of 5 boots the parent's eighty shared pages
+    were already absent from the table by the time `fork` went to demote them
+    (`present_before=0`).  A mapping now carries an `AddressSpaceId` — the root
+    table address the hardware switches on, so software and hardware agree by
+    construction — and the demand-paging content store, swap map and compressed
+    cache are keyed by it too.  Pinned by
+    `two_address_spaces_can_map_the_same_virtual_address` and
+    `stored_page_content_is_per_address_space`; making `AddressSpaceId::matches`
+    answer `true` for everything turns the first red.
+  - **`fork_clone` demoted the parent's pages without flushing the TLB.**
+    Clearing the WRITE bit in the parent's tables does not change what the CPU
+    has already translated, so the parent's next store to a shared page
+    succeeded without faulting — straight into the frame the child was now also
+    mapped on.  Measured: the child entered ring 3 at the right instruction
+    with the right stack pointer and then fetched from an address off its own
+    stack (`rip=0x7fffffffed38`, its `rbx` value), 3 of 6 boots, whenever the
+    parent happened to store first.  `fork_clone` now invalidates each demoted
+    page.  This one has no host test and cannot have one — a TLB is hardware
+    state — so its guard is the runtime gate: `check-x8664-runtime` types
+    `fork` and requires both the child's `fork: child resumed` and the parent's
+    pid line, and removing the flush turns that gate red (`fork: child resumed`
+    appeared 0 times in the run that was measured).
+
+  The child exits after printing rather than looping for commands: there is one
+  console, and a second copy reading the same fd would race the first for every
+  keystroke.
 - **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
   and automatic topology discovery (ACPI SRAT/SLIT on x86_64; FDT numa-node-id
   / distance-map on AArch64 and RISC-V); a default single-node topology always

@@ -50,16 +50,19 @@ pub(crate) fn prepare_arch_user_address_space(
             // hardware page tables.
             //
             // Code is deliberately NOT demand-paged: every user process loads
-            // its image at the same fixed base virtual address, while the
-            // software page table and the demand-paging content store are
-            // keyed by virtual address alone.  Deferring code frames to that
-            // global store would let the next spawn overwrite an earlier
-            // process's image bytes, so later processes would fault on their
-            // first instruction fetch — or, worse, execute the wrong program.
-            // Keeping each process's own code frames resident (as the AArch64
-            // and RISC-V prepare paths already do) preserves per-process
-            // isolation.
+            // its image at the same fixed base virtual address, so deferring
+            // code frames to the demand-paging content store would let the next
+            // spawn overwrite an earlier process's image bytes, and later
+            // processes would fault on their first instruction fetch — or,
+            // worse, execute the wrong program.  Keeping each process's own
+            // code frames resident (as the AArch64 and RISC-V prepare paths
+            // already do) preserves per-process isolation.
+            //
+            // The pages are registered under the root this hierarchy will be
+            // activated with, not the one the CPU is on now: spawn prepares the
+            // next process while the previous one is still running.
             if let Some(mut memory_mut) = crate::memory::global_mut() {
+                let owner = prepared.root_table_address();
                 let entries: Vec<(usize, usize, PagePermissions, MappingKind)> = prepared
                     .user_page_entries()
                     .into_iter()
@@ -72,7 +75,7 @@ pub(crate) fn prepare_arch_user_address_space(
                             && !perms.contains(PagePermissions::WRITE)
                     })
                     .count();
-                let registered = memory_mut.register_user_pages(&entries);
+                let registered = memory_mut.register_user_pages(owner, &entries);
                 crate::println!(
                     "[vm    ] registered {} user pages in software page table ({} code, {} data/stack)",
                     registered,

@@ -24,6 +24,64 @@ pub enum AdviceHint {
     Sequential,
 }
 
+/// Which address space a software mapping belongs to.
+///
+/// The software page table is one table for the whole machine, and every user
+/// process maps its image at the same addresses — the loader puts the entry at
+/// `0x100001000` and the stack just below the top of the user half, in every
+/// process.  Keying a mapping by virtual address alone therefore cannot tell
+/// two processes apart: a spawn, an exec or an exit in one process would
+/// rewrite or drop another's entries.
+///
+/// The identity is the address space's root table address, which is the same
+/// number the hardware switches on: when the kernel asks "what does this
+/// virtual address mean for the process I am running", it reads the root out
+/// of `satp`/`TTBR0_EL1`/`CR3` and looks the mapping up under that.  Software
+/// and hardware then agree by construction rather than by bookkeeping that has
+/// to be kept in step.
+///
+/// [`KERNEL`](Self::KERNEL) is the exception: the kernel's heap, identity
+/// window and device MMIO are mapped in every address space, so they match
+/// every lookup.  That is a property of the layout, not a wildcard chosen for
+/// convenience — those frames are the same frames in every root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct AddressSpaceId(usize);
+
+impl AddressSpaceId {
+    /// The mappings every address space shares: the kernel heap, the identity
+    /// window, device MMIO, and the kernel stacks.
+    pub const KERNEL: Self = Self(0);
+
+    /// The identity of the address space rooted at `root_table_address`.
+    pub const fn from_root_table(root_table_address: usize) -> Self {
+        Self(root_table_address)
+    }
+
+    /// The root table address this identity names, or 0 for the kernel.
+    pub const fn root_table(self) -> usize {
+        self.0
+    }
+
+    /// Does a mapping owned by this address space satisfy a lookup under
+    /// `wanted`?
+    ///
+    /// The kernel's mappings are present in every root, so they answer for
+    /// every address space.  A user mapping answers only for its own.
+    pub const fn matches(self, wanted: Self) -> bool {
+        wanted.0 == self.0 || self.0 == Self::KERNEL.0
+    }
+}
+
+impl core::fmt::Display for AddressSpaceId {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if *self == Self::KERNEL {
+            formatter.write_str("kernel")
+        } else {
+            write!(formatter, "{:#x}", self.0)
+        }
+    }
+}
+
 impl AdviceHint {
     /// Return a human-readable string for this advice hint.
     pub const fn as_str(self) -> &'static str {
@@ -150,6 +208,8 @@ pub struct MappingSnapshot {
     pub accessed: bool,
     /// Advice hint for memory usage (set via madvise).
     pub advice: AdviceHint,
+    /// Which address space this mapping belongs to.
+    pub owner: AddressSpaceId,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -163,6 +223,12 @@ struct Mapping {
     accessed: bool,
     /// Advice hint for memory usage (set via madvise).
     advice: AdviceHint,
+    /// Which address space this mapping belongs to.
+    ///
+    /// The table is machine-wide, so this is what keeps one process's user
+    /// pages from being read, rewritten or reclaimed as another's.  Kernel
+    /// mappings are [`AddressSpaceId::KERNEL`] and answer every lookup.
+    owner: AddressSpaceId,
 }
 
 pub struct PageTable {
@@ -304,6 +370,36 @@ impl PageTable {
         permissions: PagePermissions,
         kind: MappingKind,
     ) -> Result<()> {
+        self.map_to_owned(
+            AddressSpaceId::KERNEL,
+            virtual_address,
+            physical_address,
+            length,
+            permissions,
+            kind,
+        )
+    }
+
+    /// Map a range on behalf of `owner`.
+    ///
+    /// The same contract as [`map_to_with_kind`](Self::map_to_with_kind), with
+    /// the address space the mapping belongs to made explicit.  Overlap is
+    /// checked against mappings visible to `owner` alone, so two processes can
+    /// map the same virtual address without colliding — which they do, because
+    /// every process's image and stack live at the same addresses.
+    ///
+    /// # Errors
+    ///
+    /// As [`map_to_with_kind`](Self::map_to_with_kind).
+    pub fn map_to_owned(
+        &mut self,
+        owner: AddressSpaceId,
+        virtual_address: usize,
+        physical_address: usize,
+        length: usize,
+        permissions: PagePermissions,
+        kind: MappingKind,
+    ) -> Result<()> {
         if !self.initialized {
             return Err(Error::InvalidArgument);
         }
@@ -313,11 +409,11 @@ impl PageTable {
             normalize_mapping(virtual_address, physical_address, length)?;
 
         // Reject overlapping virtual mappings to keep translation unambiguous.
-        if self
-            .mappings
-            .iter()
-            .any(|mapping| mapping.overlaps(virtual_address, length))
-        {
+        // Only mappings this owner can see take part: kernel mappings answer
+        // for every address space, and this owner's own answer for itself.
+        if self.mappings.iter().any(|mapping| {
+            mapping.owner.matches(owner) && mapping.overlaps(virtual_address, length)
+        }) {
             return Err(Error::AlreadyExists);
         }
 
@@ -332,6 +428,7 @@ impl PageTable {
             kind,
             accessed: false,
             advice: AdviceHint::Normal,
+            owner,
         });
         self.profiler.inc_page_table_maps();
         Ok(())
@@ -347,6 +444,25 @@ impl PageTable {
     ///
     /// Returns [`Error::NotFound`] if no mapping intersects the range.
     pub fn unmap(&mut self, virtual_address: usize, length: usize) -> Result<()> {
+        self.unmap_owned(AddressSpaceId::KERNEL, virtual_address, length)
+    }
+
+    /// Remove the mappings in a range that `owner` can see.
+    ///
+    /// A user mapping is visible only to the address space that owns it; the
+    /// kernel's mappings are visible to every address space.  Removing a range
+    /// on behalf of one process therefore leaves another process's entries
+    /// alone even though they name the same virtual addresses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotFound`] if no visible mapping intersects the range.
+    pub fn unmap_owned(
+        &mut self,
+        owner: AddressSpaceId,
+        virtual_address: usize,
+        length: usize,
+    ) -> Result<()> {
         if !self.initialized {
             return Err(Error::InvalidArgument);
         }
@@ -368,8 +484,12 @@ impl PageTable {
             let mapping_end =
                 range_end(mapping.virtual_address, mapping.length).ok_or(Error::InternalError)?;
 
-            if unmap_start >= mapping_end || mapping.virtual_address >= unmap_end {
-                // No overlap: keep the mapping as-is.
+            if !mapping.owner.matches(owner)
+                || unmap_start >= mapping_end
+                || mapping.virtual_address >= unmap_end
+            {
+                // Either another address space's mapping, or no overlap: keep
+                // it as-is.
                 next.push(mapping);
                 continue;
             }
@@ -396,6 +516,7 @@ impl PageTable {
                     kind: mapping.kind,
                     accessed: false,
                     advice: mapping.advice,
+                    owner: mapping.owner,
                 });
             }
         }
@@ -419,29 +540,55 @@ impl PageTable {
     }
 
     /// Look up the physical address, permissions, and mapping kind for
-    /// the given virtual address.
+    /// the given virtual address, as seen by the kernel.
     ///
     /// This is the detailed variant of [`lookup()`] that also returns
-    /// the [`MappingKind`].
+    /// the [`MappingKind`].  It answers for the kernel's own mappings; use
+    /// [`lookup_mapping_owned`](Self::lookup_mapping_owned) for a process's.
     ///
     /// Returns `None` if the address is not covered by any mapping.
     pub fn lookup_mapping(&self, address: usize) -> Option<(usize, PagePermissions, MappingKind)> {
-        self.profiler.inc_page_table_lookups();
-        self.mappings.iter().find_map(|mapping| {
-            let start = mapping.virtual_address;
-            let end = range_end(start, mapping.length)?;
+        self.lookup_mapping_owned(AddressSpaceId::KERNEL, address)
+    }
 
-            if (start..end).contains(&address) {
-                let offset = address - start;
-                Some((
-                    mapping.physical_address + offset,
-                    mapping.permissions,
-                    mapping.kind,
-                ))
-            } else {
-                None
-            }
-        })
+    /// Look up an address as `owner` sees it.
+    ///
+    /// `owner`'s own mappings win; the kernel's mappings answer for every
+    /// address space.  A user mapping that belongs to a different address
+    /// space is not a match, even though it names the same virtual address.
+    pub fn lookup_mapping_owned(
+        &self,
+        owner: AddressSpaceId,
+        address: usize,
+    ) -> Option<(usize, PagePermissions, MappingKind)> {
+        self.profiler.inc_page_table_lookups();
+        // Prefer the owner's own mapping.  Every process maps at the same
+        // virtual addresses, so a kernel mapping and a user mapping can cover
+        // the same address in different roots, and only the owner's entry
+        // describes what the hardware under that root will do.
+        let own = self
+            .mappings
+            .iter()
+            .find(|mapping| mapping.owner == owner && self.mapping_covers(mapping, address));
+        let chosen = own.or_else(|| {
+            self.mappings.iter().find(|mapping| {
+                mapping.owner == AddressSpaceId::KERNEL && self.mapping_covers(mapping, address)
+            })
+        })?;
+        Some((
+            chosen.physical_address + (address - chosen.virtual_address),
+            chosen.permissions,
+            chosen.kind,
+        ))
+    }
+
+    fn mapping_covers(&self, mapping: &Mapping, address: usize) -> bool {
+        let start = mapping.virtual_address;
+        let end = match range_end(start, mapping.length) {
+            Some(end) => end,
+            None => return false,
+        };
+        (start..end).contains(&address)
     }
 
     /// Return the total number of active mappings in this page table.
@@ -462,6 +609,7 @@ impl PageTable {
                 kind: m.kind,
                 accessed: m.accessed,
                 advice: m.advice,
+                owner: m.owner,
             })
             .collect()
     }
@@ -470,11 +618,16 @@ impl PageTable {
     /// clock page-reclamation algorithm to detect recently-used pages).
     /// Returns `true` if the mapping was found and marked.
     pub fn mark_accessed_va(&mut self, virtual_address: usize) -> bool {
+        self.mark_accessed_owned(AddressSpaceId::KERNEL, virtual_address)
+    }
+
+    /// Mark `owner`'s mapping at `virtual_address` as accessed.
+    pub fn mark_accessed_owned(&mut self, owner: AddressSpaceId, virtual_address: usize) -> bool {
         let page_addr = align_down(virtual_address);
         if let Some(mapping) = self
             .mappings
             .iter_mut()
-            .find(|m| m.virtual_address == page_addr)
+            .find(|m| m.owner == owner && m.virtual_address == page_addr)
         {
             mapping.accessed = true;
             true
@@ -486,10 +639,19 @@ impl PageTable {
     /// Clear the accessed bit on the mapping at `virtual_address`.
     /// Returns the previous accessed value, or `None` if not found.
     pub fn clear_accessed_va(&mut self, virtual_address: usize) -> Option<bool> {
+        self.clear_accessed_owned(AddressSpaceId::KERNEL, virtual_address)
+    }
+
+    /// Clear the accessed bit on `owner`'s mapping at `virtual_address`.
+    pub fn clear_accessed_owned(
+        &mut self,
+        owner: AddressSpaceId,
+        virtual_address: usize,
+    ) -> Option<bool> {
         let page_addr = align_down(virtual_address);
         self.mappings
             .iter_mut()
-            .find(|m| m.virtual_address == page_addr)
+            .find(|m| m.owner == owner && m.virtual_address == page_addr)
             .map(|mapping| {
                 let was = mapping.accessed;
                 mapping.accessed = false;
@@ -509,11 +671,21 @@ impl PageTable {
         virtual_address: usize,
         kind: MappingKind,
     ) -> Result<()> {
+        self.replace_mapping_kind_owned(AddressSpaceId::KERNEL, virtual_address, kind)
+    }
+
+    /// Replace the kind of `owner`'s mapping at `virtual_address`.
+    pub fn replace_mapping_kind_owned(
+        &mut self,
+        owner: AddressSpaceId,
+        virtual_address: usize,
+        kind: MappingKind,
+    ) -> Result<()> {
         let page_addr = align_down(virtual_address);
         let mapping = self
             .mappings
             .iter_mut()
-            .find(|m| m.virtual_address == page_addr)
+            .find(|m| m.owner == owner && m.virtual_address == page_addr)
             .ok_or(Error::NotFound)?;
         mapping.kind = kind;
         Ok(())
@@ -525,11 +697,21 @@ impl PageTable {
         virtual_address: usize,
         advice: AdviceHint,
     ) -> Result<()> {
+        self.replace_mapping_advice_owned(AddressSpaceId::KERNEL, virtual_address, advice)
+    }
+
+    /// Replace the advice of `owner`'s mapping at `virtual_address`.
+    pub fn replace_mapping_advice_owned(
+        &mut self,
+        owner: AddressSpaceId,
+        virtual_address: usize,
+        advice: AdviceHint,
+    ) -> Result<()> {
         let page_addr = align_down(virtual_address);
         let mapping = self
             .mappings
             .iter_mut()
-            .find(|m| m.virtual_address == page_addr)
+            .find(|m| m.owner == owner && m.virtual_address == page_addr)
             .ok_or(Error::NotFound)?;
         mapping.advice = advice;
         Ok(())
@@ -545,11 +727,21 @@ impl PageTable {
         virtual_address: usize,
         permissions: PagePermissions,
     ) -> Result<()> {
+        self.replace_mapping_permissions_owned(AddressSpaceId::KERNEL, virtual_address, permissions)
+    }
+
+    /// Replace the permissions of `owner`'s mapping at `virtual_address`.
+    pub fn replace_mapping_permissions_owned(
+        &mut self,
+        owner: AddressSpaceId,
+        virtual_address: usize,
+        permissions: PagePermissions,
+    ) -> Result<()> {
         let page_addr = align_down(virtual_address);
         let mapping = self
             .mappings
             .iter_mut()
-            .find(|m| m.virtual_address == page_addr)
+            .find(|m| m.owner == owner && m.virtual_address == page_addr)
             .ok_or(Error::NotFound)?;
         mapping.permissions = permissions;
         Ok(())
@@ -565,11 +757,21 @@ impl PageTable {
         virtual_address: usize,
         physical_address: usize,
     ) -> Result<()> {
+        self.replace_mapping_phys_owned(AddressSpaceId::KERNEL, virtual_address, physical_address)
+    }
+
+    /// Replace the physical address of `owner`'s mapping at `virtual_address`.
+    pub fn replace_mapping_phys_owned(
+        &mut self,
+        owner: AddressSpaceId,
+        virtual_address: usize,
+        physical_address: usize,
+    ) -> Result<()> {
         let page_addr = align_down(virtual_address);
         let mapping = self
             .mappings
             .iter_mut()
-            .find(|m| m.virtual_address == page_addr)
+            .find(|m| m.owner == owner && m.virtual_address == page_addr)
             .ok_or(Error::NotFound)?;
         mapping.physical_address = align_down(physical_address);
         Ok(())

@@ -608,6 +608,23 @@ impl ProcessUserAddressSpace {
         self.storage.user_page_va_range()
     }
 
+    /// The root table address the software page table knows this process by.
+    ///
+    /// It is the number the hardware is switched with, because that is what a
+    /// lookup during a fault has to name, and taking it from the same place the
+    /// switch does keeps the two in step.  Every process maps its image and
+    /// stack at the same virtual addresses, so a lookup that did not say which
+    /// address space it meant could not tell one process's page from another's.
+    ///
+    /// A hierarchy with a kernel half is named by the *combined* root, because
+    /// that is the one a switch loads; the user-only hierarchy x86_64 also
+    /// keeps is a second view of the same pages and is never activated.
+    pub(crate) fn owner_root_table(&self) -> usize {
+        self.process_summary()
+            .map(|summary| summary.root_table_address)
+            .unwrap_or_else(|| self.summary().root_table_address)
+    }
+
     /// The user entry point and stack pointer this hierarchy pins, if it pins
     /// them.  The loaders of the two architectures that do read it; x86_64
     /// applies them to the thread's context at install time instead.

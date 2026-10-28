@@ -117,15 +117,17 @@ impl SharedMemorySegment {
                 return Err(Error::InternalError);
             }
 
-            // 2. Register in software page table.
+            // 2. Register in software page table, under the running process's
+            // address space: attach is a syscall, so the segment belongs to
+            // whichever process asked.
             let mut memory = memory::global_mut().ok_or(Error::InternalError)?;
-            if memory.register_shared_page(va, pa, perms).is_err() {
+            if memory.register_shared_page_current(va, pa, perms).is_err() {
                 // Roll back.
                 let _ = crate::memory::arch::unmap_user_page_arch(va);
                 for j in 0..i {
                     let rollback_va = virtual_address + j * FRAME_SIZE;
                     let _ = crate::memory::arch::unmap_user_page_arch(rollback_va);
-                    memory.unregister_user_page_range(rollback_va, FRAME_SIZE);
+                    memory.unregister_user_page_range_current(rollback_va, FRAME_SIZE);
                 }
                 return Err(Error::InternalError);
             }
@@ -142,13 +144,14 @@ impl SharedMemorySegment {
     }
 
     /// Detach a single page of this segment from the live hardware page
-    /// tables and the software page table.
+    /// tables and the software page table of the running process.
     fn detach_one(&self, virtual_address: usize) {
         // 1. Unmap from hardware page tables.
         let _ = crate::memory::arch::unmap_user_page_arch(virtual_address);
-        // 2. Remove from software page table.
+        // 2. Remove from software page table, under the address space that
+        // attached it — the running one, since detach is a syscall.
         if let Some(mut memory) = memory::global_mut() {
-            memory.unregister_user_page_range(virtual_address, FRAME_SIZE);
+            memory.unregister_user_page_range_current(virtual_address, FRAME_SIZE);
         }
     }
 

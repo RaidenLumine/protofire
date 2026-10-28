@@ -36,6 +36,69 @@ pub use super::riscv64::mmu::*;
 #[cfg(target_arch = "x86_64")]
 pub use super::x86_64::paging::*;
 
+/// The root table the CPU is translating through right now.
+///
+/// The software page table is one table for the whole machine, and every
+/// process maps its image and stack at the same virtual addresses, so a lookup
+/// has to say which address space it means.  The answer is this number — the
+/// one a switch writes — rather than a counter the kernel would have to keep
+/// in step with the hardware.
+///
+/// `None` means "this machine has no per-process roots": a host build, or an
+/// architecture that activates nothing.  A caller that gets it treats the
+/// question as being about the kernel's own mappings, which is all those
+/// configurations have.
+///
+/// The question is the machine's, so it is asked here rather than in the
+/// memory layer with a `#[cfg]` ladder: a fourth architecture answers it in
+/// its own directory.
+pub fn current_root_table() -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        current_root_table_address_impl()
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        Some(super::aarch64::mmu::current_root_table_address())
+    }
+
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        Some(super::riscv64::mmu::current_root_table_address())
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "riscv64", target_os = "none")
+    )))]
+    {
+        None
+    }
+}
+
+/// Record which function asked to restore the kernel's address space.
+///
+/// Called from a `#[inline(never)]` frame so the return address the
+/// architecture reads belongs to the caller and not to an inlined merge.  An
+/// architecture with no return-address register to read — or one whose traps
+/// do not report the recorded value — answers by doing nothing, which is what
+/// the x86_64 and aarch64 paths here want: the record exists to explain a
+/// riscv64 trap, and a stub is cheaper than a `#[cfg]` at the call site.
+pub fn note_kernel_restore_caller_from_this_frame() {
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        let ra: usize;
+        // SAFETY: reading the return-address register the ABI reserves for it;
+        // no memory is touched.
+        unsafe {
+            core::arch::asm!("mv {ra}, ra", ra = out(reg) ra, options(nomem, nostack, preserves_flags));
+        }
+        super::riscv64::mmu::note_kernel_restore_caller(ra);
+    }
+}
+
 /// Translate a kernel virtual address to the physical address it maps to,
 /// where the machine's own mapping is the identity on it.
 ///
@@ -141,6 +204,14 @@ impl PreparedProcessAddressSpace {
     /// A host keeps no frame bookkeeping, so nothing can be unlinked.
     pub fn remove_user_page_frame(&mut self, _virtual_address: usize) -> Option<usize> {
         None
+    }
+
+    /// A host has no hierarchy, so it has no root to name.  Zero is what the
+    /// kernel's own identity is, and nothing inspects it here: the caller
+    /// (`Process::fork`) reaches this only with a prepared hierarchy, which a
+    /// host never has.
+    pub fn root_table_address(&self) -> usize {
+        0
     }
 }
 

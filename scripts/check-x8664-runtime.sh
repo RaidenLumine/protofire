@@ -182,7 +182,7 @@ shell_commands() {
             'cat /service/shell/origin' 'cat /service/shell/sha256' \
             'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
             'cat /dev/bochs-fb/driver' 'cat /dev/xhci/driver' \
-            'cat /dev/xhci/category' 'sigasync' 'echo serial-done'
+            'cat /dev/xhci/category' 'sigasync' 'fork' 'echo serial-done'
     fi
 }
 
@@ -199,7 +199,7 @@ mkdir -p "$usb_monitor_dir"
 if [ "$PAYLOAD_SOURCE" = "frozen" ]; then
     serial_commands=10
 else
-    serial_commands=11
+    serial_commands=12
 fi
 sh ./scripts/press-usb-keys.sh "$log_file" "$TIMEOUT_SECONDS" "$usb_monitor" \
     "echo usbkeys" "$serial_commands" &
@@ -577,6 +577,33 @@ require_log_line "[service] abandoning demo-launcher-fault after its restart bud
 user_exits="$(count_log_line "[user  ] exit pid=")"
 if [ "$user_exits" -lt 5 ]; then
     fail_with_log "expected at least 5 user programs to exit, saw $user_exits"
+fi
+
+# ── fork ran, and both halves of it did ────────────────────────────────
+#
+# The `fork` builtin prints one line per side: the child, resumed inside the
+# same call, and the parent, which also reports the pid the kernel gave the
+# child.  Both lines are required, because each one alone is a different
+# failure.  A child line with no parent line means the parent never came back —
+# the shape this gate saw when fork held the memory-manager lock across the
+# child thread's construction, which deadlocked the shell with no output at all.
+# A parent line with no child line means the child was created and never ran,
+# which is what a wrong resume context produced.  Neither line, together with
+# the boot still finishing, would mean the command never reached the syscall.
+#
+# `fork: parent of pid N` also carries the pid, so the line is matched with its
+# digits: the payload assembles it in one write, which is what makes a whole-line
+# match meaningful here.
+if [ "$PAYLOAD_SOURCE" != "frozen" ]; then
+    require_log_exact_line "fork: child resumed"
+    if ! LC_ALL=C grep -a -E -x 'fork: parent of pid [0-9]+' "$log_file" >/dev/null 2>&1; then
+        fail_with_log "the fork parent did not report a child pid"
+    fi
+    # The child exits rather than looping for commands, so its exit is one of
+    # the counted ones above.  A fork whose child never reached the exit path
+    # leaves a live second copy of the shell reading the same console, which
+    # shows up as an extra prompt and not as any error line.
+    require_log_absent_line "fork: refused"
 fi
 
 # ── A retired stack's address came back ────────────────────────────────

@@ -676,6 +676,14 @@ fn shell_write_decimal(value: usize) {
 /// both from the same call site, because the child is a copy of this very
 /// frame.  Each side prints which it is, so a boot's log shows both halves
 /// having run rather than assuming the child scheduled.
+///
+/// The child then exits rather than looping for commands.  There is one
+/// console and one shell that reads it: a second copy reading the same fd
+/// would race the first for every keystroke, and which of them printed a given
+/// answer would depend on scheduling.  Exiting is also what makes the fork
+/// observable end to end — the child's teardown releases its CoW references,
+/// which is the half of the mechanism a child that merely printed would not
+/// exercise.
 #[inline(never)]
 #[link_section = $section]
 fn shell_builtin_fork() {
@@ -688,6 +696,7 @@ fn shell_builtin_fork() {
         // The child: same code, same stack copy, and this is its first
         // statement after the kernel resumed it.
         shell_message!(SHELL_FORK_CHILD);
+        exit_with_code(0);
     } else {
         shell_message!(SHELL_FORK_PARENT);
         shell_write_decimal(pid);

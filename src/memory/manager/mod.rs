@@ -19,6 +19,7 @@ use crate::memory::fault_profiler::FaultProfiler;
 use crate::memory::frame::FrameAllocator;
 use crate::memory::frame::MAX_NODES;
 use crate::memory::heap::HeapAllocator;
+use crate::memory::paging;
 use crate::memory::paging::PageTable;
 use crate::memory::swap::SwapArea;
 
@@ -39,10 +40,14 @@ pub struct MemoryManager {
     pub(crate) kernel_heap_start: usize,
     pub(crate) kernel_heap_end: usize,
     pub(crate) initialized: bool,
-    /// VA → page content for DemandPaged backfill (code pages whose frames
-    /// were freed at spawn).  Content is retained after backfill so the
-    /// reclamation→fault cycle can repeat without data loss.
-    pub(crate) page_content: Vec<(usize, Vec<u8>)>,
+    /// (address space, VA) → page content for DemandPaged backfill (code pages
+    /// whose frames were freed at spawn).  Content is retained after backfill
+    /// so the reclamation→fault cycle can repeat without data loss.
+    ///
+    /// The address space is part of the key because every process maps its
+    /// image at the same virtual addresses: keyed by the address alone, one
+    /// process's saved bytes would be handed back to another.
+    pub(crate) page_content: Vec<((paging::AddressSpaceId, usize), Vec<u8>)>,
     /// Physical address → reference count for CoW-shared frames.
     /// When count drops to 0 the frame is freed via Box<RawPageFrame> drop.
     pub(crate) frame_refcounts: BTreeMap<usize, usize>,
@@ -56,14 +61,14 @@ pub struct MemoryManager {
     /// `None` when swap is not configured (reclamation falls back to
     /// the in-memory content store).
     pub(crate) swap_area: Option<SwapArea>,
-    /// Virtual page address → swap slot index for pages currently
-    /// stored in the swap area.  Looked up during demand-page faults
+    /// (address space, virtual page address) → swap slot index for pages
+    /// currently stored in the swap area.  Looked up during demand-page faults
     /// so the page can be read back from the device.
-    pub(crate) swap_map: BTreeMap<usize, u64>,
-    /// Compressed-page cache (zswap-style): virtual page address → encoded
-    /// content for reclaimed pages retained in memory.  Checked during
-    /// demand-page faults before the raw content store.
-    pub(crate) compressed_pages: BTreeMap<usize, CompressedPage>,
+    pub(crate) swap_map: BTreeMap<(paging::AddressSpaceId, usize), u64>,
+    /// Compressed-page cache (zswap-style): (address space, virtual page
+    /// address) → encoded content for reclaimed pages retained in memory.
+    /// Checked during demand-page faults before the raw content store.
+    pub(crate) compressed_pages: BTreeMap<(paging::AddressSpaceId, usize), CompressedPage>,
     /// Total encoded size (in bytes) of every entry in `compressed_pages`,
     /// used to enforce `MAX_COMPRESSED_CACHE_BYTES`.
     pub(crate) compressed_cache_bytes: usize,

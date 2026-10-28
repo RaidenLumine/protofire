@@ -63,14 +63,17 @@ pub(crate) fn prepare_arch_user_address_space(
     let prepared = crate::arch::mmu::prepare_runtime_process_address_space(slot)
         .ok_or(Error::InvalidArgument)?;
 
-    // Register user pages in the software page table.
+    // Register user pages in the software page table, under the root this
+    // hierarchy will be activated with: the CPU is still on the previous
+    // process's root while this one is being prepared.
     if let Some(mut memory) = crate::memory::global_mut() {
+        let owner = prepared.root_table_address();
         let entries: Vec<(usize, usize, PagePermissions, MappingKind)> = prepared
             .user_page_entries()
             .into_iter()
             .map(|(va, pa, perms)| (va, pa, perms, MappingKind::Anonymous))
             .collect();
-        let registered = memory.register_user_pages(&entries);
+        let registered = memory.register_user_pages(owner, &entries);
         crate::println!(
             "[vm    ] registered {} AArch64 user pages in software page table",
             registered

@@ -572,6 +572,34 @@ pub(crate) fn prepared_page_tables_active() -> bool {
     crate::arch::mmu::prepared_page_tables_active()
 }
 
+/// Which address space the CPU is running on right now.
+///
+/// The software page table is one table for the whole machine, and every
+/// process maps its image and stack at the same virtual addresses, so a
+/// lookup has to say whose address space it means.  The machine answers which
+/// root it is translating through ([`crate::arch::mmu::current_root_table`]);
+/// this only names it.
+///
+/// `None` means "this machine has no per-process roots": a host build, or an
+/// architecture that activates nothing.  A caller that gets it treats the
+/// question as being about the kernel's own mappings, which is all those
+/// configurations have.
+pub(crate) fn current_address_space_id() -> Option<crate::memory::paging::AddressSpaceId> {
+    crate::arch::mmu::current_root_table()
+        .map(crate::memory::paging::AddressSpaceId::from_root_table)
+}
+
+/// Which address space a lookup written by the running thread means.
+///
+/// Same question as [`current_address_space_id`], with the kernel's own
+/// identity as the answer when the machine has no per-process roots.  Every
+/// user-page path wants that fallback: on a host the "process" is not
+/// switching roots, so its pages belong to the one address space the kernel
+/// has.
+pub(crate) fn current_owner() -> crate::memory::paging::AddressSpaceId {
+    current_address_space_id().unwrap_or(crate::memory::paging::AddressSpaceId::KERNEL)
+}
+
 pub(crate) fn prepared_translation(
     virtual_address: usize,
     heap_bounds: (usize, usize),

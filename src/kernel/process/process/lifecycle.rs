@@ -480,12 +480,15 @@ impl Process {
         self.ensure_mutable()?;
 
         // Unregister the old user pages from the software page table before
-        // swapping to the new address space.
+        // swapping to the new address space.  Scoped to this process: every
+        // process maps its image and stack at the same virtual addresses, so an
+        // unscoped range would drop another process's mappings.
         if let Some(old_space) = self.user_address_space.lock().as_ref() {
             if let Some((start, end)) = old_space.user_page_va_range() {
                 let len = end.saturating_sub(start);
+                let owner = old_space.owner_root_table();
                 if let Some(mut memory) = crate::memory::global_mut() {
-                    memory.unregister_user_page_range(start, len);
+                    memory.unregister_user_page_range(owner, start, len);
                 }
             }
         }
@@ -1488,9 +1491,16 @@ mod tests {
             );
 
             let mut memory = fork_ready_memory();
+            // Register the parent's pages under the parent's own root; the
+            // fork assertions below check the parent's mappings by that key.
+            let parent_owner = process
+                .user_address_space_summary()
+                .expect("parent address space")
+                .root_table_address;
             let mut writable = Vec::new();
             for &(va, pa, perms) in &parent_entries {
-                memory.register_user_pages(&[(va, pa, perms, MappingKind::Anonymous)]);
+                memory
+                    .register_user_pages(parent_owner, &[(va, pa, perms, MappingKind::Anonymous)]);
                 if perms.contains(PagePermissions::WRITE) {
                     writable.push(va);
                 }
@@ -1521,11 +1531,12 @@ mod tests {
                 "address spaces must be independent"
             );
 
-            // The parent's previously-writable pages are demoted to CoW read-only.
+            // The parent's previously-writable pages are demoted to CoW
+            // read-only, still under the parent's own key — the child's copies
+            // live under the child's root, at the same virtual addresses.
             for va in &writable {
                 let (_, perms, kind) = memory
-                    .page_table
-                    .lookup_mapping(*va)
+                    .lookup_mapping_for(parent_owner, *va)
                     .unwrap_or_else(|| panic!("va {va:#x} must remain mapped"));
                 assert_eq!(kind, MappingKind::Cow, "va {va:#x} should be CoW");
                 assert!(

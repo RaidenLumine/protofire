@@ -46,6 +46,28 @@ impl MemoryManager {
             .map_region_with_kind(virtual_address, length, permissions, kind)
     }
 
+    /// Map an identity region on behalf of `owner`.
+    pub fn map_region_with_kind_owned(
+        &mut self,
+        owner_root_table: usize,
+        virtual_address: usize,
+        length: usize,
+        permissions: PagePermissions,
+        kind: MappingKind,
+    ) -> Result<()> {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
+        self.page_table.map_to_owned(
+            owner,
+            virtual_address,
+            virtual_address,
+            length,
+            permissions,
+            kind,
+        )?;
+        shootdown_range(virtual_address, length);
+        Ok(())
+    }
+
     pub fn map_to(
         &mut self,
         virtual_address: usize,
@@ -86,6 +108,21 @@ impl MemoryManager {
     pub fn unmap(&mut self, virtual_address: usize, length: usize) -> Result<()> {
         self.page_table.unmap(virtual_address, length)?;
         // After removing a mapping, invalidate stale TLB entries on all CPUs.
+        shootdown_range(virtual_address, length);
+        Ok(())
+    }
+
+    /// Remove `owner`'s mappings in a range, leaving every other address
+    /// space's alone.
+    pub fn unmap_owned(
+        &mut self,
+        owner_root_table: usize,
+        virtual_address: usize,
+        length: usize,
+    ) -> Result<()> {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
+        self.page_table
+            .unmap_owned(owner, virtual_address, length)?;
         shootdown_range(virtual_address, length);
         Ok(())
     }
@@ -153,22 +190,36 @@ impl MemoryManager {
     }
 
     // ── register / unregister user pages ─────────────────────────────────
+    /// Register a process's user pages in the software page table.
     ///
     /// Each entry is `(virtual_address, physical_address, permissions, kind)`.
-    /// The pages must not overlap with existing kernel mappings.  Existing
-    /// user mappings at the same virtual address are silently replaced (the
-    /// old mapping is unmapped first).
+    /// The pages must not overlap with mappings *visible to `owner`*: the
+    /// kernel's own are visible to every address space, and another process's
+    /// are not visible at all.  Existing user mappings that `owner` can see at
+    /// the same virtual address are silently replaced (the old one is unmapped
+    /// first).
+    ///
+    /// `owner` is the address space the pages belong to — the root table
+    /// address of the hierarchy they were loaded into, which is the number the
+    /// hardware will translate through.  Registration happens before that
+    /// hierarchy is activated, so the caller passes it in rather than letting
+    /// this read the current root, which still names the *previous* process.
     ///
     /// Returns the number of pages successfully registered.
     pub fn register_user_pages(
         &mut self,
+        owner_root_table: usize,
         pages: &[(usize, usize, PagePermissions, MappingKind)],
     ) -> usize {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
         let mut count = 0;
         for &(va, pa, perms, kind) in pages {
             let page_addr = align_down_page(va);
-            // Skip if this would conflict with a kernel mapping.
-            if let Some((_, _, existing_kind)) = self.page_table.lookup_mapping(page_addr) {
+            // Skip if this would conflict with a kernel mapping, and replace
+            // only what this owner can see.
+            if let Some((_, _, existing_kind)) =
+                self.page_table.lookup_mapping_owned(owner, page_addr)
+            {
                 match existing_kind {
                     // Kernel state: a user registration must not touch it.
                     // `KernelStack` belongs here for the same reason it is
@@ -179,19 +230,23 @@ impl MemoryManager {
                     | MappingKind::KernelStack
                     | MappingKind::Identity
                     | MappingKind::DeviceMemory => continue,
-                    // User-space kinds: silently unmap the old entry first.
+                    // User-space kinds visible to this owner: unmap the old
+                    // entry first.  Scoped to `owner`, so a process replacing
+                    // its own mapping leaves every other process's alone.
                     MappingKind::Anonymous
                     | MappingKind::DemandPaged
                     | MappingKind::Cow
                     | MappingKind::Shared
                     | MappingKind::Locked => {
-                        let _ = self.page_table.unmap(page_addr, paging::PAGE_SIZE);
+                        let _ = self
+                            .page_table
+                            .unmap_owned(owner, page_addr, paging::PAGE_SIZE);
                     }
                 }
             }
             if self
                 .page_table
-                .map_to_with_kind(page_addr, pa, paging::PAGE_SIZE, perms, kind)
+                .map_to_owned(owner, page_addr, pa, paging::PAGE_SIZE, perms, kind)
                 .is_ok()
             {
                 count += 1;
@@ -201,15 +256,22 @@ impl MemoryManager {
     }
 
     /// Register a single shared-memory page in the software page table.
+    ///
+    /// Shared pages belong to the address space that attaches the segment, so
+    /// an attach in one process cannot collide with another process mapping
+    /// the same virtual address.
     pub fn register_shared_page(
         &mut self,
+        owner_root_table: usize,
         virtual_address: usize,
         physical_address: usize,
         permissions: PagePermissions,
     ) -> Result<()> {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
         let page_addr = align_down_page(virtual_address);
         self.page_table
-            .map_to_with_kind(
+            .map_to_owned(
+                owner,
                 page_addr,
                 physical_address,
                 paging::PAGE_SIZE,
@@ -219,15 +281,25 @@ impl MemoryManager {
             .map_err(|_| crate::Error::AlreadyExists)
     }
 
-    /// Unregister user pages in a virtual address range from the software
-    /// page table.  Kernel mappings (KernelHeap, Identity, DeviceMemory) are
-    /// left untouched.
+    /// Unregister user pages in a virtual address range from the software page
+    /// table, as seen by `owner`.
+    ///
+    /// Kernel mappings (KernelHeap, KernelStack, Identity, DeviceMemory) are
+    /// left untouched, and so is every mapping belonging to another address
+    /// space — they may name the same virtual addresses, because every process
+    /// maps its image and stack at the same ones.
     ///
     /// For CoW pages this also decrements the shared-frame refcount so
     /// frames are freed when the last owner terminates.
     ///
     /// Returns the number of pages actually removed.
-    pub fn unregister_user_page_range(&mut self, start: usize, len: usize) -> usize {
+    pub fn unregister_user_page_range(
+        &mut self,
+        owner_root_table: usize,
+        start: usize,
+        len: usize,
+    ) -> usize {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
         let page_start = align_down_page(start);
         let page_end = align_down_page(
             start
@@ -247,6 +319,13 @@ impl MemoryManager {
         // present in the range, preserving the per-page CoW / swap /
         // compressed-page bookkeeping of the previous implementation.
         for mapping in self.page_table.mappings_snapshot() {
+            // Another address space's user page is not this process's to
+            // release: every process maps its image and stack at the same
+            // virtual addresses, so without this check one process's exit
+            // would tear down another's mappings.
+            if mapping.owner != owner {
+                continue;
+            }
             let mapping_start = mapping.virtual_address;
             let mapping_end = mapping_start.saturating_add(mapping.length);
             let lo = mapping_start.max(page_start);
@@ -273,20 +352,158 @@ impl MemoryManager {
                     self.dec_frame_refcount(phys);
                 }
                 // Free any swap slot associated with this page.
-                if let Some(slot_idx) = self.swap_map.remove(&addr) {
+                if let Some(slot_idx) = self.swap_map.remove(&(owner, addr)) {
                     if let Some(ref mut area) = self.swap_area {
                         area.free_slot(SwapSlot(slot_idx));
                     }
                 }
                 // Drop any compressed copy of this page.
-                self.remove_compressed_page(addr);
-                if self.page_table.unmap(addr, paging::PAGE_SIZE).is_ok() {
+                self.remove_compressed_page(owner, addr);
+                if self
+                    .page_table
+                    .unmap_owned(owner, addr, paging::PAGE_SIZE)
+                    .is_ok()
+                {
                     count += 1;
                 }
                 addr = addr.saturating_add(paging::PAGE_SIZE);
             }
         }
         count
+    }
+
+    /// Register the running process's user pages.
+    ///
+    /// The caller is a process acting on its own memory, so it names no address
+    /// space; this asks the machine which root the CPU is on and registers
+    /// under that.  Callers that act on *another* process's memory — fork,
+    /// which registers the child while the parent is running — use
+    /// [`register_user_pages`](Self::register_user_pages) and say whose the
+    /// pages are.
+    pub fn register_user_pages_current(
+        &mut self,
+        pages: &[(usize, usize, PagePermissions, MappingKind)],
+    ) -> usize {
+        let owner = crate::memory::arch::current_owner();
+        self.register_user_pages(owner.root_table(), pages)
+    }
+
+    /// Unregister the running process's user pages in a range.
+    pub fn unregister_user_page_range_current(&mut self, start: usize, len: usize) -> usize {
+        let owner = crate::memory::arch::current_owner();
+        self.unregister_user_page_range(owner.root_table(), start, len)
+    }
+
+    /// Register a single shared-memory page in the running process's address
+    /// space.
+    pub fn register_shared_page_current(
+        &mut self,
+        virtual_address: usize,
+        physical_address: usize,
+        permissions: PagePermissions,
+    ) -> Result<()> {
+        let owner = crate::memory::arch::current_owner();
+        self.register_shared_page(
+            owner.root_table(),
+            virtual_address,
+            physical_address,
+            permissions,
+        )
+    }
+
+    /// Replace the kind of the running process's mapping at `virtual_address`.
+    pub fn replace_mapping_kind_current(
+        &mut self,
+        virtual_address: usize,
+        kind: MappingKind,
+    ) -> Result<()> {
+        let owner = crate::memory::arch::current_owner();
+        self.page_table
+            .replace_mapping_kind_owned(owner, virtual_address, kind)
+    }
+
+    /// Replace the kind of `owner`'s mapping, named by root table address.
+    pub fn replace_mapping_kind_for(
+        &mut self,
+        owner_root_table: usize,
+        virtual_address: usize,
+        kind: MappingKind,
+    ) -> Result<()> {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
+        self.page_table
+            .replace_mapping_kind_owned(owner, virtual_address, kind)
+    }
+
+    /// Replace the permissions of `owner`'s mapping, named by root table
+    /// address.
+    pub fn replace_mapping_permissions_for(
+        &mut self,
+        owner_root_table: usize,
+        virtual_address: usize,
+        permissions: PagePermissions,
+    ) -> Result<()> {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
+        self.page_table
+            .replace_mapping_permissions_owned(owner, virtual_address, permissions)
+    }
+
+    /// Look up an address as the address space rooted at `owner_root_table`
+    /// sees it.
+    pub fn lookup_mapping_for(
+        &self,
+        owner_root_table: usize,
+        virtual_address: usize,
+    ) -> Option<(usize, PagePermissions, MappingKind)> {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
+        self.page_table.lookup_mapping_owned(owner, virtual_address)
+    }
+
+    /// Replace the advice of the running process's mapping at
+    /// `virtual_address`.
+    pub fn replace_mapping_advice_current(
+        &mut self,
+        virtual_address: usize,
+        advice: paging::AdviceHint,
+    ) -> Result<()> {
+        let owner = crate::memory::arch::current_owner();
+        self.page_table
+            .replace_mapping_advice_owned(owner, virtual_address, advice)
+    }
+
+    /// Remove the running process's mappings in a range, leaving every other
+    /// address space's alone.
+    pub fn unmap_current(&mut self, virtual_address: usize, length: usize) -> Result<()> {
+        let owner = crate::memory::arch::current_owner();
+        self.unmap_owned(owner.root_table(), virtual_address, length)
+    }
+    /// Map an identity region in the running process's address space.
+    pub fn map_region_with_kind_current(
+        &mut self,
+        virtual_address: usize,
+        length: usize,
+        permissions: PagePermissions,
+        kind: MappingKind,
+    ) -> Result<()> {
+        let owner = crate::memory::arch::current_owner();
+        self.map_region_with_kind_owned(
+            owner.root_table(),
+            virtual_address,
+            length,
+            permissions,
+            kind,
+        )
+    }
+
+    /// Is the running process's mapping at `virtual_address` still
+    /// demand-paged?
+    pub fn is_demand_paged_current(&self, virtual_address: usize) -> bool {
+        let owner = crate::memory::arch::current_owner();
+        let page_addr = align_down_page(virtual_address);
+        self.page_table.mappings_snapshot().iter().any(|mapping| {
+            mapping.owner == owner
+                && mapping.virtual_address == page_addr
+                && mapping.kind == MappingKind::DemandPaged
+        })
     }
 
     /// Return a reference to the software page table for diagnostics.
@@ -301,19 +518,29 @@ impl MemoryManager {
 
     /// Store page content for later backfill on DemandPaged faults.
     ///
-    /// The content is keyed by virtual page address.  If content already
-    /// exists for this address it is replaced silently.
-    pub fn store_page_content(&mut self, va: usize, content: Vec<u8>) {
+    /// The content is keyed by address space and virtual page address.  Every
+    /// process maps its image at the same virtual addresses, so keying by the
+    /// address alone would let one process's saved bytes be handed back to
+    /// another — which is the same defect the page table itself had, one layer
+    /// up.
+    ///
+    /// If content already exists for this key it is replaced silently.
+    pub fn store_page_content(
+        &mut self,
+        owner: paging::AddressSpaceId,
+        va: usize,
+        content: Vec<u8>,
+    ) {
         let page_addr = align_down_page(va);
         // Replace existing entry if present, otherwise append.
         if let Some(existing) = self
             .page_content
             .iter_mut()
-            .find(|(addr, _)| *addr == page_addr)
+            .find(|(key, _)| *key == (owner, page_addr))
         {
             existing.1 = content;
         } else {
-            self.page_content.push((page_addr, content));
+            self.page_content.push(((owner, page_addr), content));
         }
     }
 
@@ -323,12 +550,13 @@ impl MemoryManager {
     /// raw content store when the byte budget is exceeded.
     pub(crate) fn add_compressed_page(
         &mut self,
+        owner: paging::AddressSpaceId,
         va: usize,
         page: crate::memory::compressed::CompressedPage,
     ) {
         let page_addr = align_down_page(va);
         // Replace any previous entry for this address.
-        self.remove_compressed_page(page_addr);
+        self.remove_compressed_page(owner, page_addr);
         let encoded = page.encoded_len();
         self.compressed_cache_bytes += encoded;
         self.compressed_pages_saved += paging::PAGE_SIZE.saturating_sub(encoded);
@@ -337,7 +565,8 @@ impl MemoryManager {
         // raw content store so their data is never lost.
         let budget = crate::memory::compressed::MAX_COMPRESSED_CACHE_BYTES;
         while self.compressed_cache_bytes > budget {
-            let Some((evict_va, evict_page)) = self.compressed_pages.pop_first() else {
+            let Some(((evict_owner, evict_va), evict_page)) = self.compressed_pages.pop_first()
+            else {
                 break;
             };
             self.compressed_cache_bytes = self
@@ -348,20 +577,20 @@ impl MemoryManager {
                 .saturating_sub(paging::PAGE_SIZE.saturating_sub(evict_page.encoded_len()));
             let mut raw = alloc::vec![0u8; paging::PAGE_SIZE];
             if evict_page.decompress(&mut raw) {
-                self.store_page_content(evict_va, raw);
+                self.store_page_content(evict_owner, evict_va, raw);
             }
             self.compressed_evictions += 1;
         }
 
-        self.compressed_pages.insert(page_addr, page);
+        self.compressed_pages.insert((owner, page_addr), page);
     }
 
     /// Remove the compressed entry for `va` (if any), returning it to the
     /// raw content store is *not* performed here — callers choose whether to
     /// re-store the raw content (faults drop it, eviction re-stores it).
-    pub(crate) fn remove_compressed_page(&mut self, va: usize) {
+    pub(crate) fn remove_compressed_page(&mut self, owner: paging::AddressSpaceId, va: usize) {
         let page_addr = align_down_page(va);
-        if let Some(page) = self.compressed_pages.remove(&page_addr) {
+        if let Some(page) = self.compressed_pages.remove(&(owner, page_addr)) {
             self.compressed_cache_bytes = self
                 .compressed_cache_bytes
                 .saturating_sub(page.encoded_len());
@@ -385,12 +614,12 @@ impl MemoryManager {
     /// Look up stored page content without removing it.
     ///
     /// Returns a reference to the content slice, or `None` if no content
-    /// is stored for this address.
-    pub fn get_page_content(&self, va: usize) -> Option<&[u8]> {
+    /// is stored for this address in this address space.
+    pub fn get_page_content(&self, owner: paging::AddressSpaceId, va: usize) -> Option<&[u8]> {
         let page_addr = align_down_page(va);
         self.page_content
             .iter()
-            .find(|(addr, _)| *addr == page_addr)
+            .find(|(key, _)| *key == (owner, page_addr))
             .map(|(_, content)| content.as_slice())
     }
 

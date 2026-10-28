@@ -19,12 +19,34 @@ impl MemoryManager {
     /// to the user exception handler or terminate the process.
     ///
     /// `is_write` indicates whether the fault was caused by a write access.
+    ///
+    /// The fault belongs to whichever address space the CPU is running on, and
+    /// that is the owner consulted here: the software page table is one table
+    /// for the whole machine, and every process maps its image and stack at the
+    /// same virtual addresses.  A fault in one process must not be resolved
+    /// against another's mapping, which is exactly what keying by the address
+    /// alone did.
     pub fn resolve_page_fault(&mut self, virtual_address: usize, is_write: bool) -> bool {
+        let owner = crate::memory::arch::current_owner();
+        self.resolve_page_fault_owned(owner.root_table(), virtual_address, is_write)
+    }
+
+    /// Resolve a fault on behalf of `owner`.
+    ///
+    /// The explicit form exists for the paths that act on a process's memory
+    /// from a context that may not be that process.
+    pub fn resolve_page_fault_owned(
+        &mut self,
+        owner_root_table: usize,
+        virtual_address: usize,
+        is_write: bool,
+    ) -> bool {
+        let owner = paging::AddressSpaceId::from_root_table(owner_root_table);
         // Align to page boundary.
         let page_addr = align_down_page(virtual_address);
 
         // Look up in the software page table.
-        let (phys, perms, kind) = match self.page_table.lookup_mapping(page_addr) {
+        let (phys, perms, kind) = match self.page_table.lookup_mapping_owned(owner, page_addr) {
             Some((phys, perms, kind)) => (phys, perms, kind),
             None => return false,
         };
@@ -52,7 +74,9 @@ impl MemoryManager {
                 // Check the swap map first: if this page was swapped to
                 // disk, read it back from the swap device.  Otherwise try
                 // the in-memory content store, and fall back to zero-fill.
-                let swap_slot = self.swap_map.remove(&page_addr);
+                // Every key names the address space, so a page saved by one
+                // process is never handed to another.
+                let swap_slot = self.swap_map.remove(&(owner, page_addr));
                 if let Some(slot_idx) = swap_slot {
                     let page_buf =
                         // SAFETY: `frame` is a frame this fault handler just
@@ -80,7 +104,7 @@ impl MemoryManager {
                     if let Some(ref mut area) = self.swap_area {
                         area.free_slot(crate::memory::swap::SwapSlot(slot_idx));
                     }
-                } else if let Some(page) = self.compressed_pages.remove(&page_addr) {
+                } else if let Some(page) = self.compressed_pages.remove(&(owner, page_addr)) {
                     // Compressed in-memory copy (zswap-style): decompress it
                     // straight into the fresh frame.
                     self.compressed_cache_bytes = self
@@ -97,7 +121,7 @@ impl MemoryManager {
                         self.deallocate_frames(frame, 1);
                         return false;
                     }
-                } else if let Some(content) = self.get_page_content(page_addr) {
+                } else if let Some(content) = self.get_page_content(owner, page_addr) {
                     // SAFETY: `copy_len` is clamped to the page above, so the
                     // copy stays inside the freshly allocated frame, and
                     // `content` is the saved page image the memory manager
@@ -122,14 +146,18 @@ impl MemoryManager {
                 // the mapping is reclaimed on teardown instead of leaking.
                 // The page is now physically present, so it is tracked as an
                 // anonymous mapping like other present user pages.
-                let _ = self.page_table.replace_mapping_phys(page_addr, frame_phys);
                 let _ = self
                     .page_table
-                    .replace_mapping_kind(page_addr, MappingKind::Anonymous);
+                    .replace_mapping_phys_owned(owner, page_addr, frame_phys);
+                let _ = self.page_table.replace_mapping_kind_owned(
+                    owner,
+                    page_addr,
+                    MappingKind::Anonymous,
+                );
 
                 // Mark the resolved page as accessed so the clock
                 // reclamation algorithm skips it on the next sweep.
-                self.page_table.mark_accessed_va(page_addr);
+                self.page_table.mark_accessed_owned(owner, page_addr);
                 self.fault_profiler.inc_page_faults_demand_paged();
 
                 // ── Fault-around: speculatively pre-map adjacent DemandPaged
@@ -153,7 +181,7 @@ impl MemoryManager {
 
                         // Check if adjacent page is DemandPaged.
                         let (_adj_phys, adj_perms, adj_kind) =
-                            match self.page_table.lookup_mapping(adj_va) {
+                            match self.page_table.lookup_mapping_owned(owner, adj_va) {
                                 Some(t) => t,
                                 None => break, // end of mapped region
                             };
@@ -165,7 +193,7 @@ impl MemoryManager {
                         // Must have stored content to backfill.  Get the content
                         // (immutable borrow) before allocating a frame (mutable
                         // borrow) to avoid borrow conflicts.
-                        let adj_content_len = match self.get_page_content(adj_va) {
+                        let adj_content_len = match self.get_page_content(owner, adj_va) {
                             Some(c) => {
                                 let len = core::cmp::min(c.len(), paging::PAGE_SIZE);
                                 let content_ptr = c.as_ptr();
@@ -199,13 +227,19 @@ impl MemoryManager {
                         // Record the prefetched frame in the software page
                         // table too, so it is reclaimed on teardown rather
                         // than leaked (same handling as the faulting page).
-                        let _ = self.page_table.replace_mapping_phys(adj_va, adj_frame_phys);
-                        let _ = self
-                            .page_table
-                            .replace_mapping_kind(adj_va, MappingKind::Anonymous);
+                        let _ = self.page_table.replace_mapping_phys_owned(
+                            owner,
+                            adj_va,
+                            adj_frame_phys,
+                        );
+                        let _ = self.page_table.replace_mapping_kind_owned(
+                            owner,
+                            adj_va,
+                            MappingKind::Anonymous,
+                        );
 
                         // Mark prefetched page as accessed.
-                        self.page_table.mark_accessed_va(adj_va);
+                        self.page_table.mark_accessed_owned(owner, adj_va);
                         self.fault_profiler.inc_page_faults_demand_paged();
                     }
                 }
@@ -261,11 +295,16 @@ impl MemoryManager {
 
                 // Split the software mapping: remove the single page from
                 // the CoW region (unmap splits it into prefix + suffix),
-                // then insert the new Anonymous page.
-                let _ = self.page_table.unmap(page_addr, paging::PAGE_SIZE);
+                // then insert the new Anonymous page.  Scoped to `owner`: the
+                // prefix and suffix belong to this address space, and the same
+                // virtual address in another process must not be touched.
+                let _ = self
+                    .page_table
+                    .unmap_owned(owner, page_addr, paging::PAGE_SIZE);
                 if self
                     .page_table
-                    .map_to_with_kind(
+                    .map_to_owned(
+                        owner,
                         page_addr,
                         new_phys,
                         paging::PAGE_SIZE,
@@ -280,7 +319,7 @@ impl MemoryManager {
 
                 self.fault_profiler.inc_page_faults_cow();
                 // Mark the new private page as accessed.
-                self.page_table.mark_accessed_va(page_addr);
+                self.page_table.mark_accessed_owned(owner, page_addr);
                 true
             }
             _ => {

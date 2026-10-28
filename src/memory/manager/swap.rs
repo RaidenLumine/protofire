@@ -79,7 +79,7 @@ impl MemoryManager {
             let mapping_idx = anonymous_indices[anon_pos];
 
             // Access the mapping directly to test-and-clear the accessed bit.
-            let (page_addr, phys, was_accessed, advice) = {
+            let (page_owner, page_addr, phys, was_accessed, advice) = {
                 let snapshot = self.page_table.mappings_snapshot();
                 let m = &snapshot[mapping_idx];
                 // Verify the mapping is still anonymous (it could have been
@@ -89,7 +89,13 @@ impl MemoryManager {
                     scanned += 1;
                     continue;
                 }
-                (m.virtual_address, m.physical_address, m.accessed, m.advice)
+                (
+                    m.owner,
+                    m.virtual_address,
+                    m.physical_address,
+                    m.accessed,
+                    m.advice,
+                )
             };
 
             // Advice hint based reclamation priority:
@@ -99,7 +105,7 @@ impl MemoryManager {
             //   Normal     — default clock algorithm behavior.
             if advice == crate::memory::paging::AdviceHint::Random {
                 // Random pages: always give second chance.
-                self.page_table.mark_accessed_va(page_addr);
+                self.page_table.mark_accessed_owned(page_owner, page_addr);
                 self.reclaim_hand = self.reclaim_hand.wrapping_add(1);
                 scanned += 1;
                 continue;
@@ -109,7 +115,7 @@ impl MemoryManager {
                 // Page was accessed recently — give it a second chance.
                 // Clear the accessed bit and move on.
                 // Sequential pages skip this: they're reclaimed eagerly.
-                self.page_table.clear_accessed_va(page_addr);
+                self.page_table.clear_accessed_owned(page_owner, page_addr);
                 self.reclaim_hand = self.reclaim_hand.wrapping_add(1);
                 scanned += 1;
                 continue;
@@ -145,7 +151,7 @@ impl MemoryManager {
             if let Some(ref mut area) = self.swap_area {
                 if let Some(slot) = area.allocate_slot() {
                     if area.write_page(slot, &content).is_ok() {
-                        self.swap_map.insert(page_addr, slot.0);
+                        self.swap_map.insert((page_owner, page_addr), slot.0);
                         swapped = true;
                     } else {
                         // Write failed — return the slot.
@@ -159,9 +165,9 @@ impl MemoryManager {
                 // RAM when it is smaller than the raw 4 KiB content store.
                 // Incompressible pages fall back to the raw store.
                 if let Some(page) = crate::memory::compressed::compress_page(&content) {
-                    self.add_compressed_page(page_addr, page);
+                    self.add_compressed_page(page_owner, page_addr, page);
                 } else {
-                    self.store_page_content(page_addr, content);
+                    self.store_page_content(page_owner, page_addr, content);
                 }
             }
 
@@ -176,9 +182,11 @@ impl MemoryManager {
             self.deallocate_frames(phys as *mut u8, 1);
 
             // Mark as demand-paged so it can be faulted back in.
-            let _ = self
-                .page_table
-                .replace_mapping_kind(page_addr, MappingKind::DemandPaged);
+            let _ = self.page_table.replace_mapping_kind_owned(
+                page_owner,
+                page_addr,
+                MappingKind::DemandPaged,
+            );
 
             reclaimed += 1;
             self.reclaim_hand = self.reclaim_hand.wrapping_add(1);
@@ -251,18 +259,19 @@ impl MemoryManager {
     }
 
     /// Free all swap slots and compressed copies for the given list of
-    /// virtual page addresses (typically called on process termination).
+    /// virtual page addresses in `owner`'s address space (typically called on
+    /// process termination).
     ///
     /// Pages that are not in the swap map are silently skipped.
-    pub fn free_user_swap_slots(&mut self, pages: &[usize]) {
+    pub fn free_user_swap_slots(&mut self, owner: paging::AddressSpaceId, pages: &[usize]) {
         for &va in pages {
             let page_addr = align_down_page(va);
-            if let Some(slot_idx) = self.swap_map.remove(&page_addr) {
+            if let Some(slot_idx) = self.swap_map.remove(&(owner, page_addr)) {
                 if let Some(ref mut area) = self.swap_area {
                     area.free_slot(SwapSlot(slot_idx));
                 }
             }
-            self.remove_compressed_page(page_addr);
+            self.remove_compressed_page(owner, page_addr);
         }
     }
 
@@ -318,13 +327,13 @@ impl MemoryManager {
     }
 
     /// Decrement reference counts for all shared frames listed, and unmap
-    /// their corresponding entries from the software page table.
+    /// their corresponding entries from `owner`'s software mappings.
     ///
     /// Used on process termination to release CoW-shared pages.
-    pub fn release_cow_pages(&mut self, pages: &[(usize, usize)]) {
+    pub fn release_cow_pages(&mut self, owner: paging::AddressSpaceId, pages: &[(usize, usize)]) {
         for &(va, phys) in pages {
             self.dec_frame_refcount(phys);
-            let _ = self.page_table.unmap(va, paging::PAGE_SIZE);
+            let _ = self.page_table.unmap_owned(owner, va, paging::PAGE_SIZE);
         }
     }
 }

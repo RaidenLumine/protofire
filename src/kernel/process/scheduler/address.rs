@@ -33,25 +33,19 @@ impl Scheduler {
     }
 
     /// A `#[inline(never)]` boundary, because the caller's identity is read
-    /// from `ra` below: inlined into its callers there is no frame, and `ra`
-    /// belongs to whatever function the optimizer merged this into.
+    /// from the return-address register below: inlined into its callers there
+    /// is no frame, and the register belongs to whatever function the
+    /// optimizer merged this into.
     #[inline(never)]
     pub(crate) fn restore_kernel_address_space(&self) {
         #[cfg(target_os = "none")]
         {
             // Record who asked, so a later trap can say which path replaced a
             // user thread's root.  The seven call sites all look alike from a
-            // trap frame; the return address does not.
-            #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-            {
-                let ra: usize;
-                // SAFETY: reading the return-address register the ABI reserves
-                // for it; no memory is touched.
-                unsafe {
-                    core::arch::asm!("mv {ra}, ra", ra = out(reg) ra, options(nomem, nostack, preserves_flags));
-                }
-                crate::arch::mmu::note_kernel_restore_caller(ra);
-            }
+            // trap frame; the return address does not.  Which register holds
+            // it, and whether the architecture keeps one at all, is the
+            // machine's question.
+            crate::arch::mmu::note_kernel_restore_caller_from_this_frame();
             let _ = crate::arch::mmu::activate_prepared_runtime_kernel_page_tables();
         }
     }

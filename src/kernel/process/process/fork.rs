@@ -162,8 +162,12 @@ impl Process {
             if let Some(addr_space) = guard.as_ref() {
                 if let Some((start, end)) = addr_space.user_page_va_range() {
                     let len = end.saturating_sub(start);
+                    // Only this process's pages: every process maps its image
+                    // and stack at the same virtual addresses, so an unscoped
+                    // range would tear down another process's mappings.
+                    let owner = addr_space.owner_root_table();
                     if let Some(mut memory) = crate::memory::global_mut() {
-                        memory.unregister_user_page_range(start, len);
+                        memory.unregister_user_page_range(owner, start, len);
                     }
                 }
             }
@@ -255,6 +259,19 @@ impl Process {
         };
 
         // ── 4. Register in software page table ───────────────────────
+        // Two different address spaces are involved from here on, and every
+        // process maps its image and stack at the same virtual addresses, so
+        // each registration has to name whose it is: the parent's entries are
+        // updated in place, and the child's are created under its own root.
+        let parent_owner = {
+            let parent_addr_space = self.user_address_space.lock();
+            parent_addr_space
+                .as_ref()
+                .map(|space| space.owner_root_table())
+                .ok_or(Error::InvalidArgument)?
+        };
+        let child_owner = child_addr_space.root_table_address();
+
         // CoW-shared pages.
         let mut child_cow_entries: Vec<(usize, usize, PagePermissions, MappingKind)> =
             Vec::with_capacity(shared_pages.len());
@@ -262,12 +279,10 @@ impl Process {
             child_cow_entries.push((va, pa, PagePermissions::READ, MappingKind::Cow));
             // Update parent software mapping: Anonymous → Cow, RW → R.
             memory
-                .page_table_mut()
-                .replace_mapping_kind(va, MappingKind::Cow)
+                .replace_mapping_kind_for(parent_owner, va, MappingKind::Cow)
                 .ok();
             memory
-                .page_table_mut()
-                .replace_mapping_permissions(va, PagePermissions::READ)
+                .replace_mapping_permissions_for(parent_owner, va, PagePermissions::READ)
                 .ok();
             // Refcounting: the shared frame is now tracked by both
             // parent and child.  Each gets a reference so the count
@@ -297,7 +312,7 @@ impl Process {
             if shared_pages.iter().any(|(v, _, _)| *v == va) {
                 continue;
             }
-            if let Some((_, _, MappingKind::Cow)) = memory.page_table().lookup_mapping(va) {
+            if let Some((_, _, MappingKind::Cow)) = memory.lookup_mapping_for(parent_owner, va) {
                 memory.inc_frame_refcount(pa); // grandchild's reference
                 child_cow_entries.push((va, pa, PagePermissions::READ, MappingKind::Cow));
                 continue;
@@ -307,11 +322,11 @@ impl Process {
             } else {
                 MappingKind::Anonymous
             };
-            memory.register_user_pages(&[(va, pa, perms, kind)]);
+            memory.register_user_pages(child_owner, &[(va, pa, perms, kind)]);
         }
 
         // Register CoW entries.
-        memory.register_user_pages(&child_cow_entries);
+        memory.register_user_pages(child_owner, &child_cow_entries);
 
         // ── 5. Install child address space ───────────────────────────
         let child_user_addr_space = ProcessUserAddressSpace::from_prepared(
