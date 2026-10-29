@@ -161,6 +161,27 @@ it as a clock hand rather than a list: a page that has not been touched since
 the last pass is a candidate, which is what makes the scan O(pages) with no
 sorting and no per-page allocation.
 
+### What a mapping is keyed by
+
+The table is one table for the whole machine, and every process maps its image
+at the same virtual addresses — the loader puts the entry at the same number in
+every process, and the stack sits at the same top.  A mapping is therefore
+keyed by `(AddressSpaceId, virtual address)`, where the id is the root table
+address the hardware switches on.  Taking it from the same place the switch
+does is what keeps the two in step; a counter the kernel maintained alongside
+the root could disagree with it, and nothing would notice until a fault.
+
+The demand-paging content store, the swap map and the compressed cache carry
+the same key, for the same reason: keyed by the address alone, one process's
+saved bytes would be handed back to another.
+
+`AddressSpaceId::KERNEL` is the one id that answers every lookup.  The kernel's
+heap, identity window and device MMIO are mapped in *every* root, so they are
+the same frames whoever is asking — that is a property of the layout rather
+than a wildcard added for convenience, and it is why a user mapping and a
+kernel mapping can both cover one virtual address without contradicting each
+other.
+
 ## Kernel stacks
 
 Kernel stacks are their own story, because a stack is the one mapping a fault

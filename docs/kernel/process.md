@@ -53,6 +53,19 @@ neutral one.  Entering user mode is the same idea one level down:
 `arch::enter_user_mode_with_context` builds whatever the architecture returns
 through (an `iretq` frame, `ELR_EL1`/`SPSR_EL1`, …).
 
+"Whatever that machine's registers are" is a larger set than the callee-saved
+ones, and riscv64 is the worked example.  A thread blocks *inside* its trap
+handler — `sleep` is an `ecall` — so the switch happens with a live trap frame
+on that thread's kernel stack and with `sepc`/`sstatus` still holding its
+return address and privilege.  Those are not callee-saved by the ABI, but they
+are thread state all the same: swapping `ra`/`sp`/`s0`-`s11` and nothing else
+means the thread resumes with whatever the CPU happens to hold, which is its
+own only if no other trap ran on that hart in between.  The switch saves them
+now (`Context::flags` carries `sstatus`, the first `_reserved` slot carries
+`sepc`), and the rule the question turns on is: **anything a trap handler
+leaves in a CSR that must survive a switch belongs in `Context`, whether or not
+the ABI calls it callee-saved.**
+
 **Across CPUs**, a thread is given a `cpu_affinity` when it is spawned
 (`scheduler/spawn.rs`), the scheduler keeps a registry of schedulers by CPU id,
 and a thread made runnable on another CPU is reached with that architecture's
@@ -73,8 +86,37 @@ credentials rather than inherit them.  A spawn that asks for
 `PROCESS_SPAWN_FLAG_START_SUSPENDED` leaves the thread parked so the parent can
 register a wait before the child can fault; `resume_suspended_process` is what
 releases it.  `Process::fork` is the other way a process appears: the parent's
-address space is copied, its handles are inherited, and one thread continues in
+address space is cloned, its handles are inherited, and one thread continues in
 the child.
+
+Fork is the one path where a process's pages belong to two address spaces at
+once, and the rules that follow from that are not local to it:
+
+- **A writable page is demoted on both sides, and the demotion is flushed.**
+  `fork_clone` clears the write bit in the parent's tables and in the child's
+  copy, so both fault on the first store and each gets its own frame.  Clearing
+  the bit is not enough on its own: a TLB entry written before the edit keeps
+  naming the shared frame, and the parent then stores into the page the child
+  is reading.  Each architecture flushes what it demoted — x86_64 per page with
+  its own invalidation, aarch64 with `tlbi` — and `demoting_a_page_also_invalidates_it`
+  is what holds the list to the pages actually demoted.
+- **The software page table is keyed by address space.** It is one table for
+  the machine, and every process maps its image at the same virtual addresses,
+  so a mapping carries the root table address of the space it belongs to.
+  Registering the child's pages without naming it replaces the parent's.
+- **The child's thread resumes, it does not start.** `new_user_fork` builds it
+  from the parent's saved context with the register that reports a fork zeroed,
+  and it validates that context with `UserThreadStart::validate_resumed` rather
+  than the fresh-thread rule: a context captured mid-execution is expected to
+  fail the fresh rule's stack-alignment check, because that rule describes the
+  value the first instruction of a new thread runs with.
+- **A context is captured after the syscall, not at it.** riscv64's `ecall`
+  does not advance `sepc`, so the trap entry moves it past the instruction
+  before anything records the thread's context — otherwise the child re-executes
+  the `fork` it was forked in.
+
+The slot a demo process lives in is reference counted (`DEMO_SLOT_REFS`), so
+the region returns to the pool when the last of a fork's two holders drops it.
 
 A thread that blocks does so on a `WaitQueue`, and the answer it gets back is a
 `ThreadWaitOutcome`: the event happened, the deadline passed, or the thread was
