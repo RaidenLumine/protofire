@@ -249,7 +249,7 @@ impl Process {
         *child.home_dir.lock() = self.home_dir.lock().clone();
 
         // ── 3. Fork address space ────────────────────────────────────
-        let (child_addr_space, shared_pages, all_child_pages) = {
+        let forked = {
             let mut parent_addr_space = self.user_address_space.lock();
             let parent_space = parent_addr_space.as_mut().ok_or(Error::InvalidArgument)?;
             let prepared = parent_space
@@ -257,6 +257,9 @@ impl Process {
                 .ok_or(Error::InvalidArgument)?;
             prepared.fork_clone().ok_or(Error::InvalidArgument)?
         };
+        let child_addr_space = forked.child;
+        let shared_pages = forked.shared_pages;
+        let all_child_pages = forked.child_pages;
 
         // ── 4. Register in software page table ───────────────────────
         // Two different address spaces are involved from here on, and every

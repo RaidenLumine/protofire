@@ -892,6 +892,46 @@ fn align_up(value: usize) -> Option<usize> {
     value.checked_add(PAGE_SIZE - 1).map(align_down)
 }
 
+/// What a fork's address-space clone hands back.
+///
+/// The clone itself is the architecture's — the table formats have nothing in
+/// common — but what it must *produce* is the same three things on every
+/// machine, and the pipeline that consumes them (`Process::fork`) is one
+/// function.  Naming the shape here is what lets that pipeline be written once
+/// and lets a reader see, at the type, that a clone which reports no demoted
+/// pages is a clone that demoted nothing.
+///
+/// `Space` is the architecture's prepared process address space: the child's
+/// own hierarchy, ready to be activated.
+pub struct ForkedAddressSpace<Space> {
+    /// The child's hierarchy, fully wired to its own tables.
+    pub child: Space,
+    /// Pages that became copy-on-write: `(virtual, physical, permissions)`.
+    ///
+    /// The parent's copies were demoted to read-only, so the same frame now
+    /// answers for two processes and either side faults on its first store.
+    /// A clone that demotes the child but not the parent reports nothing here,
+    /// and that is the defect this list exists to make visible.
+    pub shared_pages: Vec<(usize, usize, PagePermissions)>,
+    /// Every user page in the child, for software page-table registration.
+    pub child_pages: Vec<(usize, usize, PagePermissions)>,
+}
+
+impl<Space> ForkedAddressSpace<Space> {
+    /// Assemble one.
+    pub fn new(
+        child: Space,
+        shared_pages: Vec<(usize, usize, PagePermissions)>,
+        child_pages: Vec<(usize, usize, PagePermissions)>,
+    ) -> Self {
+        Self {
+            child,
+            shared_pages,
+            child_pages,
+        }
+    }
+}
+
 #[cfg(test)]
 mod shared_rules_tests {
     use super::align_up_to;

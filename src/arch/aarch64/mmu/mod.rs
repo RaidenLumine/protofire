@@ -31,6 +31,7 @@ use crate::kernel::process::UserThreadStart;
 use crate::memory::paging::align_up_to;
 use crate::memory::paging::fork_child_permissions;
 use crate::memory::paging::range_within;
+use crate::memory::paging::ForkedAddressSpace;
 use crate::memory::paging::PagePermissions;
 use crate::memory::slot_pool::SlotPool;
 
@@ -273,11 +274,9 @@ pub struct PreparedProcessAddressSpace {
 
 /// What [`PreparedProcessAddressSpace::fork_clone`] hands back: the child
 /// hierarchy plus the copy-on-write and non-shared page triples.
-pub type ForkClonedAddressSpace = (
-    PreparedProcessAddressSpace,
-    Vec<(usize, usize, PagePermissions)>,
-    Vec<(usize, usize, PagePermissions)>,
-);
+/// What a clone hands back; the shape is shared, the space is this machine's.
+pub type ForkClonedAddressSpace =
+    crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>;
 
 // ── Kernel translation tables ────────────────────────────────────────────
 
@@ -2349,7 +2348,11 @@ impl PreparedProcessAddressSpace {
             "aarch64 fork: the child's L2 does not name the child's leaf table",
         );
 
-        Some((child, shared_pages, all_child_pages))
+        Some(ForkedAddressSpace::new(
+            child,
+            shared_pages,
+            all_child_pages,
+        ))
     }
 
     /// Report the physical frame backing a user page in the active slot's L3

@@ -4,6 +4,7 @@
 //! page tables into a single hierarchy for CR3 load.
 
 use super::*;
+use crate::memory::paging::ForkedAddressSpace;
 use crate::memory::paging::PagePermissions;
 use crate::println;
 use alloc::boxed::Box;
@@ -214,14 +215,9 @@ impl PreparedProcessAddressSpace {
     /// - `shared_cow_pages` lists `(va, pa, perms)` for pages now shared CoW
     /// - `all_child_pages` lists `(va, pa, perms)` for every user page in the
     ///   child's address space (for software page-table registration)
-    #[allow(clippy::type_complexity)]
     pub fn fork_clone(
         &mut self,
-    ) -> Option<(
-        PreparedProcessAddressSpace,
-        Vec<(usize, usize, PagePermissions)>,
-        Vec<(usize, usize, PagePermissions)>,
-    )> {
+    ) -> Option<crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>> {
         use alloc::collections::BTreeMap;
 
         // ── First pass: collect user PTE groups and record shared pages ──
@@ -545,7 +541,11 @@ impl PreparedProcessAddressSpace {
             pcid: super::pcid::allocate_pcid(),
         };
 
-        Some((child, shared_pages, all_child_pages))
+        Some(ForkedAddressSpace::new(
+            child,
+            shared_pages,
+            all_child_pages,
+        ))
     }
 
     /// Remove a user page frame from the page list, leaking the underlying

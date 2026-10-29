@@ -304,12 +304,14 @@ pub fn activate_prepared_runtime_kernel_page_tables() -> Option<()> {
 
 /// What a fork clone hands back: the child hierarchy plus the copy-on-write
 /// and non-shared page triples.
+///
+/// The shape is `memory::paging`'s — the same three things every machine's
+/// clone must produce — and only the space in it is this target's.  A host
+/// never clones one, so the placeholder is the empty `PreparedProcessAddressSpace`
+/// above.
 #[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
-pub type ForkClonedAddressSpace = (
-    PreparedProcessAddressSpace,
-    alloc::vec::Vec<(usize, usize, crate::memory::paging::PagePermissions)>,
-    alloc::vec::Vec<(usize, usize, crate::memory::paging::PagePermissions)>,
-);
+pub type ForkClonedAddressSpace =
+    crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>;
 
 // ── Primitives a target may not have ────────────────────────────────────
 //

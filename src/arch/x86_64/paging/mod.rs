@@ -809,9 +809,11 @@ mod tests {
         let mut parent =
             prepare_process_address_space(&kernel_spec, &plan, &image).expect("process root");
 
-        let (child, shared_pages, all_child_pages) = parent
+        let forked = parent
             .fork_clone()
             .expect("fork_clone should succeed on merged hierarchy");
+        let (child, shared_pages, all_child_pages) =
+            (forked.child, forked.shared_pages, forked.child_pages);
 
         // Child must keep the kernel mappings — this is the regression the
         // original recovery-era fix missed (it classified PML4[0] as a user
