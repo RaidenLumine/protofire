@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "protofire"
-version = "0.8.7"
+version = "0.8.12"
 
 [[package]]
 name = "protofire-fuzz"
