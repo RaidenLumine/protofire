@@ -111,11 +111,24 @@ set -- \
 # commands.  `-serial stdio` with the output redirected is what can type at the
 # prompt, and typing is the half of the shell a boot by itself never exercises.
 shell_commands() {
-    sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
-        'help' 'echo ring3-shell-answered' \
-        'cat /service/shell/origin' 'cat /service/shell/sha256' \
-        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
-        'fork' 'echo serial-done'
+    # The frozen payload is a shell from before `fork` existed, and what that
+    # gate is for is exactly this: an old payload keeps working.  So `fork` is
+    # asked for only by the boots whose payload was built with it — a frozen
+    # payload is not asked to grow a command, and asking it one it does not
+    # have is how this check first went red (`shell: unknown command: fork`).
+    if [ "$PAYLOAD_SOURCE" = "frozen" ]; then
+        sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+            'help' 'echo ring3-shell-answered' \
+            'cat /service/shell/origin' 'cat /service/shell/sha256' \
+            'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+            'echo serial-done'
+    else
+        sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+            'help' 'echo ring3-shell-answered' \
+            'cat /service/shell/origin' 'cat /service/shell/sha256' \
+            'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+            'fork' 'echo serial-done'
+    fi
 }
 
 printf 'riscv64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
@@ -364,13 +377,16 @@ require_log_exact_line "network"
 # Fragments rather than whole lines: the console serialises a write, and fork
 # is the one command here with two processes writing to it, so the child's
 # answer can arrive while the shell prints its prompt.
-require_log_line "fork: child resumed"
-if ! LC_ALL=C grep -a -E 'fork: parent of pid [0-9]+' "$log_file" >/dev/null 2>&1; then
-    fail_with_log "the fork parent did not report a child pid"
+if [ "$PAYLOAD_SOURCE" != "frozen" ]; then
+    require_log_line "fork: child resumed"
+    if ! LC_ALL=C grep -a -E 'fork: parent of pid [0-9]+' "$log_file" >/dev/null 2>&1; then
+        fail_with_log "the fork parent did not report a child pid"
+    fi
+    require_log_absent_line "fork: refused"
 fi
-require_log_absent_line "fork: refused"
 # The shell answered the line typed after it, so it came back rather than
-# being left inside the syscall by a fork that never returned.
+# being left inside the syscall by a fork that never returned.  This runs on
+# the frozen payload too: it is the last command either payload is given.
 require_log_exact_line "serial-done"
 # `/system/init.elf` is a program on this target too: it reads the declarations
 # off the disk and asks for the services to be started, and says so.  The boot
