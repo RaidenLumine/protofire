@@ -39,6 +39,9 @@ use crate::memory::paging::align_up_to;
 use crate::memory::paging::fork_child_permissions;
 use crate::memory::paging::range_within;
 use crate::memory::paging::PagePermissions;
+use crate::memory::slot_pool::SlotPool;
+
+type DemoSlotPool = SlotPool<USER_DEMO_SLOT_COUNT>;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 mod asid;
@@ -1318,8 +1321,6 @@ pub fn active_runtime_kernel_page_table_check(
 
 // ── Demo user slots ──────────────────────────────────────────────────────
 
-static DEMO_SLOT_TAKEN: AtomicU64 = AtomicU64::new(0);
-
 /// How many address spaces hold each demo slot.
 ///
 /// A slot is one physical region, and `fork` shares it: the child's pages map
@@ -1329,8 +1330,7 @@ static DEMO_SLOT_TAKEN: AtomicU64 = AtomicU64::new(0);
 /// releasing on neither (what `forked` did) reserves the slot for the life of
 /// the kernel.  Every `PreparedDemoUserSlot` holds one reference, and the last
 /// drop returns the index to the pool.
-static DEMO_SLOT_REFS: [AtomicUsize; USER_DEMO_SLOT_COUNT] =
-    [const { AtomicUsize::new(0) }; USER_DEMO_SLOT_COUNT];
+static DEMO_SLOT_POOL: DemoSlotPool = DemoSlotPool::new();
 
 extern "C" {
     static __demo_slots_start: u8;
@@ -1356,37 +1356,12 @@ fn demo_user_region_ptr(slot_index: usize) -> Option<*mut u8> {
 
 /// Claim a demo slot index.
 fn allocate_demo_user_slot_index() -> Option<usize> {
-    loop {
-        let taken = DEMO_SLOT_TAKEN.load(Ordering::Acquire);
-        let mut found = None;
-        for slot_index in 0..USER_DEMO_SLOT_COUNT {
-            let mask = 1u64 << slot_index;
-            if taken & mask == 0 {
-                found = Some((slot_index, mask));
-                break;
-            }
-        }
-        let (slot_index, mask) = found?;
-        if DEMO_SLOT_TAKEN
-            .compare_exchange(taken, taken | mask, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            // The index is ours; the count starts at the holder about to be
-            // built.  `store` rather than `fetch_add` because the bitmap is the
-            // lock: no other holder of this index exists yet, and a stale value
-            // from a previous generation would over-count.
-            DEMO_SLOT_REFS[slot_index].store(1, Ordering::Release);
-            return Some(slot_index);
-        }
-        // CAS failed — someone else took a slot; retry with a fresh snapshot.
-    }
+    DEMO_SLOT_POOL.claim()
 }
 
 /// Record one more address space sharing `slot_index`.
 fn retain_demo_user_slot(slot_index: usize) {
-    if slot_index < USER_DEMO_SLOT_COUNT {
-        DEMO_SLOT_REFS[slot_index].fetch_add(1, Ordering::AcqRel);
-    }
+    DEMO_SLOT_POOL.retain(slot_index);
 }
 
 /// Return a claimed demo slot to the pool.
@@ -1397,15 +1372,7 @@ fn retain_demo_user_slot(slot_index: usize) {
 /// into it, and the frames a surviving child still maps would then hold another
 /// program's bytes.
 fn release_demo_user_slot(slot_index: usize) {
-    if slot_index < USER_DEMO_SLOT_COUNT {
-        // `AcqRel`: this is the last read-modify-write the slot's lifetime
-        // depends on, and it must both see the other holders' decrements and
-        // publish this one before the index goes back to the bitmap below.
-        let previous = DEMO_SLOT_REFS[slot_index].fetch_sub(1, Ordering::AcqRel);
-        if previous <= 1 {
-            DEMO_SLOT_TAKEN.fetch_and(!(1u64 << slot_index), Ordering::AcqRel);
-        }
-    }
+    DEMO_SLOT_POOL.release(slot_index);
 }
 
 /// Make freshly-written user code visible to instruction fetch.
@@ -2337,7 +2304,7 @@ mod host_tests {
 
         let index = allocate_demo_user_slot_index().expect("a slot must be free");
         assert_ne!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            DEMO_SLOT_POOL.is_taken(index) as u64,
             0,
             "an allocated slot must be marked taken"
         );
@@ -2348,7 +2315,7 @@ mod host_tests {
         // The first holder goes away.  The slot must still be taken.
         release_demo_user_slot(index);
         assert_ne!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            DEMO_SLOT_POOL.is_taken(index) as u64,
             0,
             "the slot was released while a second holder still mapped it"
         );
@@ -2356,7 +2323,7 @@ mod host_tests {
         // The second goes away, and now it returns to the pool.
         release_demo_user_slot(index);
         assert_eq!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            DEMO_SLOT_POOL.is_taken(index) as u64,
             0,
             "the slot was not released after its last holder dropped"
         );
@@ -2398,14 +2365,14 @@ mod host_tests {
         // Drop the parent.  The child still maps the region, so it must stay.
         drop(parent);
         assert_ne!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            DEMO_SLOT_POOL.is_taken(index) as u64,
             0,
             "the slot was freed while its clone still held it"
         );
 
         drop(child);
         assert_eq!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            DEMO_SLOT_POOL.is_taken(index) as u64,
             0,
             "the slot was not freed after its last holder dropped"
         );
@@ -2420,7 +2387,7 @@ mod host_tests {
         let index = allocate_demo_user_slot_index().expect("a slot must be free");
         release_demo_user_slot(index);
         assert_eq!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            DEMO_SLOT_POOL.is_taken(index) as u64,
             0,
             "a slot with a single holder stayed taken after that holder dropped"
         );
@@ -2438,7 +2405,7 @@ mod host_tests {
         release_demo_user_slot(index);
         release_demo_user_slot(index);
         assert_eq!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << index),
+            DEMO_SLOT_POOL.is_taken(index) as u64,
             0,
             "setup: the slot should be free again"
         );
@@ -2449,7 +2416,7 @@ mod host_tests {
         // One holder, one drop, and it is free again — no leftover count.
         release_demo_user_slot(reused);
         assert_eq!(
-            DEMO_SLOT_TAKEN.load(Ordering::Acquire) & (1u64 << reused),
+            DEMO_SLOT_POOL.is_taken(reused) as u64,
             0,
             "a reused slot carried a stale reference count"
         );

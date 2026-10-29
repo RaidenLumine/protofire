@@ -28,6 +28,7 @@ pub(crate) mod manager;
 ))]
 pub(crate) mod map_facts;
 pub mod paging;
+pub mod slot_pool;
 pub mod swap;
 #[cfg(test)]
 mod tests;
