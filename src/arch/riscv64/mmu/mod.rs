@@ -35,6 +35,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::kernel::process::UserThreadStart;
+use crate::memory::paging::align_up_to;
+use crate::memory::paging::fork_child_permissions;
+use crate::memory::paging::range_within;
 use crate::memory::paging::PagePermissions;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
@@ -531,32 +534,8 @@ fn page_permissions_from_entry(entry: u64) -> PagePermissions {
 /// keeps write access" — which is not copy-on-write, because the child then
 /// writes the parent's live stack through a permission the MMU will not trap
 /// on.
-fn fork_child_permissions(permissions: PagePermissions) -> PagePermissions {
-    if permissions.contains(PagePermissions::WRITE) {
-        if permissions.contains(PagePermissions::EXECUTE) {
-            PagePermissions::READ_EXECUTE
-        } else {
-            PagePermissions::READ
-        }
-    } else {
-        permissions
-    }
-}
-
 const fn align_down(value: usize, align: usize) -> usize {
     value & !(align - 1)
-}
-
-fn align_up(value: usize, align: usize) -> Option<usize> {
-    value
-        .checked_add(align - 1)
-        .map(|aligned| aligned & !(align - 1))
-}
-
-/// Returns true when `[start, end)` is contained within `[region_start,
-/// region_end)`.
-fn range_within(start: usize, end: usize, region_start: usize, region_end: usize) -> bool {
-    start >= region_start && end <= region_end && start <= end
 }
 
 // ── MMU control ──────────────────────────────────────────────────────────
@@ -942,7 +921,7 @@ pub unsafe fn map_device_mmio_at(
     if root == 0 {
         return None;
     }
-    let page_count = align_up(size, TRANSLATION_GRANULE_SIZE)? / TRANSLATION_GRANULE_SIZE;
+    let page_count = align_up_to(size, TRANSLATION_GRANULE_SIZE)? / TRANSLATION_GRANULE_SIZE;
     for page_index in 0..page_count {
         let va = virtual_address.checked_add(page_index * TRANSLATION_GRANULE_SIZE)?;
         let pa = physical_address.checked_add((page_index * TRANSLATION_GRANULE_SIZE) as u64)?;
@@ -1570,7 +1549,7 @@ pub fn prepare_runtime_process_address_space(
     pmd.0[active_block_index] = table_entry(user_pte.as_ref() as *const PageTable as usize);
 
     let image_page_start = align_down(slot.code_start(), TRANSLATION_GRANULE_SIZE);
-    let image_page_end = align_up(slot.payload_end(), TRANSLATION_GRANULE_SIZE)?;
+    let image_page_end = align_up_to(slot.payload_end(), TRANSLATION_GRANULE_SIZE)?;
     if image_page_start < slot.region_start()
         || image_page_end > slot.exception_stack_guard_start()
         || image_page_end > slot.region_end()
@@ -2229,30 +2208,6 @@ mod host_tests {
         }
     }
 
-    /// `align_up` rounds to the next multiple and refuses to wrap.
-    #[test]
-    fn align_up_rounds_up_and_refuses_to_overflow() {
-        assert_eq!(align_up(0, 4096), Some(0));
-        assert_eq!(align_up(1, 4096), Some(4096));
-        assert_eq!(align_up(4096, 4096), Some(4096));
-        assert_eq!(align_up(4097, 4096), Some(8192));
-        assert_eq!(align_up(usize::MAX, 4096), None);
-    }
-
-    /// `range_within` is the containment test the layout validator uses, and
-    /// its `start <= end` clause is what makes an inverted range fail rather
-    /// than pass vacuously.
-    #[test]
-    fn range_within_rejects_outside_and_inverted_ranges() {
-        assert!(range_within(10, 20, 0, 100));
-        assert!(range_within(0, 100, 0, 100));
-        // One byte outside on either side.
-        assert!(!range_within(9, 20, 10, 100));
-        assert!(!range_within(10, 101, 10, 100));
-        // Inverted: `start > end`.
-        assert!(!range_within(20, 10, 0, 100));
-    }
-
     /// The kernel's own PMD covers the demo slots with **supervisor** blocks.
     ///
     /// This is not a style note: it is the fact that makes a user fault under
@@ -2341,18 +2296,6 @@ mod host_tests {
                 "a read-only page changed under fork: {permissions:?}"
             );
         }
-    }
-
-    /// The demotion turns a writable page into the read-only twin of itself,
-    /// keeping execute when it had it.  A writable-and-executable page does not
-    /// exist in this kernel's user mappings, but the function must not invent
-    /// one by dropping the wrong bit.
-    #[test]
-    fn demotion_keeps_execute_and_drops_only_write() {
-        let demoted = fork_child_permissions(PagePermissions::READ_WRITE_EXECUTE);
-        assert!(demoted.contains(PagePermissions::EXECUTE));
-        assert!(demoted.contains(PagePermissions::READ));
-        assert!(!demoted.contains(PagePermissions::WRITE));
     }
 
     /// Whatever `fork_child_permissions` returns, encoding it must not grant

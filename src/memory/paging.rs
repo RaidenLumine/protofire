@@ -194,6 +194,64 @@ impl core::ops::BitOrAssign for PagePermissions {
     }
 }
 
+// ── Rules a fork shares, whatever the page-table format ─────────────────
+//
+// The three things below were written three times — once in each
+// architecture's MMU, byte for byte — and each time with its own copy of the
+// tests that pin it.  What they decide is not the architecture's: a demoted
+// page keeps its executable bit and loses only write, a range is inside a
+// window or it is not, and rounding up refuses to wrap.  The encoding that
+// follows from the answer is the architecture's, and that stays there.
+
+/// The permissions a copy-on-write page takes in the child.
+///
+/// A page that was writable is demoted to read-only, because "shared" has to
+/// mean the same frame on both sides and neither side may keep the write that
+/// would reach it directly.  Execute is kept: a page can be writable and
+/// executable in the parent, and dropping execute for the child would turn a
+/// working code page into one that faults on its first instruction.
+///
+/// A page that was already read-only is returned unchanged, so this is
+/// idempotent — which matters because a fork can inherit a page its parent
+/// already shares with an ancestor, and demoting it twice must not change it.
+pub const fn fork_child_permissions(permissions: PagePermissions) -> PagePermissions {
+    if permissions.contains(PagePermissions::WRITE) {
+        if permissions.contains(PagePermissions::EXECUTE) {
+            PagePermissions::READ_EXECUTE
+        } else {
+            PagePermissions::READ
+        }
+    } else {
+        permissions
+    }
+}
+
+/// Round `value` up to a multiple of `align`, or `None` if that would wrap.
+///
+/// `None` rather than a wrapped answer because every caller here is computing
+/// the end of a region it is about to validate: a wrapped end would read as a
+/// tiny region instead of an impossible one.
+pub const fn align_up_to(value: usize, align: usize) -> Option<usize> {
+    match value.checked_add(align - 1) {
+        Some(aligned) => Some(aligned & !(align - 1)),
+        None => None,
+    }
+}
+
+/// Is `[start, end)` contained within `[region_start, region_end)`?
+///
+/// The `start <= end` clause is what makes an inverted range fail rather than
+/// pass vacuously — an empty range is inside every window, so a caller that
+/// swapped its ends would otherwise be told its window is fine.
+pub const fn range_within(
+    start: usize,
+    end: usize,
+    region_start: usize,
+    region_end: usize,
+) -> bool {
+    start >= region_start && end <= region_end && start <= end
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct MappingSnapshot {
     pub virtual_address: usize,
@@ -832,4 +890,79 @@ const fn align_down(value: usize) -> usize {
 
 fn align_up(value: usize) -> Option<usize> {
     value.checked_add(PAGE_SIZE - 1).map(align_down)
+}
+
+#[cfg(test)]
+mod shared_rules_tests {
+    use super::align_up_to;
+    use super::fork_child_permissions;
+    use super::range_within;
+    use super::PagePermissions;
+
+    /// A demoted page keeps execute and loses only write.
+    ///
+    /// This ran three times before — once in each architecture's MMU, with the
+    /// same body — because `fork_child_permissions` lived in each of them.  The
+    /// rule is not the architecture's: what the hardware does with the answer
+    /// is, and that stays beside each table format.
+    #[test]
+    fn demotion_keeps_execute_and_drops_only_write() {
+        let demoted = fork_child_permissions(PagePermissions::READ_WRITE_EXECUTE);
+        assert!(demoted.contains(PagePermissions::EXECUTE));
+        assert!(demoted.contains(PagePermissions::READ));
+        assert!(!demoted.contains(PagePermissions::WRITE));
+    }
+
+    /// Demoting twice changes nothing.
+    ///
+    /// A fork can inherit a page its parent already shares with an ancestor,
+    /// so the same page passes through this twice.  An implementation that
+    /// dropped a bit each time would leave the grandchild executing a page
+    /// that no longer says it may.
+    #[test]
+    fn demotion_is_idempotent() {
+        for permissions in [
+            PagePermissions::READ,
+            PagePermissions::READ_WRITE,
+            PagePermissions::READ_EXECUTE,
+            PagePermissions::READ_WRITE_EXECUTE,
+        ] {
+            let once = fork_child_permissions(permissions);
+            assert_eq!(fork_child_permissions(once), once, "{permissions:?}");
+        }
+    }
+
+    /// A read-only page is returned unchanged, execute included.
+    #[test]
+    fn a_read_only_page_is_not_demoted() {
+        assert_eq!(
+            fork_child_permissions(PagePermissions::READ_EXECUTE),
+            PagePermissions::READ_EXECUTE
+        );
+        assert_eq!(
+            fork_child_permissions(PagePermissions::READ),
+            PagePermissions::READ
+        );
+    }
+
+    /// `align_up_to` rounds to the next multiple and refuses to wrap.
+    #[test]
+    fn align_up_rounds_up_and_refuses_to_overflow() {
+        assert_eq!(align_up_to(0, 4096), Some(0));
+        assert_eq!(align_up_to(1, 4096), Some(4096));
+        assert_eq!(align_up_to(4096, 4096), Some(4096));
+        assert_eq!(align_up_to(4097, 4096), Some(8192));
+        assert_eq!(align_up_to(usize::MAX, 4096), None);
+    }
+
+    /// `range_within` refuses an inverted range instead of passing it
+    /// vacuously, and refuses one byte outside on either side.
+    #[test]
+    fn range_within_rejects_outside_and_inverted_ranges() {
+        assert!(range_within(10, 20, 0, 100));
+        assert!(range_within(0, 100, 0, 100));
+        assert!(!range_within(9, 20, 10, 100));
+        assert!(!range_within(10, 101, 10, 100));
+        assert!(!range_within(20, 10, 0, 100));
+    }
 }
