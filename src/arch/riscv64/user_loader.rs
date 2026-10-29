@@ -4,6 +4,7 @@
 //! its stack, and the two argument registers an S-mode entry reads.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use crate::arch::user_loader::build_initial_user_stack;
 use crate::arch::user_loader::PreparedInitialUserStack;
@@ -12,6 +13,7 @@ use crate::arch::user_loader::AUXV_AT_NULL;
 use crate::arch::user_loader::AUXV_AT_PAGESZ;
 use crate::kernel::process::ProcessUserAddressSpace;
 use crate::kernel::process::UserThreadStart;
+use crate::memory::paging::MappingKind;
 use crate::memory::paging::PagePermissions;
 use crate::user::program::UserImageLoadPlan;
 use crate::user::program::USER_PAGE_SIZE;
@@ -60,6 +62,33 @@ pub(crate) fn prepare_arch_user_address_space(
         .ok_or(Error::InvalidArgument)?;
     let prepared = crate::arch::mmu::prepare_runtime_process_address_space(slot)
         .ok_or(Error::InvalidArgument)?;
+
+    // Register the pages in the software page table, under the root this
+    // hierarchy will be activated with: the CPU is still on the previous
+    // process's root while this one is being prepared.
+    //
+    // Without this the process runs — its hardware tables are its own and
+    // `satp` names them — but nothing in the kernel knows which pages it has.
+    // A write fault on one of them then looks like a genuine fault rather than
+    // the copy-on-write copy the kernel owes it, and the process is
+    // terminated.  Measured: `fork` on this machine killed the shell on its
+    // first store to its own stack, with the faulting PTE read-only
+    // (`entry=0x214ffcd3`, `V R U` set and `W` clear) while the software table
+    // said the address was unmapped.  x86_64 and aarch64 register here too.
+    if let Some(mut memory) = crate::memory::global_mut() {
+        let owner = prepared.root_table_address();
+        let entries: Vec<(usize, usize, PagePermissions, MappingKind)> = prepared
+            .user_page_entries()
+            .into_iter()
+            .map(|(va, pa, perms)| (va, pa, perms, MappingKind::Anonymous))
+            .collect();
+        let registered = memory.register_user_pages(owner, &entries);
+        crate::println!(
+            "[vm    ] registered {} riscv64 user pages in software page table",
+            registered
+        );
+    }
+
     Ok(Some(ProcessUserAddressSpace::from_prepared(
         crate::arch::mmu::ProcessAddressSpace::from_prepared_process(prepared),
     )))

@@ -775,6 +775,32 @@ disk-backed swap, compression, and defragmentation.
   The child exits after printing rather than looping for commands: there is one
   console, and a second copy reading the same fd would race the first for every
   keystroke.
+
+  Run on the other two machines, `fork` shows why the x86_64 work was not the
+  end of it.  aarch64 works on the first boot.  riscv64 did not, and it was
+  broken in a way no host test could see: **its loader never registered the
+  process's pages in the software page table at all.**  x86_64 and aarch64 both
+  call `register_user_pages` after preparing a hierarchy; riscv64 returned the
+  hierarchy and stopped there.  Nothing noticed until `fork`, because a process
+  whose pages the kernel does not know about still runs — its own hardware
+  tables answer — and only a fault asks the software table a question.  `fork`
+  asks immediately: it demotes the parent's writable pages to read-only, and the
+  parent's first store then faults on a page the table says is unmapped, so the
+  kernel treats a copy-on-write it owes as a genuine fault and terminates the
+  shell.  Measured: `scause=0xf` (store page fault), the faulting PTE
+  `0x214ffcd3` with `V R U` set and `W` clear, `on_kernel_root=0`, and the
+  software table reporting the address as missing.  The loader registers now,
+  and that failure is gone.
+
+  What is left on riscv64 is downstream of it: with the pages registered, the
+  copy-on-write fault resolves against `kind=copy-on-write` and the kernel stops
+  inside the copy — after `allocate_frames` returns, before the first byte is
+  copied.  The bulk copy was replaced with a byte loop to see whether the fault
+  named an offset, and it did not: the boot hangs with no fatal trap and no
+  output, so the next reader starts from "the destination frame is not
+  reachable from the process root" rather than from the copy itself.  `fork`
+  is therefore **verified on x86_64 and aarch64, and does not complete on
+  riscv64**.
 - **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
   and automatic topology discovery (ACPI SRAT/SLIT on x86_64; FDT numa-node-id
   / distance-map on AArch64 and RISC-V); a default single-node topology always
