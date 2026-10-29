@@ -90,11 +90,24 @@ trap cleanup EXIT INT TERM
 # feeder pipes stdin, so there is no terminal in the picture, and the guest's
 # output lands in the log exactly as it does with `-serial file:`.
 shell_commands() {
-    sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
-        'help' 'echo ring3-shell-answered' \
-        'cat /service/shell/origin' 'cat /service/shell/sha256' \
-        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
-        'cat /apps/current/demo-installed.toml'
+    # The frozen payload is a shell from before `fork` existed, and what that
+    # gate is for is exactly this: an old payload keeps working.  So `fork` is
+    # asked for only by the boots whose payload was built with it — a frozen
+    # payload is not asked to grow a command.  riscv64's check went red on the
+    # p3 run for exactly this, and this script had one list for both sources.
+    if [ "${PAYLOAD_SOURCE:-compiled}" = "frozen" ]; then
+        sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+            'help' 'echo ring3-shell-answered' \
+            'cat /service/shell/origin' 'cat /service/shell/sha256' \
+            'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+            'cat /apps/current/demo-installed.toml'
+    else
+        sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+            'help' 'echo ring3-shell-answered' \
+            'cat /service/shell/origin' 'cat /service/shell/sha256' \
+            'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+            'cat /apps/current/demo-installed.toml' 'fork'
+    fi
 }
 
 set +e
@@ -488,6 +501,36 @@ require_log_hash_answer 'cat /service/shell/sha256'
 require_log_line "owned by virtio-net (network)"
 require_log_exact_line "virtio-net"
 require_log_exact_line "network"
+
+# ── fork ran, and both halves of it did ────────────────────────────────
+#
+# `fork` is the one command whose correctness no host test could establish:
+# every defect it had was a sequence error in an architecture's own paths, and
+# each showed up only as a boot.  x86_64's fork demoted pages without
+# flushing the TLB; riscv64's loader never registered a process's pages, its
+# `ecall` did not advance `sepc`, and its context switch saved no trap CSR.
+# This machine passed its first boot and every boot since, which is the
+# reason to gate it rather than the reason to skip the gate — "no defect
+# found" and "no boot asked" look the same from a log.
+#
+# Both halves are required separately: a child answer with no parent answer
+# means the parent never came back, and a parent answer with no child answer
+# means the child was created and never ran.
+#
+# Fragments rather than whole lines: the console serialises a write, and fork
+# is the one command here with two processes writing to it.
+if [ "${PAYLOAD_SOURCE:-compiled}" != "frozen" ]; then
+    require_log_line "fork: child resumed"
+    if ! LC_ALL=C grep -a -E 'fork: parent of pid [0-9]+' "$log_file" >/dev/null 2>&1; then
+        printf 'aarch64 runtime check failed: the fork parent did not report a child pid\n' >&2
+        if [ "$remove_log_on_exit" = "0" ]; then
+            printf 'full aarch64 runtime log preserved at: %s\n' "$log_file" >&2
+        fi
+        cat "$log_file" >&2
+        exit 1
+    fi
+    require_log_absent_line "fork: refused"
+fi
 
 # ── The PCIe window the device tree describes was reached ──────────────
 #
