@@ -114,7 +114,8 @@ shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
         'help' 'echo ring3-shell-answered' \
         'cat /service/shell/origin' 'cat /service/shell/sha256' \
-        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category'
+        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+        'fork' 'echo serial-done'
 }
 
 printf 'riscv64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
@@ -338,6 +339,39 @@ require_log_hash_answer 'cat /service/shell/sha256'
 require_log_line "owned by virtio-net (network)"
 require_log_exact_line "virtio-net"
 require_log_exact_line "network"
+
+# ── fork ran, and both halves of it did ────────────────────────────────
+#
+# `fork` is the one command on this machine whose correctness no host test
+# could establish: three of its four defects were sequence errors in this
+# architecture's own paths, and each showed up only as a boot.  The first was
+# that the loader never registered the process's pages in the software page
+# table at all, so the parent's first store after the demotion faulted on a
+# page the table called unmapped and the shell was terminated.  The second was
+# that `ecall` does not advance `sepc` here and the user context was captured
+# before anything did, so every child re-executed `fork` at the instruction
+# before the one that returns 0 — an unbounded fork storm, 212 forks on one
+# boot and not one `fork: child resumed`.  The third was that the
+# copy-on-write copy read a user-mapped frame and needed the SUM window.
+#
+# All three are the shape a boot reports and a unit test does not, which is
+# why the assertions are here.  Both halves are required: a child answer with
+# no parent answer means the parent never came back, and a parent answer with
+# no child answer means the child was created and never ran — which is exactly
+# what the `sepc` defect produced.  Neither line, on a boot that still
+# finished, would mean the command never reached the syscall.
+#
+# Fragments rather than whole lines: the console serialises a write, and fork
+# is the one command here with two processes writing to it, so the child's
+# answer can arrive while the shell prints its prompt.
+require_log_line "fork: child resumed"
+if ! LC_ALL=C grep -a -E 'fork: parent of pid [0-9]+' "$log_file" >/dev/null 2>&1; then
+    fail_with_log "the fork parent did not report a child pid"
+fi
+require_log_absent_line "fork: refused"
+# The shell answered the line typed after it, so it came back rather than
+# being left inside the syscall by a fork that never returned.
+require_log_exact_line "serial-done"
 # `/system/init.elf` is a program on this target too: it reads the declarations
 # off the disk and asks for the services to be started, and says so.  The boot
 # left the start to it rather than starting them itself — that line is the
