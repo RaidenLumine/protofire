@@ -307,8 +307,8 @@ pub fn activate_prepared_runtime_kernel_page_tables() -> Option<()> {
 ///
 /// The shape is `memory::paging`'s — the same three things every machine's
 /// clone must produce — and only the space in it is this target's.  A host
-/// never clones one, so the placeholder is the empty `PreparedProcessAddressSpace`
-/// above.
+/// never clones one, so the placeholder is the empty
+/// `PreparedProcessAddressSpace` above.
 #[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
 pub type ForkClonedAddressSpace =
     crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>;

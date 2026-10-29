@@ -1191,3 +1191,118 @@ fn generic_set_len_clamps_position_before_followup_write() {
     assert_eq!(count, 6);
     assert_eq!(&buffer[..count], b"abcdXY");
 }
+
+// ── poll() readiness ───────────────────────────────────────────────────────
+//
+// `poll` used to ask only whether the descriptor carried the right; the object
+// behind it was never consulted.  An empty eventfd therefore reported
+// `POLLIN`, and — the defect RFC 0032 records — a TCP connection whose send
+// buffer was full still reported `POLLOUT`, sending a writer into the retry
+// loop the flag exists to avoid.  These tests drive the real syscall, because
+// the defect was in the answer a program gets, not in any one helper.
+
+/// A `pollfd`, matching the kernel's `repr(C)` layout.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct PollFd {
+    fd: i32,
+    events: u16,
+    revents: u16,
+}
+
+const POLLIN: u16 = 0x001;
+const POLLOUT: u16 = 0x004;
+
+/// Poll one descriptor with a zero timeout (a pure probe, no parking).
+fn poll_one(process: &Process, table: &Table, fd: usize, events: u16) -> u16 {
+    let mut fds = [PollFd {
+        fd: fd as i32,
+        events,
+        revents: 0,
+    }];
+    let mut context = protofire::syscall::SyscallContext::new(
+        protofire::syscall::SyscallNumber::Poll as usize,
+        [fds.as_mut_ptr() as usize, fds.len(), 0, 0, 0, 0],
+    );
+    // `poll` answers a count; the descriptor's word is in `revents` after the
+    // call, written through the pointer the process's page tables validated.
+    let _ready = table.dispatch(&mut context).expect("poll");
+    let _ = process;
+    fds[0].revents
+}
+
+/// An empty eventfd is not readable; a signalled one is.
+///
+/// The counter is what `poll` must consult.  Answering `POLLIN` for an empty
+/// descriptor is the "always yes" defect in its smallest form.
+#[test]
+fn poll_reports_readiness_the_object_actually_has() {
+    let _guard = test_lock();
+    let scheduler = Scheduler::new();
+    let thread = scheduler.spawn_named("poll-readiness", 0x1000);
+    // SAFETY: the test lock serialises every test sharing the global scheduler
+    // slot, and this test installs its own before touching it.
+    unsafe {
+        scheduler.install_global_unchecked();
+    }
+    scheduler.schedule();
+    let process = thread.process().clone();
+
+    let mut table = Table::new();
+    table.init();
+
+    let mut create = protofire::syscall::SyscallContext::new(
+        protofire::syscall::SyscallNumber::EventFd as usize,
+        [0, 0, 0, 0, 0, 0],
+    );
+    let fd = table.dispatch(&mut create).expect("create eventfd");
+
+    assert_eq!(
+        poll_one(process.as_ref(), &table, fd, POLLIN),
+        0,
+        "an eventfd at zero has nothing to read"
+    );
+
+    // Signal it through the object's own write path, so the counter moves the
+    // way a program's write would move it.
+    assert_eq!(
+        io::write(process.as_ref(), fd, &1_u64.to_ne_bytes()).expect("signal the eventfd"),
+        8
+    );
+
+    assert_eq!(
+        poll_one(process.as_ref(), &table, fd, POLLIN),
+        POLLIN,
+        "a signalled eventfd is readable"
+    );
+}
+
+/// A descriptor with no readiness side reports neither flag, and no error.
+///
+/// `POLLNVAL`/`POLLERR` would make a program watching a mixed set treat a
+/// directory as broken; "not ready" is the answer `epoll_wait` already gives.
+#[test]
+fn poll_reports_a_directory_as_not_ready_rather_than_broken() {
+    let _guard = test_lock();
+    let scheduler = Scheduler::new();
+    let thread = scheduler.spawn_named("poll-directory", 0x1000);
+    // SAFETY: the lock above serialises the global scheduler slot.
+    unsafe {
+        scheduler.install_global_unchecked();
+    }
+    scheduler.schedule();
+    let process = thread.process().clone();
+
+    let mut table = Table::new();
+    table.init();
+
+    let fd = process
+        .open_directory_descriptor("/tmp", HANDLE_RIGHT_READ | HANDLE_RIGHT_WRITE)
+        .expect("open directory descriptor");
+
+    let revents = poll_one(process.as_ref(), &table, fd, POLLIN | POLLOUT);
+    assert_eq!(
+        revents, 0,
+        "a directory has no byte stream and nothing to accept bytes into"
+    );
+}

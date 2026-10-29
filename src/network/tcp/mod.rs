@@ -208,6 +208,70 @@ mod tests {
         assert_eq!(state.write(b"more"), 0);
     }
 
+    /// Writability follows the bound, so `poll`'s `POLLOUT` can say no.
+    ///
+    /// The point of the bound was to make the short write visible; it is only
+    /// useful if the readiness query reports the same condition.  A connection
+    /// that answered "writable" with a full send buffer would send a program
+    /// into the retry loop `POLLOUT` exists to avoid.
+    #[test]
+    fn a_full_send_buffer_is_not_writable() {
+        let mut state = TcpConnectionState::new(40014, [10, 0, 2, 2], 80, 1, 0);
+        state.state = TcpState::Established;
+        state.send_window = 0;
+
+        assert!(state.accepts_writes(), "an empty buffer has room");
+        assert_eq!(state.write(&[0u8; MAX_SEND_BUFFER]), MAX_SEND_BUFFER);
+        assert!(
+            !state.accepts_writes(),
+            "a full send buffer has no room, whatever the connection state"
+        );
+    }
+
+    /// Room appears as the peer acknowledges, so the answer is not terminal.
+    ///
+    /// An ACK pops the acknowledged prefix; the query has to see that, or it
+    /// would report a buffer that can never drain as permanently full.
+    #[test]
+    fn acknowledging_bytes_makes_the_connection_writable_again() {
+        let mut state = TcpConnectionState::new(40015, [10, 0, 2, 2], 80, 1, 0);
+        state.state = TcpState::Established;
+        state.send_window = 0;
+        assert_eq!(state.write(&[0u8; MAX_SEND_BUFFER]), MAX_SEND_BUFFER);
+        assert!(!state.accepts_writes());
+
+        // One segment acknowledged, mirrored the way `process_segment` does
+        // it: the prefix leaves the buffer, so room returns.
+        for _ in 0..1024 {
+            state.send_buffer.pop_front();
+        }
+        assert!(
+            state.accepts_writes(),
+            "room freed by an acknowledgement is room a write can use"
+        );
+    }
+
+    /// A connection that cannot carry data is not writable, buffer or not.
+    #[test]
+    fn a_closed_connection_is_not_writable_even_with_room() {
+        for closed in [
+            TcpState::Closed,
+            TcpState::Listen,
+            TcpState::SynSent,
+            TcpState::SynReceived,
+            TcpState::LastAck,
+            TcpState::TimeWait,
+            TcpState::Closing,
+        ] {
+            let mut state = TcpConnectionState::new(40016, [10, 0, 2, 2], 80, 1, 0);
+            state.state = closed;
+            assert!(
+                !state.accepts_writes(),
+                "a connection in {closed:?} carries no data"
+            );
+        }
+    }
+
     /// A zero-timeout read is a probe and must not park.
     #[test]
     fn a_zero_timeout_read_does_not_park() {

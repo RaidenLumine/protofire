@@ -115,8 +115,16 @@ Everything below becomes a `KernelObject` variant in the per-process handle
 table, so the same `read`, `write`, `close`, `poll`/`epoll` and `io_uring`
 paths reach it.  The readiness half of that seam is
 `HandleEntry::is_readable`/`is_writable`
-(`src/kernel/process/process/handle_entry.rs`), which `epoll_wait` consults
-when it probes its interest list.
+(`src/kernel/process/process/handle_entry.rs`), which `poll`, `epoll_wait` and
+`io_uring`'s `POLL_ADD` all consult, each through
+`kernel::io::fd_readable`/`fd_writable` — the pair that adds the descriptor's
+rights check in front of the object's answer.  The shape table's
+`poll_read`/`poll_write` decide which kinds have a readiness side at all, so an
+object without one (a directory, a process handle) answers "not ready" rather
+than an error.  `poll` was the last of the three to be given this answer; it
+used to report a descriptor ready on the strength of its rights alone, which
+made `POLLOUT` a constant yes and left RFC 0032's short write with nothing to
+wait on.
 
 | Facility | Syscalls | Mechanism |
 |---|---|---|

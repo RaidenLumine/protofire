@@ -483,11 +483,23 @@ impl TcpConnectionState {
 
     /// How many bytes are buffered for transmission and not yet acknowledged.
     ///
-    /// There is no upper bound: `write` accepts every byte it is handed, so
-    /// this grows while the peer does not read.  Exposed so a test can show
-    /// that, and so the day a bound is chosen there is a reader for it.
+    /// Bounded by [`MAX_SEND_BUFFER`]: `write` refuses to grow past it, so this
+    /// reaching the bound is what a short write reports (RFC 0032).
     pub fn unacknowledged_bytes(&self) -> usize {
         self.send_buffer.len()
+    }
+
+    /// Whether a write would accept bytes right now.
+    ///
+    /// The state has to carry data and the send buffer has to have room.  This
+    /// is the question `poll`'s `POLLOUT` asks, so it is stated once here
+    /// rather than re-derived by each readiness query: a second copy of these
+    /// two conditions is a second place for one of them to be forgotten.
+    pub fn accepts_writes(&self) -> bool {
+        matches!(
+            self.state,
+            TcpState::Established | TcpState::CloseWait | TcpState::FinWait1 | TcpState::FinWait2
+        ) && self.send_buffer.len() < MAX_SEND_BUFFER
     }
 
     /// How many bytes are buffered for reading.

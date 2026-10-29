@@ -1281,7 +1281,13 @@ impl TcpConnection {
     }
 
     /// Check whether this TCP connection can accept data for writing.
-    /// Returns `Ok(true)` if the connection is in a writable state.
+    ///
+    /// Two conditions, not one: the connection has to be in a state that
+    /// carries data, *and* its send buffer has to have room.  The second is
+    /// what RFC 0032's bound made necessary — `write` stops at
+    /// `MAX_SEND_BUFFER` and answers with a short count, so a writability
+    /// answer that ignored the bound would tell a program it could write and
+    /// then accept nothing, which is the spin this query exists to prevent.
     pub fn is_writable(&self) -> Result<bool> {
         #[cfg(not(target_os = "none"))]
         {
@@ -1300,13 +1306,7 @@ impl TcpConnection {
                 )
                 .ok_or(Error::NotFound)?;
             let state = conn.lock();
-            Ok(matches!(
-                state.state,
-                crate::network::tcp::TcpState::Established
-                    | crate::network::tcp::TcpState::CloseWait
-                    | crate::network::tcp::TcpState::FinWait1
-                    | crate::network::tcp::TcpState::FinWait2
-            ))
+            Ok(state.accepts_writes())
         }
     }
 }

@@ -1,6 +1,6 @@
 # RFC 0032: Decide what a full send buffer does
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-20
 - **Supersedes:** none
@@ -150,13 +150,49 @@ a writer parks, an ACK opens the window, the writer resumes.
 (`src/network/tcp/types.rs`), and `write_all`'s retry loop
 (`src/network/tcp/table.rs`).
 
+**Landed:** the writability the bound made necessary.  `poll` exists in this
+ABI (number 96) and answers `POLLOUT`, but it was answering a question about
+the descriptor's rights rather than about the object behind it:
+`kernel::io::fd_writable` returned `Ok(true)` for anything carrying
+`HANDLE_RIGHT_WRITE`, with a comment saying socket-specific buffer checks could
+be added later.  The bound is what made that comment load-bearing — without it
+`POLLOUT` is a constant yes, and the short write this RFC chose has nowhere to
+be observed.  Two changes close it:
+
+- `TcpConnectionState::accepts_writes` states the two conditions once — the
+  connection carries data, and the send buffer has room — and
+  `TcpConnection::is_writable` asks it.  The bound is now visible to the query
+  that exists to report it.
+- `kernel::io::fd_readable` and `fd_writable` ask the object through
+  `HandleEntry::is_readable`/`is_writable`, gated on the shape table's
+  `poll_read`/`poll_write` so an object with no readiness side answers "not
+  ready" rather than an error.  This is what `epoll_wait` already did; `poll`
+  was the one caller that did not.
+
+The tests are the reproduction: `poll_reports_readiness_the_object_actually_has`
+asserts an eventfd at zero is not readable and a signalled one is, and
+`poll_reports_a_directory_as_not_ready_rather_than_broken` asserts a directory
+is not ready rather than broken — both fail against the old
+`Ok(true)` answer.  On the TCP side `a_full_send_buffer_is_not_writable` and
+`acknowledging_bytes_makes_the_connection_writable_again` pin the two
+conditions and their reversibility, and `a_closed_connection_is_not_writable_even_with_room`
+pins that the connection state is still one of them.
+
+What this does *not* change is the decision above: a write that finds the
+buffer full still returns a short count.  What changed is that a program can
+now ask when room appears instead of guessing, which is the "upgrade path"
+this RFC recorded.  The in-kernel park it declined remains declined.
+
 ## Unresolved questions
 
-**A short write with nowhere to wait.**  `WriteSocket` returns a count and the
-ABI has no way to ask when more room appears, so a program that must send more
-than the bound spins.  Adding `poll` with writability — and then the wait queue
-this RFC declined — is the change that closes it, and it is larger than the
-bound.
+**A short write with nowhere to wait — closed.**  `WriteSocket` returns a count
+and the ABI had no way to ask when more room appears, so a program that had to
+send more than the bound spun.  `poll` with writability is that question, and it
+was already in the ABI; what was missing was a truthful answer (see *How this is
+proven*).  A program can now wait on `POLLOUT` instead of retrying blind.  What
+remains open is the wait queue this RFC declined: `poll` still sleeps on a
+timer and re-probes rather than parking on the connection, so the wake is
+prompt but not immediate.
 
 **The bound's value.**  64 KiB matches the receive side, and no caller in the
 tree approaches it.  A connection to a high-latency peer may want more, and

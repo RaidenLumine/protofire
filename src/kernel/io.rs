@@ -167,32 +167,44 @@ pub fn check_write_target(
 
 /// Check whether a file descriptor is ready for reading without blocking.
 ///
-/// Returns `Ok(true)` if the fd exists, has read rights, and has data
-/// available (or is a type that is always readable, like a regular file).
-/// Returns `Ok(false)` if no data is immediately available.
-/// Returns `Err(_)` if the fd does not exist.
+/// Returns `Ok(true)` if the fd exists, has read rights, and the object behind
+/// it says it has data.  Returns `Ok(false)` if no data is immediately
+/// available, or if the object has no readiness side at all — a directory or a
+/// process handle is never readable rather than in error.  Returns `Err(_)` if
+/// the fd does not exist, or if the object has a readiness side and answering
+/// it failed (a connection whose table entry is gone).
+///
+/// The rights check is this function's; the readiness answer is the object's,
+/// asked through [`HandleEntry::is_readable`] so the shape table decides which
+/// objects have a readiness side.  Answering `Ok(true)` for everything a
+/// program held read rights on is what made `poll` useless: it reported a
+/// socket readable with an empty receive buffer, and a writer's `POLLOUT`
+/// never distinguished a drained send buffer from a full one (RFC 0032).
 pub fn fd_readable(process: &Process, fd: FileDescriptor) -> Result<bool> {
     let entry = process.fd_entry(fd)?;
     if entry.rights & HANDLE_RIGHT_READ == 0 {
         return Ok(false);
     }
-    // Conservative default: any fd with read rights is considered readable.
-    // Socket/pipe-specific buffer checks can be added later.
-    Ok(true)
+    if !entry.shape().poll_read {
+        return Ok(false);
+    }
+    entry.is_readable()
 }
 
 /// Check whether a file descriptor is ready for writing without blocking.
 ///
-/// Returns `Ok(true)` if the fd exists, has write rights, and can accept
-/// data without blocking.  Returns `Err(_)` if the fd does not exist.
+/// The mirror of [`fd_readable`]: `Ok(true)` when the object can accept data
+/// now, `Ok(false)` when it cannot or has no readiness side, and `Err(_)` only
+/// for an fd that does not exist or an object whose own answer failed.
 pub fn fd_writable(process: &Process, fd: FileDescriptor) -> Result<bool> {
     let entry = process.fd_entry(fd)?;
     if entry.rights & HANDLE_RIGHT_WRITE == 0 {
         return Ok(false);
     }
-    // Conservative default: any fd with write rights is considered writable.
-    // Socket/pipe-specific buffer checks can be added later.
-    Ok(true)
+    if !entry.shape().poll_write {
+        return Ok(false);
+    }
+    entry.is_writable()
 }
 
 #[cfg(test)]

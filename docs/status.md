@@ -1066,13 +1066,15 @@ networking, with more protocols in the tree than the receive path dispatches.
 **Weaknesses:**
 
 - **Not every network syscall is wrapped** in the shared user library.
-- **A short write has nowhere to wait**: a TCP read parks on the connection
-  and `kernel-net-rx` polls for it ([RFC 0031](rfcs/0031-let-a-tcp-reader-wait-instead-of-spin.md)),
-  and name resolution parks on its socket ([RFC 0029](rfcs/0029-wait-for-a-dns-answer-instead-of-polling.md)),
-  but a write that finds `MAX_SEND_BUFFER` full returns a short count and the
-  ABI has no way to ask when room appears ([RFC 0032](rfcs/0032-decide-what-a-full-send-buffer-does.md)).
-  A caller that must send more retries by spinning; `poll` with writability is
-  the missing piece.
+- **`poll` wakes on its timer, not on the connection**: a write that finds
+  `MAX_SEND_BUFFER` full returns a short count
+  ([RFC 0032](rfcs/0032-decide-what-a-full-send-buffer-does.md)) and `poll`
+  reports `POLLOUT` only when the send buffer has room, so a program can wait
+  rather than spin — but the wait is a timed re-probe, not a park on the
+  connection the way a TCP read parks
+  ([RFC 0031](rfcs/0031-let-a-tcp-reader-wait-instead-of-spin.md)) and a name
+  resolution does ([RFC 0029](rfcs/0029-wait-for-a-dns-answer-instead-of-polling.md)),
+  so the wake is bounded by the probe interval rather than immediate.
 - **In-kernel TLS has a fixed trust set**: the anchors are compiled in, with no
   way to add or replace one at runtime.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,
