@@ -642,6 +642,77 @@ balancing and runtime stack protection.
   stack, which is not the kernel thread's stack.  So the frame being returned
   is not the frame of the thread the CPU believes it is running.
 
+  Three more readings were tried against the captures and ruled out, so the
+  next reader does not re-derive them:
+
+  - **"The `sscratch=0x0` on the fatal line says the frame was not built by
+    the trap entry."**  It does not.  `SAVE_ALL` clears `sscratch` after it has
+    copied the interrupted `sp` into the frame, and `RESTORE_ALL` leaves it
+    zero when the trap returns to S-mode.  The fatal line reads it from the
+    Rust handler, which runs after the clear, so zero is the expected value on
+    every trap, user or kernel.
+  - **"The AP's halt path leaves the hart in a bad state."**  Its
+    `enable_and_halt` is `idle()` on this machine — a `wfi`, touching no CSR —
+    and the loop that follows re-enters `schedule()`, which dispatches a thread
+    before any `sret` can happen.
+  - **"The idle branch's `restore_kernel_address_space` is itself the bug."**
+    It is doing what its name says, and the branch above it has already
+    established that this CPU has nothing to run.  The fault is that a user
+    frame is live somewhere at that moment, not that the restore ran.
+
+  What the captures leave standing is one fact and one question: a CPU that
+  never activated a process root returned a `SPP=0` frame, so the frame
+  reached that CPU's `sret` without its process root ever being installed.
+  The next measurement is therefore not another reading of the same line but
+  a record of *which kernel stack* the returning frame is on: `kernel_sp` in
+  the three captures (`0xc0047bc0`, and its siblings) is in the stack window,
+  so comparing it against the current thread's own stack at the moment of the
+  `sret` says whether one thread is returning another's frame or the same
+  thread is returning a frame it never built.
+
+  That measurement was made, and it found the cause.  A fourth capture, from
+  50 four-hart boots, carries the comparison:
+
+      installed=0x807f3000 restore_from=0x80325ed0 restores=25
+      frame_kernel_sp=0xc0023bd0 current_stack_top=0xc003f000 same_stack=0
+
+  `restore_from` resolves to `block_current_thread_if`
+  (`src/kernel/process/scheduler/waker.rs`) — the **blocking** path, not the
+  idle branch and not a preemption — and `same_stack=0` says the frame being
+  returned is on a different kernel stack from the thread that is running.
+  This capture also breaks the "always `installed=0x0`" pattern the earlier
+  three showed: this one had activated a process root.
+
+  The cause is `riscv64_context_switch`, which saved and restored `ra`, `sp`
+  and `s0`–`s11` **and nothing else**.  A user thread blocks *inside* its trap
+  handler — `sleep` is an `ecall` — so the switch happens with a live trap
+  frame on that thread's kernel stack and its `sepc`/`sstatus` still in the
+  CSRs.  Switching away without them meant the thread resumed with whatever
+  the CPU happened to hold: its own if nothing else had trapped on that hart
+  in between, and another thread's `sepc` and `SPP` otherwise.  The `sret`
+  then returned to an address belonging to somebody else — which is why the
+  fatal frame's `sp` was in a demo slot the running thread never used, and why
+  the same fault produced both "a root was installed" and "no root was ever
+  installed" shapes depending on what had run on that hart since.
+
+  The switch saves `sstatus` in `Context::flags` and `sepc` in the first
+  `_reserved` slot — offsets 16 and 120, both unused on the other two
+  architectures — and restores them with the registers.  A zero `sstatus`
+  means "this context has never run" (`Context::empty` builds every thread's
+  first context that way), so it is left alone rather than restored, which
+  keeps a first switch behaving exactly as it did before.
+
+  **Measured after the fix: 100 four-hart boots, 0 occurrences of the fault
+  and 0 of the `parking with interrupts enabled` line.**  The parking line is
+  the stronger evidence even though it is not this fault: its base rate was
+  about 10%, so 50 clean boots would happen 0.5% of the time by chance, and
+  the two appeared together on both boots that had both.  The fault's own
+  base rate was 2%, where 100 clean boots happen about 13% of the time by
+  chance — consistent with the fix and not proof of it, and the honest way to
+  say that is with the number rather than with "fixed".  What makes the
+  causal story hold is that the mechanism explains both shapes and that the
+  parking line, which had its own rate and its own signature, went with it.
+
 
   Across every run made so far — 599 boots in nine sessions — the page fault
   appeared 12 times, about 2%.  That is the base rate to plan against: a run

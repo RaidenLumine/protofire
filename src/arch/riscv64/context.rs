@@ -30,6 +30,25 @@ riscv64_context_switch:
 
     sd ra, 0(a0)
     sd sp, 8(a0)
+    /* `flags` (offset 16) carries `sstatus` on this machine, and the first
+       `_reserved` slot (offset 120) carries `sepc`.  A user thread blocks
+       *inside* its trap handler — `sleep` is an ecall — so the switch happens
+       with a live trap frame on this thread's kernel stack and its
+       `sepc`/`sstatus` still in the CSRs.  Switching without them meant the
+       thread resumed with whatever CSRs the CPU happened to hold: its own if
+       nothing else had trapped in between, and another thread's `sepc` and
+       `SPP` otherwise, which then `sret`s into somebody else's address.
+       Measured on a four-hart boot that returned to U-mode with `SPP=0`,
+       `sepc` in demo slot 1, and a frame on a kernel stack that was not the
+       current thread's.
+
+       Two instructions per switch, and the alternative — that a blocking user
+       thread survives only if it happens to resume on the same hart with no
+       intervening trap — is not a property anything can hold. */
+    csrr t0, sstatus
+    sd t0, 16(a0)
+    csrr t0, sepc
+    sd t0, 120(a0)
     sd s0, 24(a0)
     sd s1, 32(a0)
     sd s2, 40(a0)
@@ -55,6 +74,24 @@ riscv64_context_switch:
     ld s9, 96(a1)
     ld s10, 104(a1)
     ld s11, 112(a1)
+    /* The next context's `sstatus` and `sepc`, restored with the registers so
+       a thread that blocked inside its trap handler resumes at its own trap
+       frame.  Described where they are saved, above.
+
+       A zero `sstatus` means "this context has never run": `Context::empty`
+       builds every thread's first context that way, and the dispatcher's own
+       is one too.  Restoring zero would mask every interrupt and drop SPP, so
+       the CSR is left alone instead — which is what a switch to a brand-new
+       context did before this change, and is the state the trampoline expects
+       to start in. */
+    ld t0, 16(a1)
+    beqz t0, .Lctx_keep_sstatus
+    csrw sstatus, t0
+.Lctx_keep_sstatus:
+    ld t0, 120(a1)
+    beqz t0, .Lctx_keep_sepc
+    csrw sepc, t0
+.Lctx_keep_sepc:
     ld sp, 8(a1)
     ld ra, 0(a1)
     ret

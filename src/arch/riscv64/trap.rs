@@ -439,14 +439,36 @@ fn report_kernel_root_user_return(frame: &TrapFrame, entered_from_user: bool) {
     if active_root == kernel_root {
         let installed = crate::arch::mmu::user_root_installed();
         let caller = crate::arch::mmu::kernel_restore_caller();
+        // Which kernel stack this frame is on, against the one the scheduler
+        // believes it is running on.  A `SPP=0` frame is built on the kernel
+        // stack of the thread that trapped from U-mode, so comparing the two
+        // separates the only two ways this return can happen: one thread
+        // returning *another* thread's frame (the stacks differ), or a thread
+        // returning a frame its own stack carries from an earlier trap (they
+        // agree, and the question moves to how that frame was left behind).
+        let current = crate::kernel::process::Scheduler::global()
+            .and_then(|scheduler| scheduler.current_thread());
+        let current_stack_top = current
+            .as_ref()
+            .map(|thread| thread.kernel_stack_top())
+            .unwrap_or(0);
+        // A kernel stack is a 64 KiB slice below its top; one page of slack
+        // covers the frame's own size without mistaking a neighbouring slice.
+        let kernel_sp = frame.kernel_sp as usize;
+        let same_stack = current_stack_top != 0
+            && kernel_sp <= current_stack_top
+            && kernel_sp >= current_stack_top.saturating_sub(0x10000);
         println!(
-            "[FATAL] riscv64 returning to U-mode on the kernel root sepc={:#018x} sstatus={:#018x} sp={:#018x} installed={:#x} restore_from={:#x} restores={}",
+            "[FATAL] riscv64 returning to U-mode on the kernel root sepc={:#018x} sstatus={:#018x} sp={:#018x} installed={:#x} restore_from={:#x} restores={} frame_kernel_sp={:#x} current_stack_top={:#x} same_stack={}",
             frame.sepc,
             frame.sstatus,
             frame.stack_pointer,
             installed,
             caller,
             crate::arch::mmu::kernel_restore_count(),
+            frame.kernel_sp,
+            current_stack_top,
+            u8::from(same_stack),
         );
     }
 }
