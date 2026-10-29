@@ -453,10 +453,22 @@ balancing and runtime stack protection.
   thread reads differently from a `Ready` thread no queue holds.  A regression
   test fails against the old first-tid lookup, and 25 of 25 four-CPU boots
   passed after the change.
-- **`check-riscv64-smp-runtime` fails on a user-mode instruction page fault,
-  about once in forty four-CPU boots, and the cause is still unknown**: the
-  trap is `scause=0x0c` with `sepc == stval == 0x85201bc4` and `sstatus` SPP
-  clear, byte-for-byte the same on every occurrence.  The fatal line's leaf
+- **A blocking riscv64 user thread returned through a frame it did not own,
+  and the fix was to save the trap CSRs across a context switch.**  This row
+  used to open with "the cause is still unknown", and the investigation below
+  is kept because five explanations were eliminated by measurement — each is
+  something the next reader does not have to re-derive.  What settled it was a
+  capture that compared the returning frame's kernel stack against the running
+  thread's: `same_stack=0`.  `riscv64_context_switch` saved `ra`, `sp` and
+  `s0`-`s11` and nothing else, so a thread that blocked inside its trap
+  handler (`sleep` is an `ecall`) resumed with whatever `sepc`/`sstatus` the
+  CPU happened to hold — its own if nothing else had trapped on that hart, and
+  another thread's otherwise.  Measured after the fix: 100 four-hart boots, 0
+  faults and 0 of the `parking with interrupts enabled` line that shared its
+  cause and fired ten times as often.
+
+  The shape, for a reader who meets it again: the trap is `scause=0x0c` with
+  `sepc == stval` and `sstatus` SPP clear.  The fatal line's leaf
   descriptor is the one measurement that has held: the faulting address *was*
   mapped, and the entry named a 2 MiB supervisor block (`0x214800cf`,
   `V R W X`, `U` clear) — so a user thread reached U-mode on a hierarchy
