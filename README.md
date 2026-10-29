@@ -266,7 +266,14 @@ make clippy
 |--------|--------------|--------|
 | `x86_64-unknown-none` | Multiboot2 (GRUB) / QEMU PVH | Full |
 | `aarch64-unknown-none` | QEMU direct `-kernel` | Full |
-| `riscv64gc-unknown-none-elf` | QEMU direct `-kernel` | Partial |
+| `riscv64gc-unknown-none-elf` | QEMU direct `-kernel` | Partial (see below) |
+
+`Partial` is one thing: a user exception is not delivered to a handler on
+RISC-V.  `ReturnFromException` in `src/arch/riscv64/trap.rs` falls through, so
+a fault terminates the process instead of running the handler it installed.
+Everything else the other two machines do, this one does too — it boots,
+schedules across harts, and runs the same ring-3 programs, including `fork`,
+which is gated by `make check-riscv64-runtime`.
 
 ## Documentation
 
