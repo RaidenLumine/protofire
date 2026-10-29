@@ -218,6 +218,26 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
 
     let entered_from_user = entered_from_user_mode(frame);
     validate_user_entry_frame_or_terminate(frame, entered_from_user);
+
+    // Advance past a user `ecall` *before* anything records where the thread
+    // was.  `ecall` does not advance `sepc` on this machine — the trap leaves
+    // it pointing at the instruction itself — so a context captured here
+    // resumes at the syscall rather than after it.  For a normal return that
+    // is invisible, because the return path writes its own `sepc`; it becomes
+    // visible the moment something *else* consumes the snapshot.  `fork` does:
+    // it hands the parent's saved context to the child, so a child whose
+    // parent captured at the ecall re-executes the syscall it was forked in.
+    // Measured, that was an unbounded fork storm — every child forked again,
+    // and none of them ever printed its own line — because each child
+    // re-entered `fork` at the instruction before the one that returns 0.
+    //
+    // x86_64 does not need this: `int 0x80` leaves `rip` on the following
+    // instruction, so its snapshot already says "after the call".
+    if entered_from_user && !is_interrupt(frame) && exception_code(frame) == EXCEPTION_USER_ECALL {
+        // `ecall` is always a 4-byte non-compressed instruction.
+        frame.sepc += 4;
+    }
+
     capture_current_user_context(frame);
 
     if is_interrupt(frame) {
@@ -644,13 +664,10 @@ fn handle_supervisor_ecall(frame: &mut TrapFrame) -> bool {
                 );
                 return false;
             }
-            // RISC-V `ecall` does NOT advance `sepc`: on trap it points at the
-            // ecall instruction itself, and `sret` would otherwise re-execute
-            // it forever.  Advance past it now, before any handler that might
-            // snapshot or context-switch the frame, so the recorded resume
-            // point is the instruction after the syscall.  (`ecall` is always
-            // a 4-byte non-compressed instruction.)
-            frame.sepc += 4;
+            // `sepc` was already advanced past the `ecall` by the dispatch
+            // entry, which has to do it before it records the thread's user
+            // context.  Doing it again here would skip the instruction after
+            // the syscall.
             handle_syscall(frame);
             true
         }
@@ -661,6 +678,7 @@ fn handle_supervisor_ecall(frame: &mut TrapFrame) -> bool {
 fn handle_syscall(frame: &mut TrapFrame) {
     let current_thread = crate::kernel::process::Scheduler::global()
         .and_then(|scheduler| scheduler.current_thread());
+
     let mut syscall_context = SyscallContext::new(
         frame.a7 as usize, // syscall number in a7
         [

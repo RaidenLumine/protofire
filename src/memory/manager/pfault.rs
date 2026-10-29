@@ -274,12 +274,33 @@ impl MemoryManager {
                     }
                 };
                 // Copy the original page contents.
+                //
+                // The copy runs inside the user-access window because on one
+                // of this kernel's machines the *source frame's own address* is
+                // mapped as a user page.  riscv64 implements a demo slot by
+                // identity-mapping it — the slot's virtual address is the
+                // frame's physical address — and a process root splices a user
+                // PTE table over exactly that 2 MiB block, replacing the
+                // supervisor block the kernel's own tables have there.  A
+                // supervisor read of `phys` therefore walks a `U=1` entry, and
+                // with `sstatus.SUM` clear that read is a page fault: measured,
+                // the kernel stopped between allocating the destination and
+                // copying the first byte, and the boot hung with no trap
+                // reported, because the fault arrived inside the fault handler.
+                // x86_64 and aarch64 map user pages so the supervisor can read
+                // them, so the window costs them nothing.
+                //
+                // `check-user-access-windows` allows this file as its one
+                // exception to "the window is opened in the syscall layer"; the
+                // argument is in that script's header.
+                //
                 // SAFETY: the source is the page being faulted on and the
                 // destination a frame just allocated for it; one page each, so
-                // the two ranges cannot overlap.
-                unsafe {
+                // the two ranges cannot overlap.  The window permits the
+                // access; it does not widen what is copied.
+                crate::arch::user_access::with_user_access_guard(|| unsafe {
                     core::ptr::copy_nonoverlapping(phys as *const u8, new_frame, paging::PAGE_SIZE);
-                }
+                });
                 let new_phys = new_frame as usize;
 
                 // Decrement the refcount of the old shared frame.  If it

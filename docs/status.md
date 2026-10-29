@@ -792,15 +792,31 @@ disk-backed swap, compression, and defragmentation.
   software table reporting the address as missing.  The loader registers now,
   and that failure is gone.
 
-  What is left on riscv64 is downstream of it: with the pages registered, the
-  copy-on-write fault resolves against `kind=copy-on-write` and the kernel stops
-  inside the copy — after `allocate_frames` returns, before the first byte is
-  copied.  The bulk copy was replaced with a byte loop to see whether the fault
-  named an offset, and it did not: the boot hangs with no fatal trap and no
-  output, so the next reader starts from "the destination frame is not
-  reachable from the process root" rather than from the copy itself.  `fork`
-  is therefore **verified on x86_64 and aarch64, and does not complete on
-  riscv64**.
+  Two more defects had to fall before riscv64 completed, and both were found
+  by the same measurement:
+
+  - **`ecall` does not advance `sepc`, and the user context was captured before
+    anything did.**  The parent's saved context therefore pointed at the
+    syscall instruction itself, and `fork` hands that context to the child — so
+    every child re-executed `fork` at the instruction before the one that
+    returns 0, and forked again.  Measured: an unbounded fork storm, 212 forks
+    on one boot and not one `fork: child resumed`.  The dispatch entry now
+    advances `sepc` past a user `ecall` before it records the context, and
+    `handle_supervisor_ecall` no longer does it a second time.  x86_64 never
+    had this: `int 0x80` leaves `rip` on the following instruction.
+  - **The copy-on-write copy read a user-mapped frame.**  A riscv64 demo slot
+    is identity-mapped, and a process root splices a user PTE table over that
+    2 MiB block, so the supervisor's read of `phys` walks a `U=1` entry; with
+    `sstatus.SUM` clear that read is itself a page fault, raised inside the
+    handler.  The copy now runs inside the user-access window.  That is the one
+    exception to `check-user-access-windows`' rule that only the syscall layer
+    opens one, and the argument is in that script's header: a page fault runs
+    to its return, so the window cannot be held across a context switch, and
+    the guard saves and restores.  Confirmed by removing the window: `fork`
+    hangs again.
+
+  All three machines now print both halves and keep running — measured 3 of 3
+  boots on riscv64, and one each on x86_64 and aarch64 after the change.
 - **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
   and automatic topology discovery (ACPI SRAT/SLIT on x86_64; FDT numa-node-id
   / distance-map on AArch64 and RISC-V); a default single-node topology always
