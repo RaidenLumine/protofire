@@ -10,10 +10,8 @@ use crate::kernel::block::BlockDevice;
 use crate::memory::paging::MappingKind;
 use crate::memory::paging::{self};
 use crate::memory::swap::SwapArea;
-use crate::memory::swap::SwapSlot;
 use crate::Result;
 
-use super::super::arch::align_down_page;
 use super::super::arch::unmap_user_page_arch;
 use super::MemoryManager;
 
@@ -258,23 +256,6 @@ impl MemoryManager {
         }
     }
 
-    /// Free all swap slots and compressed copies for the given list of
-    /// virtual page addresses in `owner`'s address space (typically called on
-    /// process termination).
-    ///
-    /// Pages that are not in the swap map are silently skipped.
-    pub fn free_user_swap_slots(&mut self, owner: paging::AddressSpaceId, pages: &[usize]) {
-        for &va in pages {
-            let page_addr = align_down_page(va);
-            if let Some(slot_idx) = self.swap_map.remove(&(owner, page_addr)) {
-                if let Some(ref mut area) = self.swap_area {
-                    area.free_slot(SwapSlot(slot_idx));
-                }
-            }
-            self.remove_compressed_page(owner, page_addr);
-        }
-    }
-
     // ── CoW frame reference counting ─────────────────────────────────────
 
     /// Increment the reference count for a shared CoW frame.
@@ -324,16 +305,5 @@ impl MemoryManager {
     /// Returns 0 if the frame is not in the refcount table.
     pub fn get_frame_refcount(&self, phys: usize) -> usize {
         self.frame_refcounts.get(&phys).copied().unwrap_or(0)
-    }
-
-    /// Decrement reference counts for all shared frames listed, and unmap
-    /// their corresponding entries from `owner`'s software mappings.
-    ///
-    /// Used on process termination to release CoW-shared pages.
-    pub fn release_cow_pages(&mut self, owner: paging::AddressSpaceId, pages: &[(usize, usize)]) {
-        for &(va, phys) in pages {
-            self.dec_frame_refcount(phys);
-            let _ = self.page_table.unmap_owned(owner, va, paging::PAGE_SIZE);
-        }
     }
 }

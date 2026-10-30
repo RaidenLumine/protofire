@@ -46,9 +46,17 @@ impl FileSystem {
         self.init_with_boot_disk(None);
     }
 
-    /// Set the root filesystem type for the next [`init_with_boot_disk`] call.
+    /// Set the name the next [`init_with_boot_disk`] call reports in its
+    /// messages.
     ///
-    /// Supported values: `"simplefs"` (default) and `"ext4"`.
+    /// This is a label and nothing more: no caller sets it, and an `"ext4"`
+    /// here does not mount ext4 — the boot mounts SimpleFS either way, and the
+    /// only thing that changes is the word in a failure line.  It is kept
+    /// because the alternative was a second copy of the string at the one call
+    /// site that prints it, and it is documented as a label so nobody reads it
+    /// as a filesystem selection.  Mounting a real ext4 root is
+    /// [RFC 0001](../../docs/rfcs/)'s kind of change — a driver choosing the
+    /// volume, not a string choosing the driver.
     pub fn set_rootfs_type(&mut self, fs_type: &str) {
         self.rootfs_type = fs_type.to_string();
     }

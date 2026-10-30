@@ -288,11 +288,46 @@ impl Process {
         self.suspended_thread.lock().take()
     }
 
-    /// Drop the deferred user address space.  Called during reap when
-    /// interrupts are enabled so the heap allocator can safely free the
-    /// page-table allocations.
+    /// Drop the deferred user address space and release what it held.
+    ///
+    /// Called during reap, when interrupts are enabled, so the heap allocator
+    /// can safely free the page-table allocations.
+    ///
+    /// Dropping the hierarchy is not the whole job.  The software page table
+    /// keeps a mapping per `(owner, virtual address)`, and a copy-on-write
+    /// page's frame carries a reference per process that maps it; neither is
+    /// owned by the hierarchy being dropped, so a reap that only cleared this
+    /// field left both behind — a frame per CoW page, for as long as the
+    /// machine ran, and a stale mapping that made the next process to be given
+    /// the same root table address see a dead one's pages.  `exec` released
+    /// both when it replaced a space; termination did not, which is why the
+    /// release had no caller and this row had no gate.
     pub(crate) fn clear_deferred_user_address_space(&self) {
+        // Release before dropping: the range and the root table address come
+        // from the same hierarchy that is about to go away.
+        if let Some(space) = self.deferred_user_address_space_drop.lock().as_ref() {
+            Self::release_user_pages_of(space);
+        }
         *self.deferred_user_address_space_drop.lock() = None;
+    }
+
+    /// Release the software page table's view of a user address space.
+    ///
+    /// Scoped to the space's owner: every process maps its image and stack at
+    /// the same virtual addresses, so an unscoped range would drop another
+    /// process's mappings.  Both a replaced space (`exec`) and a terminating
+    /// one (reap) need exactly this, and it is one function because a second
+    /// copy is a second place to forget that the release is not just an unmap:
+    /// it drops the copy-on-write reference each shared frame carries too.
+    fn release_user_pages_of(space: &ProcessUserAddressSpace) {
+        let Some((start, end)) = space.user_page_va_range() else {
+            return;
+        };
+        let len = end.saturating_sub(start);
+        let owner = space.owner_root_table();
+        if let Some(mut memory) = crate::memory::global_mut() {
+            memory.unregister_user_page_range(owner, start, len);
+        }
     }
 
     /// Complete termination of a thread, updating the process termination
@@ -480,17 +515,9 @@ impl Process {
         self.ensure_mutable()?;
 
         // Unregister the old user pages from the software page table before
-        // swapping to the new address space.  Scoped to this process: every
-        // process maps its image and stack at the same virtual addresses, so an
-        // unscoped range would drop another process's mappings.
+        // swapping to the new address space.
         if let Some(old_space) = self.user_address_space.lock().as_ref() {
-            if let Some((start, end)) = old_space.user_page_va_range() {
-                let len = end.saturating_sub(start);
-                let owner = old_space.owner_root_table();
-                if let Some(mut memory) = crate::memory::global_mut() {
-                    memory.unregister_user_page_range(owner, start, len);
-                }
-            }
+            Self::release_user_pages_of(old_space);
         }
 
         // Swap cwd, home_dir, launch metadata, and prepared address-space
