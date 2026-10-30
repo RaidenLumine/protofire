@@ -71,6 +71,16 @@ while [ "$waited" -lt "$timeout_seconds" ]; do
     waited=$((waited + 1))
 done
 
+# Did the serial half ever finish?  A budget that ran out here is this
+# script's own failure, and saying so is the difference between "the guest
+# never answered its commands" and "the guest never got a key press" — which
+# look identical in the log, because both end with the same line missing.
+if [ "${found:-0}" -lt "$expected_markers" ]; then
+    printf 'press-usb-keys: the serial half did not finish: saw %s of %s markers in %ss\n' \
+        "${found:-0}" "$expected_markers" "$timeout_seconds" >&2
+    exit 3
+fi
+
 # One beat for the prompt, then the keys.
 sleep 1
 
@@ -95,6 +105,11 @@ for _ in range(100):
 else:
     print("press-usb-keys: the monitor socket never appeared", file=sys.stderr)
     sys.exit(1)
+
+# The injector's own record that it typed.  The check turns this into its
+# verdict; printing it from here is what makes "the keys went in" and "the
+# guest raised an interrupt for them" separable claims.
+print("press-usb-keys: typed %s" % text, file=sys.stderr)
 
 for key in keys:
     sock.sendall(("sendkey %s 50\n" % key).encode())

@@ -201,8 +201,22 @@ if [ "$PAYLOAD_SOURCE" = "frozen" ]; then
 else
     serial_commands=12
 fi
-sh ./scripts/press-usb-keys.sh "$log_file" "$TIMEOUT_SECONDS" "$usb_monitor" \
-    "echo usbkeys" "$serial_commands" &
+# The injector's own account of what it did, kept so a missing `event ring
+# MSI` can be attributed: the boot not reaching the end of its serial half is
+# this script's failure, and the injector typing keys the guest never
+# answered is the kernel's.  Without the distinction both read as "a line is
+# missing", and the second is the one worth knowing about.
+usb_injector_status_file="$(mktemp)"
+# The injector waits for the serial half and *then* types, so its budget has to
+# cover the boot plus the typing.  Sharing the boot's ninety seconds meant the
+# two deadlines raced: on a loaded host the guest can take most of them before
+# the last marker appears, and the injector is killed a second short of typing
+# — which reads, in the log, exactly like a kernel that never raised the
+# interrupt for a key press.  Measured on a passing boot, `event ring MSI` is
+# the fifth-from-last line of a 541-line log, so the injection sits at the very
+# end of the window by construction.
+sh ./scripts/press-usb-keys.sh "$log_file" "$((TIMEOUT_SECONDS + 30))" "$usb_monitor" \
+    "echo usbkeys" "$serial_commands" 2>"$usb_injector_status_file" &
 usb_injector=$!
 
 shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" \
@@ -211,8 +225,25 @@ shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" \
 status=$?
 set -e
 
-kill "$usb_injector" 2>/dev/null || true
-wait "$usb_injector" 2>/dev/null || true
+# The injector finishes on its own when it has typed; a kill here is cleanup
+# for one the boot outran, and it must not overwrite the status of one that
+# reported.  `kill -0` asks whether it is still there rather than signalling.
+if kill -0 "$usb_injector" 2>/dev/null; then
+    kill "$usb_injector" 2>/dev/null || true
+fi
+wait "$usb_injector" 2>/dev/null
+usb_injector_exit=$?
+# Exit 0 is the injector saying it typed.  Anything else — its own exit 3 for
+# "the serial half never finished", a signal from the kill above, a failure
+# to reach the monitor — is the injector not getting its job done, and the
+# verdict must not read that as a kernel defect.
+case "$usb_injector_exit" in
+    0) usb_injector_status=typed ;;
+    3) usb_injector_status=starved ;;
+    *) usb_injector_status=unfinished ;;
+esac
+usb_injector_said="$(cat "$usb_injector_status_file" 2>/dev/null || true)"
+rm -f "$usb_injector_status_file"
 rm -rf "$usb_monitor_dir"
 
 # 124 is `timeout` killing a machine that is, by design, still running.
@@ -235,6 +266,21 @@ fail_with_log() {
     printf 'x86_64 runtime check failed: %s\n' "$reason" >&2
     printf '  qemu exit status: %s\n' "$status" >&2
     printf '  serial log: %s bytes\n' "$bytes" >&2
+    # What the USB injector did, because two very different failures both end
+    # with a line missing from the log: the guest never finished its serial
+    # half, or it finished and never answered a key press this script typed.
+    # The first is this script's budget; only the second is the kernel's.
+    if [ "${usb_injector_status:-}" = "typed" ]; then
+        printf '  the usb injector typed its keys: the guest did not answer them,\n' >&2
+        printf '  so the xhci path above is the thing to look at\n' >&2
+    else
+        printf '  the usb injector did not finish (%s, exit %s), so a missing xhci\n' \
+            "${usb_injector_status:-unknown}" "${usb_injector_exit:-unknown}" >&2
+        printf '  line here says nothing about the interrupt path\n' >&2
+        if [ -n "${usb_injector_said:-}" ]; then
+            printf '%s\n' "$usb_injector_said" | sed 's/^/  injector: /' >&2
+        fi
+    fi
 
     if [ "$bytes" -eq 0 ]; then
         printf '  the guest produced no serial output at all: this is a local\n' >&2
