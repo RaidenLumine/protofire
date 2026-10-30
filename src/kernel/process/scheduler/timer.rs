@@ -169,15 +169,25 @@ impl Scheduler {
         state: crate::kernel::process::ProcessState,
         detail: &super::terminate::UnplacedDetail,
     ) {
+        // Every thread is asked about, and the live one's state is what the
+        // line reports.  Taking `thread_ids().first()` reported the state of
+        // whichever thread happened to be first in a list that `swap_remove`
+        // reorders as threads end — so a process whose first-listed thread had
+        // already terminated printed `thread Terminated` (which reads as
+        // harmless bookkeeping) while a `Ready` thread of the same process sat
+        // in no queue, which is the finding this line exists to name.  The
+        // detection side of this was fixed to ask about every thread; the
+        // reporting side kept asking the first one, and a boot measured it:
+        // `state=Waiting (1 thread(s), none placed, suspended-slot empty)
+        // (thread Waiting)` appeared in 1 of 6 four-CPU aarch64 boots.
         let (name, thread_state) = self
             .process_by_pid(pid)
             .map(|process| {
                 let name = process.name();
-                let thread_state = process
-                    .thread_ids()
-                    .first()
-                    .and_then(|tid| self.find_thread_anywhere_by_pid_and_tid(pid, *tid))
-                    .map(|thread| thread.state());
+                let thread_state = process.thread_ids().into_iter().find_map(|tid| {
+                    self.find_thread_anywhere_by_pid_and_tid(pid, tid)
+                        .map(|thread| thread.state())
+                });
                 (name, thread_state)
             })
             .unwrap_or_else(|| (alloc::string::String::from("?"), None));
