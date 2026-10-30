@@ -438,6 +438,17 @@ if [ "$PAYLOAD_SOURCE" != "frozen" ]; then
     require_log_line "[user  ] riscv64 triggering local store fault"
     require_log_line "delivered riscv64 exception store-page-fault to handler pid="
     require_log_line "[user  ] riscv64 resumed after local store fault"
+    # And the same thing one level in: the handler faults, the kernel
+    # delivers to the same handler while the outer frame is still on its
+    # pending stack, and both returns unwind in order.  `ALLOW_NESTED` is
+    # only accepted together with `REQUIRE_EXCEPTION_STACK`, so this also
+    # exercises the install rule that pairs them.  The two "resumed" lines
+    # are asserted in order: an inner delivery that unwound after the outer
+    # one would be a LIFO violation, not a scheduling difference.
+    require_log_line "[user  ] riscv64 triggering nested store fault"
+    require_log_line_order \
+        "[user  ] riscv64 resumed after local store fault" \
+        "[user  ] riscv64 resumed after nested store fault"
 fi
 require_log_line "[user  ] exit pid="
 require_log_line "id=demo-launcher status=42"

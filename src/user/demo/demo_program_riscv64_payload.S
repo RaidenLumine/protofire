@@ -22,6 +22,14 @@
 # Offsets into RiscV64UserExceptionFrame (src/abi/exception.rs) #
 .equ EXC_FRAME_INSTRUCTION_POINTER, 272
 
+# The two handler flags this payload installs with.  `ALLOW_NESTED` is only
+# accepted together with `REQUIRE_EXCEPTION_STACK` — nesting on the
+# interrupted program's own stack would let the inner delivery trample it —
+# so the pair travels as one value. # #
+.equ FLAG_REQUIRE_EXCEPTION_STACK, 2
+.equ FLAG_ALLOW_NESTED, 4
+.equ NESTED_HANDLER_FLAGS, FLAG_REQUIRE_EXCEPTION_STACK + FLAG_ALLOW_NESTED
+
 .equ METADATA_BUFFER_SIZE, 128
 
 .global protofire_demo_program_riscv64_payload_start
@@ -34,6 +42,7 @@ protofire_demo_program_riscv64_payload_start:
     mv s1, a1
     mv s2, a2
     mv s3, sp
+    li s4, 0
 
     # Print startup message #
     la a0, phase0_message
@@ -96,8 +105,13 @@ protofire_demo_program_riscv64_payload_start:
     # resumed line the gate looks for.
     li a0, SCAUSE_STORE_PAGE_FAULT
     la a1, riscv64_fault_handler
-    li a2, 0
-    li a3, 0
+    # The frame sits at the top of the user stack; the exception stack is a
+    # page below it, which is inside the demo slot and 16-byte aligned.
+    mv a2, s3
+    li t0, 4096
+    sub a2, a2, t0
+    andi a2, a2, -16
+    li a3, NESTED_HANDLER_FLAGS
     li a7, SYS_INSTALL_EXCEPTION
     ecall
     bnez a0, .Lfault_exit_install_failed
@@ -118,6 +132,10 @@ protofire_demo_program_riscv64_payload_start:
 
     la a0, fault_resumed_message
     la a1, fault_resumed_message_end
+    call write_stdout_range
+
+    la a0, fault_nested_resumed_message
+    la a1, fault_nested_resumed_message_end
     call write_stdout_range
 
     # Exit with code 42 #
@@ -141,6 +159,28 @@ protofire_demo_program_riscv64_payload_start:
 riscv64_fault_handler:
     mv s0, a0            # the frame pointer, which the resume syscall takes #
 
+    # First entry faults again from inside the handler, which is the nested
+    # delivery; the second entry (s4 already set) resumes.  `s4` survives the
+    # delivery because the kernel's handler context is the interrupted one
+    # with only the three fields in the closure changed.
+    bnez s4, .Lhandler_resume
+    li s4, 1
+
+    la a0, fault_nested_trigger_message
+    la a1, fault_nested_trigger_message_end
+    call write_stdout_range
+
+    # The same trick one level in: a store into the read-execute text, this
+    # time from the handler's own code.
+.option push
+.option norvc
+    la t0, code_page_probe_nested
+    li t1, 34
+    sb t1, 0(t0)
+.option pop
+
+.Lhandler_resume:
+    mv a0, s0
     li t0, EXC_FRAME_INSTRUCTION_POINTER
     add t0, a0, t0
     ld t1, 0(t0)
@@ -335,9 +375,22 @@ fault_resumed_message:
     .ascii "[user  ] riscv64 resumed after local store fault\n"
 fault_resumed_message_end:
 
+fault_nested_trigger_message:
+    .ascii "[user  ] riscv64 triggering nested store fault\n"
+fault_nested_trigger_message_end:
+
+fault_nested_resumed_message:
+    .ascii "[user  ] riscv64 resumed after nested store fault\n"
+fault_nested_resumed_message_end:
+
 # A byte inside the read-execute payload text: writing it is the fault. #
 .balign 4
 code_page_probe:
+    .byte 0
+
+# And one more, for the fault the handler itself raises. #
+.balign 4
+code_page_probe_nested:
     .byte 0
 
 protofire_demo_program_riscv64_payload_code_end:

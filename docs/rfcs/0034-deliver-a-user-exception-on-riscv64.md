@@ -215,22 +215,25 @@ architecture-neutral set the other two already match.
 
 ## Unresolved questions
 
-**Nested delivery has host tests but no boot.** The pending stack, the
-`ALLOW_NESTED` flag and the `Blocked` answer are exercised by
-`riscv64_nested_delivery_follows_the_two_flags`, which walks all three flag
-combinations and checks that returns unwind in LIFO order — but no riscv64
-payload triggers a fault inside its own handler, so the boot half is
-unverified.  aarch64 has such a demo
-(`demo_program_aarch64_fault_payload.S` resumes from three faults including a
-nested one); riscv64 has one fault and one resume.  Adding the nested case is
-a payload change, not a kernel one, and it is the next thing this row should
-gain.
+**Nested delivery — closed.**  It had host tests and no boot; it has both
+now.  The demo payload installs its store-page-fault handler with
+`ALLOW_NESTED | REQUIRE_EXCEPTION_STACK`, faults once from the payload, and
+then faults again from inside the handler.  `make check-riscv64-runtime`
+requires both deliveries and both resumes, in order:
 
-The test also records a rule the install enforces and this RFC does not
-otherwise state: `ALLOW_NESTED` is refused unless
-`REQUIRE_EXCEPTION_STACK` is set too.  Nested delivery on the interrupted
-program's own stack would let the inner handler trample it, so the two flags
-travel together and a registration with only the first is `InvalidArgument`.
+```text
+[user  ] riscv64 triggering local store fault
+delivered riscv64 exception store-page-fault to handler pid=
+[user  ] riscv64 triggering nested store fault
+delivered riscv64 exception store-page-fault to handler pid=
+[user  ] riscv64 resumed after local store fault
+[user  ] riscv64 resumed after nested store fault
+```
+
+The order is the point: the two resumes are asserted in sequence, so a
+delivery that unwound out of LIFO order fails the gate rather than passing
+as a scheduling difference.  Removing the fault from inside the handler was
+measured — the gate then fails on the missing nested-trigger line.
 
 **`error_code` carries `stval` for every delivered code, including the ones
 where it is not an address.** For a page fault it is the faulting address, and
