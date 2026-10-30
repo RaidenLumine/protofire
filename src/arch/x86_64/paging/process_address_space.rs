@@ -210,11 +210,14 @@ impl PreparedProcessAddressSpace {
     /// Clone this address space for fork(), marking writable user pages as
     /// read-only in both the parent (`self`) and the returned child clone.
     ///
-    /// Returns `(child_address_space, shared_cow_pages, all_child_pages)`
-    /// where:
-    /// - `shared_cow_pages` lists `(va, pa, perms)` for pages now shared CoW
-    /// - `all_child_pages` lists `(va, pa, perms)` for every user page in the
-    ///   child's address space (for software page-table registration)
+    /// The three things a fork needs come back as
+    /// [`ForkedAddressSpace`]: the
+    /// child's hierarchy, the pages that are now copy-on-write on both sides,
+    /// and every user page in the child (for software page-table
+    /// registration).  The shape is named rather than a bare tuple because
+    /// `Process::fork` consumes it on all three machines, and a struct makes
+    /// a clone that forgets one of the three fail to build instead of
+    /// silently answering the wrong field.
     pub fn fork_clone(
         &mut self,
     ) -> Option<crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>> {
@@ -363,8 +366,6 @@ impl PreparedProcessAddressSpace {
         // Every page demoted above is dropped from this CPU's TLB, and the
         // call returns the pages it did that for.
         let _demoted_pages = demote_and_invalidate(&shared_pages);
-
-        // ── Build child address space ────────────────────────────────────
 
         // ── Build child address space ────────────────────────────────────
 

@@ -740,8 +740,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fork_clone_keeps_kernel_mappings_and_cows_user_pages() {
+    /// The process root every fork test clones: a kernel window, an RX image
+    /// segment and an RW image segment, with the caller's stack layout.
+    ///
+    /// Factored out when the second fork test needed the same fixture: two
+    /// copies of it would be two things to keep in step, and the point of the
+    /// pair is that they describe one parent.
+    fn sample_fork_fixture() -> (KernelPageTableSpec, UserImageLoadPlan, alloc::vec::Vec<u8>) {
         let kernel_plan = KernelPagePlan::from_ranges(
             (0x200000, 0x201000),
             (0x210000, 0x211000),
@@ -806,6 +811,12 @@ mod tests {
             *byte = (255 - (index % 251)) as u8;
         }
 
+        (kernel_spec, plan, image)
+    }
+
+    #[test]
+    fn fork_clone_keeps_kernel_mappings_and_cows_user_pages() {
+        let (kernel_spec, plan, image) = sample_fork_fixture();
         let mut parent =
             prepare_process_address_space(&kernel_spec, &plan, &image).expect("process root");
 
@@ -890,6 +901,65 @@ mod tests {
         assert_eq!(
             child.summary().mapped_page_count,
             parent.summary().mapped_page_count
+        );
+    }
+
+    /// Every page fork demoted is one it named, and the naming is complete.
+    ///
+    /// `demoting_a_page_also_invalidates_it` checks the flush helper against a
+    /// list it is handed; this checks the list against the tables.  The two
+    /// belong together because the defect that motivated them was a *missing*
+    /// page, not a wrong helper: the demotion loop and the list that drives the
+    /// flush were written separately, so a page could be demoted without being
+    /// flushed.  Reading the parent's tables after the clone and comparing the
+    /// count is what closes that gap — the list has to name every writable user
+    /// page the parent had, because those are exactly the ones the clone took
+    /// the WRITE bit off.
+    #[test]
+    fn the_pages_fork_lists_are_the_pages_it_demoted() {
+        use crate::memory::paging::PagePermissions;
+        use alloc::vec::Vec;
+
+        let (kernel_spec, plan, image) = sample_fork_fixture();
+        let mut parent =
+            prepare_process_address_space(&kernel_spec, &plan, &image).expect("process root");
+
+        // The pages the parent had writable *before* the clone: those are the
+        // ones the clone is obliged to demote and therefore to flush.
+        let writable_before: Vec<usize> = parent
+            .user_address_space
+            .pages
+            .iter()
+            .filter(|page| page.permissions.contains(PagePermissions::WRITE))
+            .map(|page| page.virtual_address)
+            .collect();
+        assert!(
+            !writable_before.is_empty(),
+            "the fixture must have a writable page for this test to mean anything"
+        );
+
+        let forked = parent.fork_clone().expect("fork_clone");
+        let listed: Vec<usize> = forked.shared_pages.iter().map(|&(va, _, _)| va).collect();
+
+        for va in &writable_before {
+            assert!(
+                listed.contains(va),
+                "page {va:#x} was writable before the clone, so the clone demoted \
+                 it and its flush list must name it"
+            );
+        }
+        assert_eq!(
+            listed.len(),
+            writable_before.len(),
+            "the flush list must name each demoted page once, with none invented"
+        );
+        let mut unique = listed.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            listed.len(),
+            "and no page may appear twice in the flush list"
         );
     }
 

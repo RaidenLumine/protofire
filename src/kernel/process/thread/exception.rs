@@ -68,18 +68,35 @@ impl<const CAPACITY: usize> PendingExceptionFrameStack<CAPACITY> {
         Ok(())
     }
 
+    /// Whether `frame_pointer` names the delivery on top of the stack.
+    ///
+    /// The one rule both halves of a resume need: the caller that reads a
+    /// frame back from user memory checks it before the read, and the caller
+    /// that pops checks it again before the pop.  Stating it here is what
+    /// keeps those two from disagreeing — a second copy at either call site
+    /// was a second place to change `!=` into something else.
+    ///
+    /// `Ok(false)` is "the stack is empty", `Err(InvalidArgument)` is "it is
+    /// not empty and this pointer is not the top".
+    pub(crate) fn names_top(&self, frame_pointer: usize) -> Result<bool> {
+        let Some(entry) = self.top() else {
+            return Ok(false);
+        };
+        if entry.frame_pointer != frame_pointer {
+            return Err(Error::InvalidArgument);
+        }
+        Ok(true)
+    }
+
     pub(crate) fn pop_expected(
         &mut self,
         frame_pointer: usize,
     ) -> Result<Option<UserPendingExceptionFrame>> {
-        let Some(entry) = self.top() else {
+        if !self.names_top(frame_pointer)? {
             return Ok(None);
-        };
-
-        if entry.frame_pointer != frame_pointer {
-            return Err(Error::InvalidArgument);
         }
 
+        let entry = self.entries[self.len - 1];
         self.len -= 1;
         Ok(Some(entry))
     }

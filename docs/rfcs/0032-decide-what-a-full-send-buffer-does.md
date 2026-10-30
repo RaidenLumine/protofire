@@ -169,14 +169,26 @@ be observed.  Two changes close it:
   ready" rather than an error.  This is what `epoll_wait` already did; `poll`
   was the one caller that did not.
 
-The tests are the reproduction: `poll_reports_readiness_the_object_actually_has`
-asserts an eventfd at zero is not readable and a signalled one is, and
-`poll_reports_a_directory_as_not_ready_rather_than_broken` asserts a directory
-is not ready rather than broken — both fail against the old
-`Ok(true)` answer.  On the TCP side `a_full_send_buffer_is_not_writable` and
+The tests are the reproduction, and they live in two places because they
+answer two different questions.  The syscall-level pair is in `tests/io/io.rs`
+— an integration test, because the defect was in the answer a program gets:
+`poll_reports_readiness_the_object_actually_has` drives the real `poll` over a
+real eventfd and asserts that one at zero is not readable while a signalled
+one is, and `poll_reports_a_directory_as_not_ready_rather_than_broken` asserts
+a directory answers neither flag.  Both fail against the old `Ok(true)`
+answer, and they are in `tests/` rather than beside the helper because the
+kernel census in `check-layering` counts textual paths, so a test that spells
+the process module from inside `src/kernel/io.rs` is indistinguishable from a
+new dependency.
+
+The policy-level three are unit tests in `src/network/tcp/mod.rs`:
+`a_full_send_buffer_is_not_writable` and
 `acknowledging_bytes_makes_the_connection_writable_again` pin the two
-conditions and their reversibility, and `a_closed_connection_is_not_writable_even_with_room`
-pins that the connection state is still one of them.
+conditions and their reversibility through `accepts_writes`, and
+`a_closed_connection_is_not_writable_even_with_room` pins that the connection
+state is still one of them.  These call the state method directly because that
+is where the decision lives; a boot cannot reach a full send buffer without a
+peer that stops reading, and no gate has one.
 
 What this does *not* change is the decision above: a write that finds the
 buffer full still returns a short count.  What changed is that a program can

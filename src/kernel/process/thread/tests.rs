@@ -844,3 +844,142 @@ fn riscv64_delivery_declines_a_fault_nobody_registered_for() {
     );
     assert_eq!(thread.riscv64_pending_exception_depth(), 0);
 }
+
+/// A handler that faults inside itself is nested, or declined, by its flags.
+///
+/// This is the path RFC 0034 records as implemented but unexercised: the
+/// pending stack, the `ALLOW_NESTED` bit and the `Blocked` answer.  A boot
+/// would be better evidence and there is not one yet, so what is pinned here
+/// is the part a host can hold still — that the three flag combinations give
+/// the three different answers, and that the nested frame is placed above the
+/// outer one so returns unwind in LIFO order.
+#[test]
+fn riscv64_nested_delivery_follows_the_two_flags() {
+    use crate::abi::exception::RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR;
+    use crate::abi::exception::RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR;
+    use crate::abi::exception::RISCV64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+    use crate::abi::exception::RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE;
+    use crate::abi::exception::RISCV64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+    use crate::arch::thread::RiscV64UserThreadContext;
+
+    fn user_context() -> RiscV64UserThreadContext {
+        RiscV64UserThreadContext::from_start(UserThreadStart::new(0x1000_0000, 0x2000_0000, None))
+    }
+
+    /// Every registration below carries a dedicated exception stack, because
+    /// the install refuses `ALLOW_NESTED` without one: nested delivery on the
+    /// interrupted program's own stack would let the inner handler trample it.
+    const NESTED_FLAGS: usize = RISCV64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
+        | RISCV64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+    const EXCEPTION_STACK: usize = 0x3000_0000;
+
+    // Both the outer handler and the inner one allow nesting: the inner fault
+    // is delivered, and its frame sits below the outer handler's stack, which
+    // is what makes the two returns unwind in order.
+    let process = Process::new(206, "riscv64-nested-allowed");
+    let thread = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+    for vector in [
+        RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR,
+        RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR,
+    ] {
+        thread
+            .install_riscv64_exception_handler_with(
+                vector,
+                0x5000_0000usize,
+                EXCEPTION_STACK,
+                NESTED_FLAGS,
+            )
+            .expect("install allowing nested delivery");
+    }
+
+    let outer = thread
+        .deliver_riscv64_user_exception_from_context(
+            user_context(),
+            RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR,
+            0,
+            None,
+        )
+        .expect("outer delivery")
+        .expect("the outer handler takes it");
+
+    let inner = thread
+        .deliver_riscv64_user_exception_from_context(
+            outer,
+            RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR,
+            0,
+            None,
+        )
+        .expect("inner delivery")
+        .expect("a handler that allows nesting takes a fault inside itself");
+
+    assert_eq!(thread.riscv64_pending_exception_depth(), 2);
+    assert!(
+        inner.x2 < outer.x2,
+        "the nested frame is placed below the handler it interrupted"
+    );
+
+    // Returns unwind in LIFO order: the inner frame is the top, so the outer
+    // one is refused until the inner has been popped.
+    assert_eq!(
+        thread.pop_riscv64_user_exception_frame(outer.x2 as usize),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(
+        thread.pop_riscv64_user_exception_frame(inner.x2 as usize),
+        Ok(true)
+    );
+    assert_eq!(
+        thread.pop_riscv64_user_exception_frame(outer.x2 as usize),
+        Ok(true)
+    );
+    assert_eq!(thread.riscv64_pending_exception_depth(), 0);
+
+    // The outer handler not allowing nesting is the `Blocked` answer: the
+    // delivery declines rather than stacking a second frame.
+    let process = Process::new(207, "riscv64-nested-blocked");
+    let thread = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+    thread
+        .install_riscv64_exception_handler_with(
+            RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR,
+            0x5000_0000usize,
+            EXCEPTION_STACK,
+            RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE,
+        )
+        .expect("install without nesting");
+    thread
+        .install_riscv64_exception_handler_with(
+            RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR,
+            0x5000_0000usize,
+            EXCEPTION_STACK,
+            NESTED_FLAGS,
+        )
+        .expect("install allowing nesting");
+
+    let outer = thread
+        .deliver_riscv64_user_exception_from_context(
+            user_context(),
+            RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR,
+            0,
+            None,
+        )
+        .expect("outer delivery")
+        .expect("the outer handler takes it");
+
+    assert_eq!(
+        thread
+            .deliver_riscv64_user_exception_from_context(
+                outer,
+                RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR,
+                0,
+                None,
+            )
+            .expect("a blocked delivery is an answer, not an error"),
+        None,
+        "the outer handler did not allow nesting, so the inner fault is refused"
+    );
+    assert_eq!(
+        thread.riscv64_pending_exception_depth(),
+        1,
+        "a blocked delivery leaves the outer frame where it was"
+    );
+}

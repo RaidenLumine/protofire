@@ -552,12 +552,18 @@ fn capture_current_user_context(frame: &TrapFrame) {
 
 /// Hand a user-mode exception to the handler the thread installed.
 ///
-/// Returns whether a handler took it.  The two answers it distinguishes are
-/// what the caller acts on: `true` means `frame` now describes the handler's
-/// entry and the trap should return to user mode as usual, `false` means the
-/// fault is nobody's — no handler for this code, too many frames stacked, or
-/// no thread at all — and the caller falls through to the path that terminates
-/// the process.
+/// Returns whether a handler took it.  `true` means `frame` now describes the
+/// handler's entry and the trap should return to user mode as usual.
+///
+/// `false` means there was nothing to deliver to — no thread at all, or no
+/// handler registered for this code — which is the caller's signal to fall
+/// through to the path that terminates the process.
+///
+/// An `Err` from the delivery is a different answer and is logged as one: a
+/// pending stack that is full (`Busy`), or a frame pointer that does not name
+/// the recorded delivery (`InvalidArgument`).  Neither is "nobody registered
+/// for this fault", and folding them into `false` would report a kernel that
+/// ran out of room as a program that forgot to install a handler.
 fn deliver_user_exception(frame: &mut TrapFrame, code: u64) -> bool {
     let Some(thread) = crate::kernel::process::Scheduler::global()
         .and_then(|scheduler| scheduler.current_thread())

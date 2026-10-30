@@ -191,15 +191,23 @@ continued to its exit 42.  Disabling delivery in the trap path was measured:
 the same boot then prints `[FATAL] riscv64 trap scause=0xf` and never reaches
 the third line, which is the old behaviour reproduced rather than described.
 
-**The host tests, for the half a host can hold still.** Six assertions in
+**The host tests, for the half a host can hold still.** Seven assertions in
 `src/kernel/process/thread/tests.rs` cover the install (recorded, refused for
 a code outside the set, zero clears it), the frame round trip (`regs`,
 `instruction_pointer` and `saved_program_status` in and out), the delivery
 bookkeeping (a frame is placed below the interrupted stack pointer, the
-pending depth rises, a pointer that is not the delivered one is refused) and
-the decline path.  Every one was mutation-tested: dropping the delivery
-bookkeeping fails the depth assertion with `left: 0, right: 1`, and dropping
-the vector gate fails the refusal test.
+pending depth rises, a pointer that is not the delivered one is refused), the
+decline path, and nested delivery.  Every one was mutation-tested: dropping
+the delivery bookkeeping fails the depth assertion with `left: 0, right: 1`,
+dropping the vector gate fails the refusal test, and making
+`PendingExceptionFrameStack::names_top` accept any pointer fails both the
+nested test and the delivery-bookkeeping one.
+
+`names_top` is the shape that mutation test found: the rule "this pointer is
+the delivery at the top" was written once at the resume call site and again
+inside `pop_expected`, so a mutation to either left the other covering for it
+and the tests stayed green.  The rule now has one home on the stack type and
+both callers ask it, which is why the mutation bites.
 
 **The ABI layout**, in `src/abi/exception.rs`: the offsets a user handler
 decodes are pinned, and the flags are asserted equal to the
@@ -207,13 +215,22 @@ architecture-neutral set the other two already match.
 
 ## Unresolved questions
 
-**Nested delivery is implemented but not exercised by a boot.** The pending
-stack, the `ALLOW_NESTED` flag and the `Blocked` answer all work — a host test
-walks the path — but no riscv64 payload triggers a fault inside its own
-handler.  aarch64 has such a demo (`demo_program_aarch64_fault_payload.S`
-resumes from three faults including a nested one); riscv64 has one fault and
-one resume.  Adding the nested case is a payload change, not a kernel one, and
-it is the next thing this row should gain.
+**Nested delivery has host tests but no boot.** The pending stack, the
+`ALLOW_NESTED` flag and the `Blocked` answer are exercised by
+`riscv64_nested_delivery_follows_the_two_flags`, which walks all three flag
+combinations and checks that returns unwind in LIFO order — but no riscv64
+payload triggers a fault inside its own handler, so the boot half is
+unverified.  aarch64 has such a demo
+(`demo_program_aarch64_fault_payload.S` resumes from three faults including a
+nested one); riscv64 has one fault and one resume.  Adding the nested case is
+a payload change, not a kernel one, and it is the next thing this row should
+gain.
+
+The test also records a rule the install enforces and this RFC does not
+otherwise state: `ALLOW_NESTED` is refused unless
+`REQUIRE_EXCEPTION_STACK` is set too.  Nested delivery on the interrupted
+program's own stack would let the inner handler trample it, so the two flags
+travel together and a registration with only the first is `InvalidArgument`.
 
 **`error_code` carries `stval` for every delivered code, including the ones
 where it is not an address.** For a page fault it is the faulting address, and

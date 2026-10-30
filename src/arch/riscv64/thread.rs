@@ -680,9 +680,12 @@ impl Thread {
             |handler_context, handler, frame_pointer| {
                 // The handler is entered the way the other two architectures
                 // enter theirs: the synthetic frame is both the stack top and
-                // the first argument, and `x1` holds a return address the
-                // caller reads so a handler that does not call
-                // `return_from_exception` can at least `ret` somewhere.
+                // the first argument, and nothing else about the interrupted
+                // context is disturbed.  In particular `x1` is left holding
+                // the interrupted code's own return address — the other two
+                // leave their link register alone for the same reason, and
+                // inventing one here would hand the handler a `ret` target
+                // that is not where the interrupted code could return to.
                 handler_context.instruction_pointer = handler as u64;
                 handler_context.x2 = frame_pointer as u64;
                 handler_context.x10 = frame_pointer as u64;
@@ -744,33 +747,16 @@ impl Thread {
     /// bookkeeping — that the pointer names the delivery this thread
     /// recorded, and that popping it leaves the stack consistent — is the part
     /// a host can check, and it is the part that used to be unreachable.
+    ///
+    /// The pointer check is [`PendingExceptionFrameStack::pop_expected`]'s,
+    /// which is where the whole stack's contract is: it refuses a pointer that
+    /// is not the top and answers `None` when there is nothing to pop.  A
+    /// second copy of that check here was a second place for it to disagree.
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
     pub(crate) fn pop_riscv64_user_exception_frame(&self, frame_pointer: usize) -> Result<bool> {
         self.ensure_user_runtime_mutable()?;
-        if !self.is_riscv64_pending_exception_frame(frame_pointer)? {
-            return Ok(false);
-        }
-
         let mut pending = self.arch.riscv64.pending_exception_frames.lock();
         Ok(pop_pending_user_exception_frame(&mut pending, frame_pointer)?.is_some())
-    }
-
-    /// Whether `frame_pointer` names the delivery at the top of the pending
-    /// stack, without removing it.
-    ///
-    /// Resume reads the frame back *before* it pops, so that a frame whose
-    /// contents fail validation leaves the bookkeeping as it was rather than
-    /// losing the record of a delivery the handler may still return from.
-    #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
-    fn is_riscv64_pending_exception_frame(&self, frame_pointer: usize) -> Result<bool> {
-        let pending = self.arch.riscv64.pending_exception_frames.lock();
-        let Some(active) = pending.top() else {
-            return Ok(false);
-        };
-        if active.frame_pointer != frame_pointer {
-            return Err(Error::InvalidArgument);
-        }
-        Ok(true)
     }
 
     #[cfg(target_arch = "riscv64")]
@@ -788,8 +774,15 @@ impl Thread {
         frame_pointer: usize,
     ) -> Result<bool> {
         self.ensure_user_runtime_mutable()?;
-        if !self.is_riscv64_pending_exception_frame(frame_pointer)? {
-            return Ok(false);
+        // The pointer has to name the delivery this thread recorded before the
+        // frame is read: the slot is the handler's own memory, and a handler
+        // that passes something else must be refused rather than have the
+        // kernel read a page it never wrote.
+        {
+            let pending = self.arch.riscv64.pending_exception_frames.lock();
+            if !pending.names_top(frame_pointer)? {
+                return Ok(false);
+            }
         }
         // SAFETY: the check above established that `frame_pointer` names the
         // delivery at the top of this thread's pending stack, so it is the slot
@@ -798,6 +791,10 @@ impl Thread {
         let restored = unsafe { read_riscv64_user_exception_frame(frame_pointer) }
             .into_user_context()
             .validate_runtime_state()?;
+        // Popping after the read, and with the same pointer, keeps the earlier
+        // check and this one agreeing: a frame whose contents fail validation
+        // leaves the bookkeeping as it was, so the handler can still return
+        // from the delivery it is inside.
         if !self.pop_riscv64_user_exception_frame(frame_pointer)? {
             return Ok(false);
         }
