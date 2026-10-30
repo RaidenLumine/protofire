@@ -1,6 +1,6 @@
 # RFC 0016: Punch a hole in an NTFS file
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-10
 - **Supersedes:** none
@@ -195,6 +195,10 @@ own).
   run is at cluster 129), and the gate is
   `a_positive_delta_that_looks_negative_round_trips`: an encoder and a decoder
   held to each other across the sign bit.
+
+**Landed:** `NtfsFs::punch_a_hole` (`src/fs/ntfs/mod.rs`) frees the clusters a range
+wholly covers, writes zeros into the ones it only partly covers, and settles
+the run list's room before freeing anything.
 
 ## Unresolved questions
 

@@ -1,6 +1,6 @@
 # RFC 0008: Keep a sequential miss in one request
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-07
 - **Supersedes:** none
@@ -128,6 +128,11 @@ and no baseline moves.
   `scripts/perf-baseline.txt` and `scripts/perf-baseline-disk.txt` was
   recorded with the coalesced shape; a split raises it for the same bytes and
   the baselines refuse the change.
+
+**Landed:** the block cache keeps the demanded block and its lookahead in one
+request on every device, which is what this RFC decided against splitting
+(`BlockCache::with_read_ahead`, and the `status.md` row for the block cache
+that records the 36 % of a boot's device commands the coalescing buys).
 
 ## Unresolved questions
 

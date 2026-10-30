@@ -1,6 +1,6 @@
 # RFC 0033: Refuse a signal, a trace and a socket
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-21
 - **Supersedes:** none
@@ -216,6 +216,11 @@ crate, and the check is either in the path or not.
 - `make test-fast` runs the new file; `make check-layering` carries the new
   edge; the three runtime smokes must stay green, which is the statement that
   a boot with no policy is unchanged.
+
+**Landed:** `src/syscall/security.rs` is the boundary, and the three classes are checked
+where the operation is: `signal.rs`, `ptrace.rs`, and the sixteen
+`check_network_use` sites in `network.rs`.  The kernel's own senders stay below
+the line by construction.
 
 ## Unresolved questions
 

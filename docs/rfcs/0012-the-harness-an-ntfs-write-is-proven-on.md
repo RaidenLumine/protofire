@@ -1,6 +1,6 @@
 # RFC 0012: Decide the harness an NTFS write is proven on
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-08
 - **Supersedes:** none
@@ -277,6 +277,11 @@ what stage 1's record serialisation is for.
   refused every window could not pass by saying nothing.  The two scenarios
   are a creation that fills a block until it splits, and a rename, whose
   promise is that no window holds neither of the record's two names.
+
+**Landed:** `make check-ntfs-image` builds a volume with `mkntfs`, injects a file
+with `ntfscp`, and `a_volume_mkntfs_wrote_is_read_and_written_back`
+(`src/fs/ntfs/tests.rs`) reads it, writes its own, and hands the result to
+`ntfs-3g`'s reader.
 
 ## Unresolved questions
 

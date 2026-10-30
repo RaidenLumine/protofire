@@ -1,6 +1,6 @@
 # RFC 0021: What the timer tick still polls
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-13
 - **Supersedes:** none
@@ -184,6 +184,10 @@ describe the two polls change; the code does not.
   was asserted.)
 - **The virtio-input half**: nothing, and the document says so; the poll's
   only gate would be a boot with the device attached, which no machine has.
+
+**Landed:** both polls stay and the tree says why: xHCI's event-ring drain is driven
+by the tick (`src/drivers/xhci.rs`) and `virtio-input`'s queue is polled, with
+`status.md` recording which is which.
 
 ## Unresolved questions
 

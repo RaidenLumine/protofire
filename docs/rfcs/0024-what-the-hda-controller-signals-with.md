@@ -1,6 +1,6 @@
 # RFC 0024: What the HDA controller signals with
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-14
 - **Supersedes:** none
@@ -140,6 +140,10 @@ already handle a function with a table).
   and `make check-aarch64-hda` play a tone and measure it in the host's WAV
   file.  A claim that cannot deliver would add nothing to that evidence,
   which is why none is taken.
+
+**Landed:** the HDA driver claims no interrupt and drives its ring on the tick, which
+is this RFC's decision; `status.md`'s HDA row says so and `src/drivers/hda.rs`
+says it at the top of the file.
 
 ## Unresolved questions
 

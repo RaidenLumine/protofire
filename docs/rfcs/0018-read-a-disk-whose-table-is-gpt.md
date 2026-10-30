@@ -1,6 +1,6 @@
 # RFC 0018: Read a disk whose table is GPT
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-10
 - **Supersedes:** none
@@ -217,6 +217,14 @@ the change may not move, and the parsers' fuzz harness, which now drives
 - **The writer and the reader held to each other**: the round-trip test builds
   a GPT with the writer and reads it back through `read_partitions`, which is
   where a checksum or an offset that only one of them believes would show.
+
+**Landed:** the read side is `read_partitions` (`src/fs/partition.rs`), which
+reads LBA 0 once and answers both questions from the same bytes: a protective
+MBR leads to the header at LBA 1, both CRC-32s are verified, and a partition is
+a zone only when its type GUID is that zone's — a protective MBR whose GPT
+cannot be read is no table, never the MBR view.  The write side is
+`write_gpt_partitions`, which is what `install --new-table` reaches, and
+`docs/kernel/fs.md` records both under "Partitions and the system pair".
 
 ## Unresolved questions
 

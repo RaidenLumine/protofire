@@ -1,6 +1,6 @@
 # RFC 0013: Refuse the NTFS streams this driver cannot read
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-09
 - **Supersedes:** none
@@ -279,6 +279,9 @@ compressed file unless `-C` is passed, and no sparse one at all.
   shape is Linux's `ntfs3`, whose decoder carries its `prev_lcn` through a
   hole untouched — which is what this tree's encoder already did and its
   reader did not.
+
+**Landed:** the driver refuses a stream it has no reader for rather than guessing,
+and `src/fs/ntfs/types.rs` names this RFC at the refusal it returns.
 
 ## Unresolved questions
 

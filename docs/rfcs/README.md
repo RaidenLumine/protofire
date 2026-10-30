@@ -115,23 +115,23 @@ and its status says which of the two happened.
 | [0005](0005-claim-the-msix-entries-a-driver-names.md) | Superseded | Claim the MSI-X entries a driver names |
 | [0006](0006-end-a-producer-ring-lap-where-its-work-ends.md) | Implemented | End a producer ring's lap where its work ends |
 | [0007](0007-hold-a-second-request-on-a-device.md) | Implemented | Hold a second request on a device |
-| [0008](0008-keep-a-sequential-miss-in-one-request.md) | Accepted | Keep a sequential miss in one request |
+| [0008](0008-keep-a-sequential-miss-in-one-request.md) | Implemented | Keep a sequential miss in one request |
 | [0009](0009-queue-the-writes-a-flush-makes.md) | Implemented | Queue the writes a flush makes |
 | [0010](0010-carry-a-run-in-one-queued-request.md) | Implemented | Carry a run in one queued request |
 | [0011](0011-make-iso9660-file-data-writable.md) | Implemented | Make ISO 9660 file data writable |
-| [0012](0012-the-harness-an-ntfs-write-is-proven-on.md) | Accepted | Decide the harness an NTFS write is proven on |
-| [0013](0013-refuse-the-ntfs-streams-this-driver-cannot-read.md) | Accepted | Refuse the NTFS streams this driver cannot read |
+| [0012](0012-the-harness-an-ntfs-write-is-proven-on.md) | Implemented | Decide the harness an NTFS write is proven on |
+| [0013](0013-refuse-the-ntfs-streams-this-driver-cannot-read.md) | Implemented | Refuse the NTFS streams this driver cannot read |
 | [0014](0014-read-the-ntfs-streams-lznt1-compressed.md) | Implemented | Read the NTFS streams LZNT1 compressed |
 | [0015](0015-compress-an-ntfs-stream-on-write.md) | Implemented | Compress an NTFS stream on write |
-| [0016](0016-punch-a-hole-in-an-ntfs-file.md) | Accepted | Punch a hole in an NTFS file |
+| [0016](0016-punch-a-hole-in-an-ntfs-file.md) | Implemented | Punch a hole in an NTFS file |
 | [0017](0017-ask-a-file-where-its-holes-are.md) | Implemented | Ask a file where its holes are |
-| [0018](0018-read-a-disk-whose-table-is-gpt.md) | Accepted | Read a disk whose table is GPT |
+| [0018](0018-read-a-disk-whose-table-is-gpt.md) | Implemented | Read a disk whose table is GPT |
 | [0019](0019-what-a-frame-is.md) | Superseded | Make a frame an address in the kernel's own memory |
 | [0020](0020-what-the-memory-map-may-refuse-on.md) | Implemented | What the memory map may refuse on |
-| [0021](0021-what-the-timer-tick-still-polls.md) | Accepted | What the timer tick still polls |
+| [0021](0021-what-the-timer-tick-still-polls.md) | Implemented | What the timer tick still polls |
 | [0022](0022-adopt-the-machines-memory-as-frames.md) | Accepted | Adopt the machine's memory as frames |
 | [0023](0023-enable-msix-when-the-claim-is-taken.md) | Implemented | Enable MSI-X when the claim is taken |
-| [0024](0024-what-the-hda-controller-signals-with.md) | Accepted | What the HDA controller signals with |
+| [0024](0024-what-the-hda-controller-signals-with.md) | Implemented | What the HDA controller signals with |
 | [0025](0025-write-a-table-onto-a-disk-that-has-none.md) | Implemented | Write a table onto a disk that has none |
 | [0026](0026-install-the-system-pair-not-one-slot.md) | Implemented | Install the system pair, not one slot |
 | [0027](0027-never-mount-a-fixed-offset-over-a-table.md) | Implemented | Never mount a fixed offset over a table |
@@ -140,7 +140,7 @@ and its status says which of the two happened.
 | [0030](0030-give-each-dns-lookup-its-own-source-port.md) | Implemented | Give each DNS lookup its own source port |
 | [0031](0031-let-a-tcp-reader-wait-instead-of-spin.md) | Implemented | Let a TCP reader wait instead of spin |
 | [0032](0032-decide-what-a-full-send-buffer-does.md) | Implemented | Decide what a full send buffer does |
-| [0033](0033-refuse-a-signal-a-trace-and-a-socket.md) | Accepted | Refuse a signal, a trace and a socket |
+| [0033](0033-refuse-a-signal-a-trace-and-a-socket.md) | Implemented | Refuse a signal, a trace and a socket |
 | [0034](0034-deliver-a-user-exception-on-riscv64.md) | Implemented | Deliver a user exception on riscv64 |
 <!-- rfcs-table:end -->
 
