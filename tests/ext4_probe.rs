@@ -1,3 +1,5 @@
+//! tests/ext4_probe.rs
+//!
 //! Ext4 against a volume `mkfs.ext4` wrote.
 //!
 //! Every other ext4 test in this tree feeds the driver bytes this tree made,
