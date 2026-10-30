@@ -634,3 +634,213 @@ fn terminated_process_handle_operations_return_busy() {
         Err(Error::Busy)
     );
 }
+
+// ── riscv64 user-exception handler installation ─────────────────────────
+//
+// The trap glue that *delivers* an exception runs only on the machine, so the
+// evidence for that half is `make check-riscv64-runtime`'s boot.  What a host
+// can check is the half a program calls: that installing a handler records
+// it, that a code this machine does not deliver to user space is refused, and
+// that installing zero clears the slot.  These are the assertions that would
+// have failed while riscv64 answered `Unsupported` to every install.
+
+#[test]
+fn riscv64_install_records_the_handler_it_was_given() {
+    use crate::abi::exception::RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR;
+    use crate::abi::exception::RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE;
+
+    let process = Process::new(201, "riscv64-install");
+    let thread = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+
+    let handler = 0xdead_0000usize;
+    thread
+        .install_riscv64_exception_handler_with(
+            RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR,
+            handler,
+            0,
+            RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE,
+        )
+        .expect("a load page fault is a vector this machine delivers");
+
+    let registration = thread
+        .riscv64_exception_handler_registration(RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR)
+        .expect("the handler is recorded");
+    assert_eq!(registration.handler, handler);
+    assert_eq!(registration.stack_pointer, None);
+
+    // Its neighbours are untouched: the table is indexed by scause code, not
+    // a single slot.
+    assert_eq!(
+        thread.riscv64_exception_handler_registration(
+            crate::abi::exception::RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR
+        ),
+        None
+    );
+}
+
+#[test]
+fn riscv64_install_refuses_a_code_it_does_not_deliver() {
+    use crate::abi::exception::RISCV64_EXCEPTION_ILLEGAL_INSTRUCTION_VECTOR;
+
+    let process = Process::new(202, "riscv64-install-refuse");
+    let thread = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+
+    assert_eq!(
+        thread.install_riscv64_exception_handler_with(
+            RISCV64_EXCEPTION_ILLEGAL_INSTRUCTION_VECTOR,
+            0x1000,
+            0,
+            0,
+        ),
+        Err(Error::Unsupported),
+        "an illegal instruction is not a fault this machine hands to a program"
+    );
+}
+
+#[test]
+fn riscv64_installing_zero_clears_the_slot() {
+    use crate::abi::exception::RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR;
+
+    let process = Process::new(203, "riscv64-install-clear");
+    let thread = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+
+    thread
+        .install_riscv64_exception_handler_with(
+            RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR,
+            0x1000,
+            0,
+            0,
+        )
+        .expect("install");
+    thread
+        .install_riscv64_exception_handler_with(RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR, 0, 0, 0)
+        .expect("clearing an installed handler is an install of none");
+
+    assert_eq!(
+        thread.riscv64_exception_handler_registration(RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR),
+        None
+    );
+}
+
+/// An exception frame's registers survive a round trip through the context.
+///
+/// `into_user_context` is the reverse of `from_user_context`, and a mismatch
+/// between them would resume a handler's return at the wrong register — the
+/// class of defect a boot shows as a corrupted program rather than as an
+/// error.  The frame is what the kernel hands a handler and what a handler
+/// hands back, so both directions are pinned here.
+#[test]
+fn riscv64_exception_frame_round_trips_its_registers() {
+    use crate::abi::exception::RiscV64UserExceptionFrame;
+    use crate::arch::thread::RiscV64UserThreadContext;
+
+    let mut context =
+        RiscV64UserThreadContext::from_start(UserThreadStart::new(0x1000_0000, 0x2000_0000, None));
+    // Distinct values per register, so a swap is visible rather than masked by
+    // two registers that happened to hold the same number.
+    for (index, value) in context.regs().iter().enumerate() {
+        let _ = (index, value);
+    }
+    context.set_regs(core::array::from_fn(|index| 0x1000 + index as u64));
+
+    let frame = RiscV64UserExceptionFrame::from_user_context(context, 15, 0xdead, 0xbeef);
+    assert_eq!(frame.vector, 15);
+    assert_eq!(frame.error_code, 0xdead);
+    assert_eq!(frame.fault_address, 0xbeef);
+    assert_eq!(frame.instruction_pointer, context.instruction_pointer);
+    assert_eq!(frame.saved_program_status, context.saved_program_status);
+
+    let restored = frame.into_user_context();
+    assert_eq!(restored.regs(), context.regs(), "every register came back");
+    assert_eq!(restored.instruction_pointer, context.instruction_pointer);
+    assert_eq!(restored.saved_program_status, context.saved_program_status);
+}
+
+/// Delivery reserves a frame on the stack and records it, on any host.
+///
+/// The trap half of delivery runs only on the machine, and the boot is its
+/// evidence.  This is the half a host can hold still: the handler is looked
+/// up, the delivery arithmetic places a frame below the interrupted stack
+/// pointer, and the pending stack gains one entry — the bookkeeping that a
+/// handler's later `return_from_exception` finds.  Without it, a `write` of
+/// the frame would land somewhere the resume path could not match.
+#[test]
+fn riscv64_delivery_records_the_frame_it_placed() {
+    use crate::abi::exception::RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR;
+    use crate::arch::thread::RiscV64UserThreadContext;
+
+    let process = Process::new(204, "riscv64-deliver");
+    let thread = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+    let handler = 0x5000_0000usize;
+    thread
+        .install_riscv64_exception_handler_with(
+            RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR,
+            handler,
+            0,
+            0,
+        )
+        .expect("install");
+
+    let resume =
+        RiscV64UserThreadContext::from_start(UserThreadStart::new(0x1000_0000, 0x2000_0000, None));
+    let delivered = thread
+        .deliver_riscv64_user_exception_from_context(
+            resume,
+            RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR,
+            0xdead_0000,
+            Some(0xdead_0000),
+        )
+        .expect("delivery");
+    let handler_context = delivered.expect("a registered handler takes the fault");
+
+    // The handler runs at the address it registered, with the frame as its
+    // first argument and its stack top.
+    assert_eq!(handler_context.instruction_pointer, handler as u64);
+    assert_eq!(handler_context.x10, handler_context.x2);
+    assert!(
+        handler_context.x2 < resume.x2,
+        "the frame is placed below the interrupted stack pointer"
+    );
+    assert_eq!(
+        thread.riscv64_pending_exception_depth(),
+        1,
+        "the delivery is recorded so a return can find it"
+    );
+
+    // And the return is refused for a pointer that is not the one delivered.
+    assert_eq!(
+        thread.pop_riscv64_user_exception_frame(handler_context.x2 as usize + 8),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(
+        thread.pop_riscv64_user_exception_frame(handler_context.x2 as usize),
+        Ok(true)
+    );
+    assert_eq!(thread.riscv64_pending_exception_depth(), 0);
+}
+
+/// A fault with no registered handler is not delivered, and says so.
+#[test]
+fn riscv64_delivery_declines_a_fault_nobody_registered_for() {
+    use crate::abi::exception::RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR;
+    use crate::arch::thread::RiscV64UserThreadContext;
+
+    let process = Process::new(205, "riscv64-deliver-none");
+    let thread = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+
+    let resume =
+        RiscV64UserThreadContext::from_start(UserThreadStart::new(0x1000_0000, 0x2000_0000, None));
+    assert_eq!(
+        thread
+            .deliver_riscv64_user_exception_from_context(
+                resume,
+                RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR,
+                0,
+                None,
+            )
+            .expect("delivery answers rather than failing"),
+        None,
+        "no handler is the caller's signal to terminate, not an error"
+    );
+    assert_eq!(thread.riscv64_pending_exception_depth(), 0);
+}

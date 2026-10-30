@@ -31,10 +31,13 @@ pub(crate) use stack_window::window_stats;
 pub use crate::arch::thread::*;
 
 pub(crate) mod entry;
-// User-exception delivery exists on the two architectures that implement
-// it, and on the host, where the tests drive it directly.  Saying so once
-// here is what lets everything inside the module drop its own gate.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+// User-exception delivery's machinery is architecture-free: a frame stack, a
+// nested-delivery policy, and the arithmetic that places a frame below a
+// stack pointer.  What a machine supplies is its frame type and its trap
+// glue, and both live in that machine's directory — so there is nothing here
+// for a gate to say, and this module has none.  It used to name two
+// architectures and then three; each of those was the shared code being
+// gated for a reason the shared code did not have.
 pub(crate) mod exception;
 pub(crate) mod lifecycle;
 #[cfg(test)]

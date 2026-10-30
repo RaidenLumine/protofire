@@ -272,14 +272,15 @@ make clippy
 |--------|--------------|--------|
 | `x86_64-unknown-none` | Multiboot2 (GRUB) / QEMU PVH | Full |
 | `aarch64-unknown-none` | QEMU direct `-kernel` | Full |
-| `riscv64gc-unknown-none-elf` | QEMU direct `-kernel` | Partial (see below) |
+| `riscv64gc-unknown-none-elf` | QEMU direct `-kernel` | Full |
 
-`Partial` is one thing: a user exception is not delivered to a handler on
-RISC-V.  `ReturnFromException` in `src/arch/riscv64/trap.rs` falls through, so
-a fault terminates the process instead of running the handler it installed.
-Everything else the other two machines do, this one does too — it boots,
-schedules across harts, and runs the same ring-3 programs, including `fork`,
-which is gated by `make check-riscv64-runtime`.
+All three run the same ring-3 programs.  RISC-V delivered skeleton support
+longer than the other two — a fault terminated the process instead of running
+the handler it installed, because `ReturnFromException` fell through
+([RFC 0034](docs/rfcs/0034-deliver-a-user-exception-on-riscv64.md)) — and that
+is closed: the demo payload now installs a store-page-fault handler, faults
+into it, and resumes, and `make check-riscv64-runtime` fails a boot whose log
+does not show all three steps.
 
 ## Documentation
 

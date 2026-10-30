@@ -111,6 +111,8 @@ impl ThreadUserRuntimeStateSnapshot {
         self.aarch64.validate()?;
         #[cfg(target_arch = "x86_64")]
         self.x86_64.validate()?;
+        #[cfg(any(target_arch = "riscv64", test))]
+        self.riscv64.validate()?;
         Ok(())
     }
 }
@@ -148,32 +150,28 @@ pub(crate) fn new_user_runtime_state(
 
 /// Reject a snapshot the architecture could not resume from.
 ///
-/// riscv64 has no handler table and no nested-delivery state to check yet, so
-/// it has nothing to add here; the shared part of the validation is the
-/// kernel's.
-#[cfg_attr(
-    not(any(target_arch = "x86_64", target_arch = "aarch64")),
-    allow(unused_variables)
-)]
+/// Each machine validates its own part: x86_64 and aarch64 check the saved
+/// context, and riscv64 does the same now that it also carries a handler table
+/// — a snapshot whose context cannot be resumed is not one the thread could
+/// come back from, whichever machine recorded it.
 pub(crate) fn validate_user_runtime_state(state: &ThreadUserRuntimeState) -> Result<()> {
     state.arch.validate()
 }
 
 /// Put a snapshot back into every architecture's state.
 ///
-/// riscv64 has only a saved context to restore, and the kernel's own
-/// `restore_user_runtime_state` installs that through the start descriptor; the
-/// remaining work here is the handler tables and delivery state that x86_64 and
-/// aarch64 keep.
-#[cfg_attr(
-    not(any(target_arch = "x86_64", target_arch = "aarch64")),
-    allow(unused_variables)
-)]
+/// A suspend and resume lands here, so every machine's part has to go back —
+/// the saved context, and (on the two that have one) the handler table and the
+/// frames a nested delivery left stacked.  riscv64 gained that state when it
+/// gained delivery, and leaving its arm out would have made a resumed thread
+/// lose its handlers: the snapshot would be taken and never put back.
 pub(crate) fn restore_user_runtime_state(thread: &Thread, state: ThreadUserRuntimeState) {
     #[cfg(any(target_arch = "aarch64", test))]
     thread.arch.aarch64.restore(state.arch.aarch64);
     #[cfg(target_arch = "x86_64")]
     thread.arch.x86_64.restore(state.arch.x86_64);
+    #[cfg(any(target_arch = "riscv64", test))]
+    thread.arch.riscv64.restore(state.arch.riscv64);
 }
 #[cfg(target_arch = "x86_64")]
 pub use x86_64_context::*;
@@ -317,11 +315,11 @@ pub(crate) fn activate_for_exec(process: &crate::kernel::process::Process) -> Re
     Ok(())
 }
 
-/// Install a user-exception handler for a thread, where the machine has one.
+/// Install a user-exception handler for a thread.
 ///
-/// x86_64 and aarch64 keep a handler table per thread; riscv64's prototype has
-/// no such table yet, so it refuses the request rather than pretending the
-/// handler is installed.
+/// Each machine keeps a handler table per thread, indexed by its own vector
+/// space — an x86_64 interrupt vector, an aarch64 exception vector, a RISC-V
+/// `scause` code.  This is the one place that decides which of them runs.
 pub(crate) fn install_user_exception_handler(
     thread: &Thread,
     vector: u8,
@@ -339,7 +337,16 @@ pub(crate) fn install_user_exception_handler(
         thread.install_aarch64_exception_handler_with(vector, handler, stack_pointer, flags)
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "riscv64")]
+    {
+        thread.install_riscv64_exception_handler_with(vector, handler, stack_pointer, flags)
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )))]
     {
         let _ = (thread, vector, handler, stack_pointer, flags);
         Err(crate::Error::Unsupported)
@@ -349,8 +356,8 @@ pub(crate) fn install_user_exception_handler(
 /// The layout of the user exception frame this machine delivers.
 ///
 /// The frame is the ABI's — it is what a handler reads when it returns — and
-/// each machine has its own size and alignment.  A machine whose prototype
-/// does not deliver user exceptions has no frame to describe, and says so.
+/// each machine has its own size and alignment.  A machine that does not
+/// deliver user exceptions has no frame to describe, and says so.
 pub(crate) fn user_exception_frame_layout() -> Option<(usize, usize)> {
     #[cfg(target_arch = "x86_64")]
     {
@@ -368,7 +375,19 @@ pub(crate) fn user_exception_frame_layout() -> Option<(usize, usize)> {
         ))
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "riscv64")]
+    {
+        Some((
+            core::mem::size_of::<crate::abi::exception::RiscV64UserExceptionFrame>(),
+            core::mem::align_of::<crate::abi::exception::RiscV64UserExceptionFrame>(),
+        ))
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )))]
     {
         None
     }

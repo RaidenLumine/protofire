@@ -420,6 +420,25 @@ require_log_value_follows_prefix "[user  ] riscv64 app-id: " "demo-launcher"
 require_log_line "[abi   ] demo-launcher payload: $PAYLOAD_SOURCE "
 require_log_line "[user  ] riscv64 payload resume-1"
 require_log_line "[user  ] riscv64 payload resume-2"
+# ── User exception delivery ────────────────────────────────────────────
+#
+# The payload installs a store-page-fault handler, writes into its own
+# read-execute text, and prints a line only after the kernel has delivered
+# the fault and the handler has resumed it.  All three lines together are
+# the evidence: the trigger says the store happened, the delivery line is
+# the kernel's own record of handing it over, and the resumed line can only
+# be printed by code that ran *after* the fault — a machine that terminates
+# the process here prints the first two and never the third.
+#
+# Only the compiled payload has this sequence.  A frozen payload is an
+# older program kept to prove old programs still run, and asking it for a
+# line it was never written to print would be asking the freeze to be a
+# different freeze.  So the guard is the same one `fork` uses below.
+if [ "$PAYLOAD_SOURCE" != "frozen" ]; then
+    require_log_line "[user  ] riscv64 triggering local store fault"
+    require_log_line "delivered riscv64 exception store-page-fault to handler pid="
+    require_log_line "[user  ] riscv64 resumed after local store fault"
+fi
 require_log_line "[user  ] exit pid="
 require_log_line "id=demo-launcher status=42"
 

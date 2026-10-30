@@ -170,6 +170,51 @@ Signals with no handler follow the POSIX defaults
 the mask, and the job-control signals are what move a process between `Running`
 and `Stopped` in the scheduler (`scheduler/process.rs`).
 
+## User exception handlers
+
+A synchronous exception from user mode is not necessarily the process's death.
+A thread may install a handler per exception vector — an x86_64 interrupt
+vector, an aarch64 exception vector, a RISC-V `scause` code — and the kernel
+will enter it instead of terminating the process.  This is how a program
+probes a mapping it has not committed to, or turns a fault into a report
+rather than a kill.
+
+The machinery is one implementation for all three machines
+(`thread/exception.rs`): a fixed-size stack of pending exception frames, the
+arithmetic that places a delivery frame below the interrupted stack pointer,
+the nested-delivery policy, and the install validation.  A machine supplies
+two things and no more — its frame type in `src/abi/exception.rs`, and the
+trap-glue branch that calls into the shared path.
+
+Delivery has three steps and each is a place to get it wrong:
+
+- **Install** (`InstallExceptionHandler`) records the handler address, an
+  optional exception stack, and the flags.  A vector outside the set the
+  machine delivers is refused: on RISC-V that excludes `illegal-instruction`
+  and `breakpoint`, because a program that can resume from those can swallow
+  its own crashes and its debugger's traps.
+- **Deliver** happens after the kernel has had its own turn with the fault —
+  demand-paging, copy-on-write, the syscall — and before the `[FATAL]` path.
+  It reads the interrupted context, builds a frame, writes it to the user
+  stack, records it on the pending stack, and rewrites the trap frame to enter
+  the handler with the frame as its first argument.
+- **Resume** (`ReturnFromException`) pops the pending frame, reads it back
+  *from the user stack* — the handler owns that memory, so the context is
+  re-validated rather than trusted — and installs it into the trap frame.  A
+  frame pointer that does not name the delivery at the top of the stack is an
+  error, not a silent success.
+
+Nested delivery is bounded by a fixed capacity and gated on both the active
+delivery's flags and the registering handler's, so a handler that faults
+inside itself is either nested (with `ALLOW_NESTED` on both) or declined.  A
+one-shot handler is cleared once its frame is queued, so the delivery that
+matched it still reaches it.
+
+The frame a handler reads is per-architecture; [syscalls.md](syscalls.md)
+fixes the syscall side, and
+[RFC 0034](../rfcs/0034-deliver-a-user-exception-on-riscv64.md) records why
+RISC-V was the last of the three to have any delivery at all.
+
 ## Handles
 
 Everything a process holds beyond its memory is a handle: a `KernelObject`

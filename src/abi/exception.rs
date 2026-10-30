@@ -252,6 +252,89 @@ pub const X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize = 1 
 
 pub const X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 1 << 2;
 
+// ── RISC-V 64 user exception frame ──
+//
+// The vector this machine delivers is its `scause` exception code, and the
+// "error code" is `stval` — the faulting address for the faults that carry
+// one.  The rest is the interrupted context, in the same register order the
+// signal frame uses, so a handler that can resume from one can read the
+// other.
+
+pub const RISCV64_EXCEPTION_INSTRUCTION_ADDRESS_MISALIGNED_VECTOR: u8 = 0;
+
+pub const RISCV64_EXCEPTION_INSTRUCTION_ACCESS_FAULT_VECTOR: u8 = 1;
+
+pub const RISCV64_EXCEPTION_ILLEGAL_INSTRUCTION_VECTOR: u8 = 2;
+
+pub const RISCV64_EXCEPTION_BREAKPOINT_VECTOR: u8 = 3;
+
+pub const RISCV64_EXCEPTION_LOAD_ADDRESS_MISALIGNED_VECTOR: u8 = 4;
+
+pub const RISCV64_EXCEPTION_LOAD_ACCESS_FAULT_VECTOR: u8 = 5;
+
+pub const RISCV64_EXCEPTION_STORE_ADDRESS_MISALIGNED_VECTOR: u8 = 6;
+
+pub const RISCV64_EXCEPTION_STORE_ACCESS_FAULT_VECTOR: u8 = 7;
+
+pub const RISCV64_EXCEPTION_INSTRUCTION_PAGE_FAULT_VECTOR: u8 = 12;
+
+pub const RISCV64_EXCEPTION_LOAD_PAGE_FAULT_VECTOR: u8 = 13;
+
+pub const RISCV64_EXCEPTION_STORE_PAGE_FAULT_VECTOR: u8 = 15;
+
+// These flag bits are the same numbers as the other two architectures', so a
+// handler installs with the architecture-neutral names in
+// `USER_EXCEPTION_HANDLER_FLAG_*` and means the same thing on all three.
+pub const RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE: usize = 0;
+
+pub const RISCV64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT: usize = 1 << 0;
+
+pub const RISCV64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize = 1 << 1;
+
+pub const RISCV64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 1 << 2;
+
+/// The frame a RISC-V user exception handler reads.
+///
+/// `vector` is the `scause` exception code and `error_code` carries `stval`,
+/// which is the faulting address for the page and access faults and zero for
+/// the ones that have none.  The register block is `x1`..`x31` in
+/// [`super::process::RISCV64_SIGNAL_FRAME_REGS`] order, then the two CSRs
+/// a `sret` needs — the same pair the signal frame holds, because both are
+/// "the context to resume in".
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RiscV64UserExceptionFrame {
+    // This layout is consumed directly by kernel trap glue and user recovery
+    // code, so field order and offsets must stay ABI-stable.
+    pub vector: u64,
+    pub error_code: u64,
+    pub fault_address: u64,
+    /// `x1`..`x31`, in signal-frame order.
+    pub regs: [u64; super::process::RISCV64_SIGNAL_FRAME_REGS],
+    pub instruction_pointer: u64,
+    pub saved_program_status: u64,
+}
+
+pub const RISCV64_USER_EXCEPTION_FRAME_SIZE: usize = size_of::<RiscV64UserExceptionFrame>();
+
+pub const RISCV64_USER_EXCEPTION_FRAME_VECTOR_OFFSET: usize =
+    offset_of!(RiscV64UserExceptionFrame, vector);
+
+pub const RISCV64_USER_EXCEPTION_FRAME_ERROR_CODE_OFFSET: usize =
+    offset_of!(RiscV64UserExceptionFrame, error_code);
+
+pub const RISCV64_USER_EXCEPTION_FRAME_FAULT_ADDRESS_OFFSET: usize =
+    offset_of!(RiscV64UserExceptionFrame, fault_address);
+
+pub const RISCV64_USER_EXCEPTION_FRAME_REGS_OFFSET: usize =
+    offset_of!(RiscV64UserExceptionFrame, regs);
+
+pub const RISCV64_USER_EXCEPTION_FRAME_INSTRUCTION_POINTER_OFFSET: usize =
+    offset_of!(RiscV64UserExceptionFrame, instruction_pointer);
+
+pub const RISCV64_USER_EXCEPTION_FRAME_SAVED_PROGRAM_STATUS_OFFSET: usize =
+    offset_of!(RiscV64UserExceptionFrame, saved_program_status);
+
 // ── The flags a user exception handler is installed with ────────────────
 //
 // One set of names for code that should not care which architecture it was
@@ -290,6 +373,16 @@ const _: () = {
     );
     assert!(
         X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED == USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
+    );
+    assert!(RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE == USER_EXCEPTION_HANDLER_FLAGS_NONE);
+    assert!(RISCV64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT == USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT);
+    assert!(
+        RISCV64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
+            == USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
+    );
+    assert!(
+        RISCV64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
+            == USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
     );
 };
 
@@ -1007,5 +1100,111 @@ mod tests {
         assert_eq!(X86_64_EXCEPTION_SEGMENT_NOT_PRESENT_VECTOR, 11);
         assert_eq!(X86_64_EXCEPTION_STACK_SEGMENT_VECTOR, 12);
         assert_eq!(X86_64_EXCEPTION_DEVICE_NOT_AVAILABLE_VECTOR, 7);
+    }
+
+    /// The RISC-V frame's layout is what a user handler decodes.
+    ///
+    /// The register block is `x1`..`x31` in the signal frame's order, so a
+    /// handler that can read one can read the other; the three header words
+    /// come first and the two CSRs after the block.  This pins the offsets a
+    /// handler would otherwise have to recompute, and it is the only thing
+    /// about the frame a host can check — the trap glue that fills it runs
+    /// only on the machine.
+    #[test]
+    fn riscv64_user_exception_frame_layout_is_stable() {
+        use super::RiscV64UserExceptionFrame;
+        use super::RISCV64_USER_EXCEPTION_FRAME_ERROR_CODE_OFFSET;
+        use super::RISCV64_USER_EXCEPTION_FRAME_FAULT_ADDRESS_OFFSET;
+        use super::RISCV64_USER_EXCEPTION_FRAME_INSTRUCTION_POINTER_OFFSET;
+        use super::RISCV64_USER_EXCEPTION_FRAME_REGS_OFFSET;
+        use super::RISCV64_USER_EXCEPTION_FRAME_SAVED_PROGRAM_STATUS_OFFSET;
+        use super::RISCV64_USER_EXCEPTION_FRAME_SIZE;
+        use super::RISCV64_USER_EXCEPTION_FRAME_VECTOR_OFFSET;
+
+        let regs = super::super::process::RISCV64_SIGNAL_FRAME_REGS;
+        assert_eq!(RISCV64_USER_EXCEPTION_FRAME_VECTOR_OFFSET, 0);
+        assert_eq!(RISCV64_USER_EXCEPTION_FRAME_ERROR_CODE_OFFSET, 8);
+        assert_eq!(RISCV64_USER_EXCEPTION_FRAME_FAULT_ADDRESS_OFFSET, 16);
+        assert_eq!(RISCV64_USER_EXCEPTION_FRAME_REGS_OFFSET, 24);
+        let after_regs = 24 + 8 * regs;
+        assert_eq!(
+            RISCV64_USER_EXCEPTION_FRAME_INSTRUCTION_POINTER_OFFSET,
+            after_regs
+        );
+        assert_eq!(
+            RISCV64_USER_EXCEPTION_FRAME_SAVED_PROGRAM_STATUS_OFFSET,
+            after_regs + 8
+        );
+        assert_eq!(RISCV64_USER_EXCEPTION_FRAME_SIZE, after_regs + 16);
+        assert_eq!(
+            RISCV64_USER_EXCEPTION_FRAME_SIZE,
+            core::mem::size_of::<RiscV64UserExceptionFrame>()
+        );
+    }
+
+    /// The payload's hard-coded frame offset is the ABI's.
+    ///
+    /// `demo_program_riscv64_payload.S` is hand-written assembly, so it cannot
+    /// ask the ABI where `instruction_pointer` sits — it carries the number as
+    /// `.equ EXC_FRAME_INSTRUCTION_POINTER`.  That is the one place in the tree
+    /// a frame offset is written twice, and it is the place where being wrong
+    /// is silent: the handler would add four to some other field and resume
+    /// into the middle of its own registers.  This reads the assembly's number
+    /// back and refuses a build where the two have drifted.
+    #[test]
+    fn the_riscv64_payload_hard_codes_the_instruction_pointer_offset() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/user/demo/demo_program_riscv64_payload.S"
+        ));
+        let marker = ".equ EXC_FRAME_INSTRUCTION_POINTER,";
+        let line = source
+            .lines()
+            .find(|line| line.starts_with(marker))
+            .expect("the payload declares the frame offset it uses");
+        let written: usize = line[marker.len()..]
+            .trim()
+            .parse()
+            .expect("the declared offset is a number");
+        assert_eq!(
+            written,
+            super::RISCV64_USER_EXCEPTION_FRAME_INSTRUCTION_POINTER_OFFSET,
+            "the payload's hard-coded offset and the ABI's must agree"
+        );
+    }
+
+    /// The three architectures' handler flags are one set, not three.
+    ///
+    /// A program installs a handler with the architecture-neutral names, so
+    /// the per-architecture values have to agree; this is the assertion for
+    /// the third set, and it is what would fail if RISC-V's bits were chosen
+    /// independently.
+    #[test]
+    fn riscv64_handler_flags_match_the_shared_set() {
+        use super::RISCV64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+        use super::RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE;
+        use super::RISCV64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+        use super::RISCV64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+        use super::USER_EXCEPTION_HANDLER_FLAGS_NONE;
+        use super::USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+        use super::USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+        use super::USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+
+        assert_eq!(
+            RISCV64_USER_EXCEPTION_HANDLER_FLAG_NONE,
+            USER_EXCEPTION_HANDLER_FLAGS_NONE
+        );
+        assert_eq!(
+            RISCV64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT,
+            USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT
+        );
+        assert_eq!(
+            RISCV64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
+            USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
+        );
+        assert_eq!(
+            RISCV64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED,
+            USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
+        );
     }
 }

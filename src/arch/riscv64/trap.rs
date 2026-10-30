@@ -287,6 +287,20 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
         }
     }
 
+    // ── User exception delivery ──
+    //
+    // Everything above is the kernel's own answer to the fault — demand-paging
+    // it can resolve, a syscall it recognises.  What is left, for a fault that
+    // entered from user mode, is the process's: a thread that installed a
+    // handler for this `scause` code gets its frame rewritten to run it, and
+    // the fault becomes the handler's problem rather than the machine's.
+    // This is the branch that used to be absent, and its absence is what made
+    // this architecture `Partial`.
+    if entered_from_user && deliver_user_exception(frame, code) {
+        validate_user_return_frame_or_terminate(frame, entered_from_user);
+        return;
+    }
+
     // ── fault profiler: unhandled trap fatal ──
     if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
@@ -536,6 +550,83 @@ fn capture_current_user_context(frame: &TrapFrame) {
     }
 }
 
+/// Hand a user-mode exception to the handler the thread installed.
+///
+/// Returns whether a handler took it.  The two answers it distinguishes are
+/// what the caller acts on: `true` means `frame` now describes the handler's
+/// entry and the trap should return to user mode as usual, `false` means the
+/// fault is nobody's — no handler for this code, too many frames stacked, or
+/// no thread at all — and the caller falls through to the path that terminates
+/// the process.
+fn deliver_user_exception(frame: &mut TrapFrame, code: u64) -> bool {
+    let Some(thread) = crate::kernel::process::Scheduler::global()
+        .and_then(|scheduler| scheduler.current_thread())
+    else {
+        return false;
+    };
+
+    let vector = code as u8;
+    match thread.deliver_riscv64_user_exception(
+        frame,
+        vector,
+        frame.stval,
+        Some(frame.stval as usize),
+    ) {
+        Ok(true) => {
+            // ── fault profiler: delivered to user handler ──
+            if let Some(memory) = crate::memory::global_mut() {
+                memory.fault_profiler.inc_faults_delivered_to_handler();
+            }
+            println!(
+                "[user  ] delivered riscv64 exception {} to handler pid={} tid={} sepc={:#018x}",
+                riscv64_exception_name(code),
+                thread.pid(),
+                thread.tid(),
+                frame.sepc
+            );
+            true
+        }
+        Ok(false) => {
+            // ── fault profiler: no user handler ──
+            if let Some(memory) = crate::memory::global_mut() {
+                memory.fault_profiler.inc_faults_no_handler();
+            }
+            false
+        }
+        Err(error) => {
+            println!(
+                "[user  ] riscv64 exception delivery failed pid={} tid={} error={}",
+                thread.pid(),
+                thread.tid(),
+                error.as_str()
+            );
+            false
+        }
+    }
+}
+
+/// The name of a `scause` exception code, for the delivery log.
+///
+/// The constants next to this file are the machine's; the names are the log's,
+/// and they exist so a boot says which fault it delivered rather than a number
+/// nobody can read back.
+fn riscv64_exception_name(code: u64) -> &'static str {
+    match code {
+        EXCEPTION_INSTRUCTION_ADDRESS_MISALIGNED => "instruction-address-misaligned",
+        EXCEPTION_INSTRUCTION_ACCESS_FAULT => "instruction-access-fault",
+        EXCEPTION_ILLEGAL_INSTRUCTION => "illegal-instruction",
+        EXCEPTION_BREAKPOINT => "breakpoint",
+        EXCEPTION_LOAD_ADDRESS_MISALIGNED => "load-address-misaligned",
+        EXCEPTION_LOAD_ACCESS_FAULT => "load-access-fault",
+        EXCEPTION_STORE_ADDRESS_MISALIGNED => "store-address-misaligned",
+        EXCEPTION_STORE_ACCESS_FAULT => "store-access-fault",
+        EXCEPTION_INSTRUCTION_PAGE_FAULT => "instruction-page-fault",
+        EXCEPTION_LOAD_PAGE_FAULT => "load-page-fault",
+        EXCEPTION_STORE_PAGE_FAULT => "store-page-fault",
+        _ => "exception",
+    }
+}
+
 // ── Interrupt handling ──
 
 fn handle_interrupt(frame: &mut TrapFrame) {
@@ -725,10 +816,29 @@ fn handle_syscall(frame: &mut TrapFrame) {
 
     match syscall::dispatch_with_action(&mut syscall_context) {
         Ok(dispatch) => match dispatch.action {
-            SyscallAction::ReturnFromException { frame_pointer: _ } => {
-                // RISC-V doesn't yet support user exception delivery;
-                // fall through to set the result.
-                frame.a0 = syscall_abi::encode_result(Ok(dispatch.value)) as u64;
+            SyscallAction::ReturnFromException { frame_pointer } => {
+                // The handler is returning to the context the exception frame
+                // recorded.  Resuming rewrites this trap frame from that
+                // saved context, so the `sret` below returns to the faulting
+                // instruction's continuation rather than to the handler's
+                // caller.  A frame that does not match the delivery this
+                // thread recorded is an error, not a silent success — the
+                // path the other two architectures take.
+                let resume_result = current_thread
+                    .as_ref()
+                    .ok_or(crate::Error::InternalError)
+                    .and_then(|thread| thread.resume_riscv64_user_exception(frame, frame_pointer));
+                match syscall_trap::resolve_return_from_exception_resume(resume_result) {
+                    syscall_trap::ReturnFromExceptionResolution::ReturnToUser => {
+                        if let Some(thread) = current_thread.as_ref() {
+                            thread.capture_riscv64_user_context_from_trap(frame);
+                        }
+                        return;
+                    }
+                    syscall_trap::ReturnFromExceptionResolution::SetError(error) => {
+                        frame.a0 = syscall_abi::encode_error(error) as u64;
+                    }
+                }
             }
             action => {
                 frame.a0 = syscall_abi::encode_result(Ok(dispatch.value)) as u64;

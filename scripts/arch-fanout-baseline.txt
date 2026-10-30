@@ -25,13 +25,12 @@
 # is the `gap:` rows, not the total.
 #
 
-# 19 files, 65 occurrences outside src/arch
+# 18 files, 63 occurrences outside src/arch
 
 abi/ptrace.rs                                        2  # fact: the x86_64 PTRACE_GETREGS register file is a record only that architecture has
 drivers/usb_msd.rs                                   1  # fact: the USB storage controller driver is x86_64 bare-metal hardware
 kernel/process/process/lifecycle.rs                  1  # fact: an x86_64 test, because it prepares an x86_64 page plan
 kernel/process/process/types.rs                      3  # fact: the x86_64 register-context re-export, and lint gates for an accessor only the device-tree machines call
-kernel/process/thread/mod.rs                         2  # fact: user-exception delivery exists on x86_64 and aarch64; riscv64 has no such path
 kernel/process/thread/user_runtime.rs                2  # fact: replace_user_execution_state has no caller on riscv64 bare metal or on an aarch64 host
 kernel/smp/tlb.rs                                    2  # fact: PCID shootdown, and x86_64's page-table runtime is its only caller
 memory/global.rs                                     3  # fact: the lock-owner query, which only x86_64's page-fault path asks
