@@ -161,6 +161,7 @@ help:
 		'  make check-abi-frozen-payload-aarch64 - the same frozen payload on aarch64' \
 		'  make check-abi-frozen-payload-riscv64 - the same frozen payload on riscv64' \
 		'  make check-ntfs-image                 - mount a volume `mkntfs` made, write to it, and have ntfs-3g'"'"'s own reader judge what came out' \
+		'  make check-ext4-image                 - open a volume `mkfs.ext4` made and read the file the host wrote into it' \
 		'' \
 		'Runtime gates:' \
 		'  make check-perf-baseline              - boot the demo and compare its measured work to the baseline' \
@@ -341,7 +342,7 @@ test-service:
 	check-feature-matrix \
 	check-abi-mirror check-abi-frozen-payload \
 	check-abi-frozen-payload-aarch64 check-abi-frozen-payload-riscv64 \
-	check-ntfs-image
+	check-ntfs-image check-ext4-image
 
 # A `git commit` that is interrupted while it writes objects can leave a ref or
 # the index naming something that is not there, and the first symptom is a
@@ -495,6 +496,15 @@ check-status-rows:
 check-ntfs-image:
 	CARGO="$(CARGO)" PROFILE="$(PROFILE)" CRATE="$(CRATE)" \
 		sh ./scripts/check-ntfs-image.sh
+
+# The ext4 driver against a volume `mkfs.ext4` wrote.  Every other ext4 test
+# feeds it bytes this tree made, and the one that opened it accepted any
+# error — which is how the superblock's feature words came to be read a word
+# late, making every real volume look unsupported.  Needs e2fsprogs rather
+# than QEMU, so it runs where the rest of the static gates do.
+check-ext4-image:
+	CARGO="$(CARGO)" PROFILE="$(PROFILE)" CRATE="$(CRATE)" \
+		sh ./scripts/check-ext4-image.sh
 
 # Every configuration `Cargo.toml` declares, built: the shipped `demo-disk`
 # build plus each switch the manifest names, and then all of them at once.  The

@@ -166,8 +166,18 @@ impl Ext4Fs {
             magic,
             rev_level,
             inode_size: u16::from_le_bytes([raw[0x58], raw[0x59]]),
-            feature_compat: u32::from_le_bytes([raw[0x60], raw[0x61], raw[0x62], raw[0x63]]),
-            feature_incompat: u32::from_le_bytes([raw[0x64], raw[0x65], raw[0x66], raw[0x67]]),
+            // The three feature words are consecutive from 0x5C, and they are
+            // read in that order: compat at 0x5C, incompat at 0x60, ro_compat
+            // at 0x64.  An earlier version of this read them one word late —
+            // compat from 0x60 and incompat from 0x64 — which made every real
+            // volume look like it carried unknown incompat features, because
+            // what it read as incompat was the ro_compat word.  The visible
+            // effect was `Unsupported` from `open` on a volume `mkfs.ext4` had
+            // just written, and nothing in the tree could see it: the driver
+            // had no test that opened a real image, and the one test that
+            // touched it fed random bytes and accepted any error.
+            feature_compat: u32::from_le_bytes([raw[0x5C], raw[0x5D], raw[0x5E], raw[0x5F]]),
+            feature_incompat: u32::from_le_bytes([raw[0x60], raw[0x61], raw[0x62], raw[0x63]]),
         };
 
         // Accept ext4 volumes with features this driver handles.

@@ -295,7 +295,7 @@ behind `rootfs_type`, and `set_rootfs_type` has no caller.
 
 | Driver | Now | Missing |
 |--------|-----|---------|
-| ext4 | Read/write; journaling (revoke replay, v3 checksum tags), extent tree, dir index | Journal replay is verified on emulated images; not exercised against real corruption |
+| ext4 | Read/write; journaling (revoke replay, v3 checksum tags), extent tree, dir index; `make check-ext4-image` builds a volume with `mkfs.ext4`, writes a file into it from the host, and the driver opens the volume and reads that file back byte for byte — the only ext4 test whose input this tree did not make, and the one that found the superblock's feature words being read a word late | A volume carrying `metadata_csum` is refused: the driver does not read `s_checksum_seed`, which `mkfs.ext4` sets by default; journal replay is verified on emulated images and not against real corruption |
 | F2FS | Read/write; checkpoint (SIT persistence), orphan recovery, atomic CP+SB write | Same emulation-only validation; no ageing or garbage-collection stress |
 | XFS v5 | Read/write with journal replay; B+tree, CRC32C, v5 superblock | Same emulation-only validation; no xattr exposure |
 | exFAT | Read/write; VFAT extension | No journal, so crash behaviour depends on the write order; QEMU only |
