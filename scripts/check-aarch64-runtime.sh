@@ -106,7 +106,7 @@ shell_commands() {
             'help' 'echo ring3-shell-answered' \
             'cat /service/shell/origin' 'cat /service/shell/sha256' \
             'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
-            'cat /apps/current/demo-installed.toml' 'fork'
+            'cat /apps/current/demo-installed.toml' 'fork' 'sigasync'
     fi
 }
 
@@ -552,6 +552,21 @@ require_log_line "[drivers] no virtio-net device found in the MMIO window"
 require_log_line "[drivers] virtio-net device found (PCI modern)"
 
 require_log_line_count "[user  ] hello from aarch64 rust payload" 2
+
+# ── A signal taken asynchronously, end to end ──────────────────────────
+#
+# The shell's `sigasync` builtin installs a handler with its own trampoline,
+# sends itself SIGUSR1, and spins in a caller-saved register the trampoline
+# clobbers.  All three lines need the whole path: the kernel entered the
+# handler on an interrupt return, the handler's return reached the trampoline,
+# `SIGRETURN` resumed the interrupted instruction, and the register came back
+# from the frame.  The kernel's delivery is one implementation on all three
+# machines; this is the payload half.
+if [ "${PAYLOAD_SOURCE:-compiled}" != "frozen" ]; then
+    require_log_line "[user  ] signal handler ran"
+    require_log_line "[user  ] resumed after sigreturn"
+    require_log_line "[user  ] interrupted register survived"
+fi
 require_log_line_count "[user  ] aarch64-rust resumed after local code-write fault" 2
 require_log_line_count "[user  ] aarch64-rust resumed after local stack-exec fault" 2
 require_log_line_count "[user  ] aarch64-rust resumed after nested local code-write fault" 2

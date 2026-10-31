@@ -127,7 +127,7 @@ shell_commands() {
             'help' 'echo ring3-shell-answered' \
             'cat /service/shell/origin' 'cat /service/shell/sha256' \
             'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
-            'fork' 'echo serial-done'
+            'fork' 'sigasync' 'echo serial-done'
     fi
 }
 
@@ -449,6 +449,22 @@ if [ "$PAYLOAD_SOURCE" != "frozen" ]; then
     require_log_line_order \
         "[user  ] riscv64 resumed after local store fault" \
         "[user  ] riscv64 resumed after nested store fault"
+fi
+
+# ── A signal taken asynchronously, end to end ──────────────────────────
+#
+# The shell's `sigasync` builtin installs a handler with its own trampoline,
+# sends itself SIGUSR1, and spins in a caller-saved register the trampoline
+# clobbers.  All three lines need the whole path: the kernel entered the
+# handler on an interrupt return, the handler's return reached the trampoline,
+# `SIGRETURN` resumed the interrupted instruction, and the register came back
+# from the frame.  The kernel's delivery is one implementation on all three
+# machines; this is the payload half, and it is why the builtin is no longer
+# x86_64-only.
+if [ "${PAYLOAD_SOURCE:-compiled}" != "frozen" ]; then
+    require_log_line "[user  ] signal handler ran"
+    require_log_line "[user  ] resumed after sigreturn"
+    require_log_line "[user  ] interrupted register survived"
 fi
 require_log_line "[user  ] exit pid="
 require_log_line "id=demo-launcher status=42"

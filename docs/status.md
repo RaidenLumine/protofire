@@ -1189,13 +1189,21 @@ leaves out.
 - **Limited IPC shapes**: IPC relies mainly on pipes, signals, eventfd/mq; there
   is no standardized shared-memory IPC API (shm remains a purpose-specific
   syscall).
-- **Async delivery is gated on one architecture.** `make check-x8664-runtime`
-  drives the shell payload's `sigasync` builtin, which installs a handler with
-  its own trampoline, signals itself, and checks that a register the trampoline
-  clobbers came back — so delivery, the trampoline, `sigreturn` and the
-  register restore are all asserted there (RFC 0002).  The kernel's half is the
-  same on all three machines, but the aarch64 and RISC-V payloads do not carry
-  the builtin yet, so their halves of the path are compiled and unexercised.
+- **Async delivery is asserted on all three machines.**  The shell payload's
+  `sigasync` builtin installs a handler with its own trampoline, signals
+  itself, and checks that a caller-saved register the trampoline clobbers came
+  back — so delivery, the trampoline, `sigreturn` and the register restore are
+  all asserted (RFC 0002).  It was x86_64-only, which left the other two
+  machines' delivery compiled and unexercised; the port needed the trap
+  instruction and one caller-saved register per machine and nothing else, and
+  `make check-aarch64-runtime` and `make check-riscv64-runtime` now drive it.
+
+  Porting it found a defect the path had never had a chance to show: on RISC-V
+  the signal frame was written into the user stack with `sstatus.SUM` clear,
+  and the store faulted — `scause=0xf` with `SPP=0` at the frame's own address,
+  the first boot that took a signal there.  The write now runs inside
+  `with_user_access`, which is what the copy-on-write fix did for its own
+  supervisor store and what this one had never needed before.
 - **Contention scenarios not benchmarked**: lock contention and signal storms
   lack stress baselines.
 

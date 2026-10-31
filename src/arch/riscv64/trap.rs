@@ -1033,9 +1033,17 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
         signal: signal_num as u64,
     };
 
-    // SAFETY: the address was validated as a writable user page above.
+    // SAFETY: the address was validated as a writable user page above, and the
+    // window is what makes the store legal: this runs in supervisor mode on an
+    // interrupt return, where `sstatus.SUM` is clear, so a plain store into a
+    // page the process owns faults — measured, `scause=0xf` with `SPP=0` at
+    // the frame's address, which is what the first boot of a payload that takes
+    // a signal here produced.  The window brackets the store alone, for the
+    // reason `user_access` gives.
     unsafe {
-        core::ptr::write(signal_frame_base as *mut RiscV64SignalFrame, sig_frame);
+        crate::arch::riscv64::user_access::with_user_access(|| {
+            core::ptr::write(signal_frame_base as *mut RiscV64SignalFrame, sig_frame);
+        });
     }
 
     // ── Rewrite TrapFrame for handler entry ────────────────────────

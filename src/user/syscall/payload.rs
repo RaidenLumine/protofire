@@ -541,6 +541,20 @@ macro_rules! define_riscv64_payload_runtime {
             status >= $crate::user::shared::abi::syscall::ERROR_STATUS_FLOOR
         }
 
+        /// This process's id, which a test that signals itself needs.
+        ///
+        /// The other two targets' payload runtimes carry this; this one did
+        /// not, so a builtin that asks for it could not be compiled here.
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn getpid() -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::GetPid as usize,
+            0, 0, 0, 0, 0, 0,
+            )
+        }
+
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
