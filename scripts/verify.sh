@@ -232,6 +232,11 @@ run_p3() {
     run_make_step "make check-item-dead-code" check-item-dead-code
     run_make_step "make check-status-rows" check-status-rows
     run_make_step "make check-ntfs-image" check-ntfs-image
+    # The ext4 driver against a volume `mkfs.ext4` wrote.  It is the only ext4
+    # test whose input this tree did not make, and the one that found the
+    # superblock's feature words being read a word late — a defect no test
+    # built on this tree's own bytes could see.
+    run_make_step "make check-ext4-image" check-ext4-image
     # And every configuration the manifest declares, which is the one gate
     # that builds the switches no boot hands to a `check-*` target.
     run_make_step "make check-feature-matrix" check-feature-matrix
