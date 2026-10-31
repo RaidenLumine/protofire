@@ -266,36 +266,26 @@ block-cache management.
   a section that is executable but not writable, no checked arithmetic because
   a panic is a link outside the payload, and no bulk copy because that is
   `memcpy` — are in `docs/kernel/drivers.md` for whoever does it.
-- **A ring-3 program occasionally reads another writer's text instead of its
-  file.**  In about 1 boot in 10 the `demo-launcher` payload prints
-  `[user  ] file: ring3-shell-answered` where the file it read is 54 bytes of
-  `System volume stored inside a block-backed demo image.`; the same boots
-  also print `[user  ] stack-argv0: protofire init: started 11 service(s)`,
-  which is a kernel log line where an argv entry should be.  Three failing
-  boots (two on this tree, one on the 0.8.12 baseline) had the identical
-  shape: 11 `file:` lines, exactly one of them wrong, so it is not a
-  scheduling wobble.
+- **The shell's prompt is three writes, so a boot's answer can land on its
+  line.**  About one boot in ten, `ring3-shell-answered` appears in the log as
+  `$ ring3-shell-answered` — the shell's prompt (`protofire:`, the working
+  directory, `$ `, three separate writes) interrupted by the answer, which is
+  one write.  The answer is there and complete; what fails is the seven gates
+  that require it on a line of its own.
 
-  What is ruled out, by reading the paths rather than guessing: the `read`
-  syscall's `with_staged_output` stages into a stack `[u8; 1024]` and copies
-  `filled.min(capacity)`; `copy_user_bytes` validates the current process's
-  mapping and writes the raw pointer inside one user-access window; the
-  payload's `write_prefixed_line` copies exactly `value_len`; the console's
-  input buffer is a heap `Vec`, not memory a user stack can alias.
+  This row used to describe the same observation as a ring-3 program reading
+  another writer's text, with a `file: ring3-shell-answered` line as its
+  evidence.  A probe on the `read` syscall disproved that: across thirteen
+  regular-file reads in a failing boot, every one returned its file's bytes
+  and the same checksum (`System volume stored inside a block-backed demo
+  image.`, `rust io session`, `rust io data path roundtrip` — no other
+  writer's text among them).  The `file:`-prefixed line in the earlier logs
+  was the probe itself landing on the same line, which is the same defect as
+  the prompt: two writers, one line.
 
-  What is *not* ruled out, and is where the next investigation should start:
-  the hand-written `demo_program_x86_64_payload.asm` contains a
-  `read 3 bytes` followed by a `write 20 bytes` with the length hard-coded
-  rather than taken from the read's return, and 20 is exactly the length of
-  the leaked string.  Whether that sequence is the `file:` one was not
-  established, and no kernel-side probe was run: the finding is a set of
-  measurements and eliminations, not a root cause.  The next attempt should
-  instrument the kernel's `read` return rather than read the assembly.
-
-  The gates that feel it are the seven that require `ring3-shell-answered` on
-  a line of its own: the leaked text displaces it in the log, so the boot
-  looks like it never answered.  That is the symptom, not the defect.
-
+  The fix is one `write` for the prompt; what makes that hard inside a
+  payload is [drivers.md](kernel/drivers.md)'s "The console is one stream, and
+  a prompt is not atomic".
 
 ---
 
