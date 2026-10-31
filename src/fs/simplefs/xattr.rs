@@ -176,3 +176,76 @@ impl SimpleFs {
         }
     }
 }
+
+/// Per-file data-reduction flags (`FILE_FLAG_*`), and setting them.
+///
+/// The two bits are on the inode's flags byte, which every format has; what
+/// only V4 has is a promise that the byte reaches the disk.  A V2 volume
+/// would accept a set and lose it at the next mount, so the setter refuses
+/// there rather than answering `Ok` for something it cannot keep — the read
+/// side still answers, because a record parsed from a V4 volume may carry the
+/// bits even when this driver cannot set them.
+impl SimpleFs {
+    /// The flags a node's inode carries, as `FILE_FLAG_*`.
+    pub(crate) fn file_flags_for_inode(
+        &self,
+        state: &SimpleFsState,
+        inode_index: usize,
+    ) -> Result<u32> {
+        let inode = state
+            .inodes
+            .get(inode_index)
+            .ok_or(Error::InvalidArgument)?;
+        let mut flags = 0u32;
+        if inode.compressed {
+            flags |= crate::abi::fs::FILE_FLAG_COMPRESSED;
+        }
+        if inode.deduped {
+            flags |= crate::abi::fs::FILE_FLAG_DEDUPED;
+        }
+        Ok(flags)
+    }
+
+    /// Turn `set` on and `clear` off, for the node at `inode_index`.
+    ///
+    /// Refuses on a format that does not persist the flags byte, so a caller
+    /// learns its flag will not survive a remount instead of being told the
+    /// call worked.
+    pub(crate) fn set_file_flags_for_inode(
+        &self,
+        state: &mut SimpleFsState,
+        inode_index: usize,
+        set: u32,
+        clear: u32,
+    ) -> Result<()> {
+        if !self.format_version.supports_persistent_xattrs() {
+            return Err(Error::Unsupported);
+        }
+        // The dedup bit is the filesystem's bookkeeping — it says an extent is
+        // in the pool and the refcount map agrees — so a caller clearing it
+        // would leave the two disagreeing.  Only compression is the program's.
+        let mutable = crate::abi::fs::FILE_FLAG_COMPRESSED;
+        if set & !mutable != 0 || clear & !mutable != 0 {
+            return Err(Error::InvalidArgument);
+        }
+        if set & clear != 0 {
+            return Err(Error::InvalidArgument);
+        }
+        if inode_index >= state.inodes.len() {
+            return Err(Error::InvalidArgument);
+        }
+
+        state.save_inode_for_undo(inode_index);
+        let inode = state
+            .inodes
+            .get_mut(inode_index)
+            .ok_or(Error::InternalError)?;
+        if set & crate::abi::fs::FILE_FLAG_COMPRESSED != 0 {
+            inode.compressed = true;
+        }
+        if clear & crate::abi::fs::FILE_FLAG_COMPRESSED != 0 {
+            inode.compressed = false;
+        }
+        Ok(())
+    }
+}

@@ -805,8 +805,19 @@ pub(crate) fn write_runtime_inode_table(
     for (index, inode) in inodes.iter().enumerate() {
         let base = format_version.inode_table_entry_offset(table_block, index)?;
         image[base + format_version.inode_kind_offset()] = encode_kind(inode.kind);
-        image[base + format_version.inode_flags_offset()] =
-            if inode.deleted { INODE_FLAG_DELETED } else { 0 };
+        // Every flag the record carries, not just the deletion bit: the
+        // compression and dedup bits were read at mount and never written
+        // back, so a flag set at runtime survived only until the volume was
+        // unmounted.  `set_file_flags` is what makes that visible — it would
+        // have answered `Ok` and then lost the bit.
+        let mut flags = if inode.deleted { INODE_FLAG_DELETED } else { 0 };
+        if inode.compressed {
+            flags |= INODE_FLAG_COMPRESSED;
+        }
+        if inode.deduped {
+            flags |= INODE_FLAG_DEDUPED;
+        }
+        image[base + format_version.inode_flags_offset()] = flags;
         write_u32(
             image,
             base + format_version.inode_entry_start_offset(),

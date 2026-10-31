@@ -220,4 +220,20 @@ impl VNode for SimpleVNode {
         let state = self.fs.state.lock();
         self.fs.get_xattr_for_inode(&state, self.inode_index, name)
     }
+
+    fn get_file_flags(&self) -> Result<u32> {
+        let state = self.fs.state.lock();
+        self.fs.file_flags_for_inode(&state, self.inode_index)
+    }
+
+    fn set_file_flags(&self, set: u32, clear: u32) -> Result<()> {
+        // Inside a transaction, so the inode's flags byte and the tables it
+        // lives in commit together — the same shape every other metadata
+        // mutation here takes.
+        self.fs.transaction(|context| {
+            context
+                .fs
+                .set_file_flags_for_inode(context.state, self.inode_index, set, clear)
+        })
+    }
 }

@@ -315,6 +315,110 @@ fn v4_set_xattr_round_trip_within_capacity() {
     assert!(matches!(err, Error::OutOfMemory));
 }
 
+/// A flag set at runtime comes back after a remount.
+///
+/// `write_runtime_inode_table` encoded only the deletion bit, so the
+/// compression and dedup bits were parsed at mount and never written back:
+/// a flag set on a running volume survived until it was unmounted and then
+/// vanished.  This is the assertion that catches it — setting a flag and
+/// reading it straight back would pass either way, because the in-memory
+/// inode is where the setter put it.
+#[test]
+fn a_file_flag_set_at_runtime_survives_a_remount() {
+    use crate::abi::fs::FILE_FLAG_COMPRESSED;
+
+    let device = build_v4_test_device("v4-flags", b"demo");
+
+    {
+        let volume = SimpleFsVolume::new(open_writable_v4_for_test(device.clone()));
+        let file = volume.lookup("/README.txt").expect("lookup");
+        assert_eq!(file.get_file_flags().expect("read flags"), 0);
+
+        file.set_file_flags(FILE_FLAG_COMPRESSED, 0)
+            .expect("set the compression flag");
+        assert_eq!(
+            file.get_file_flags().expect("read flags"),
+            FILE_FLAG_COMPRESSED
+        );
+    }
+
+    // A fresh mount over the same device: the bit has to be on the record.
+    let volume = SimpleFsVolume::new(open_writable_v4_for_test(device.clone()));
+    let file = volume.lookup("/README.txt").expect("lookup after remount");
+    assert_eq!(
+        file.get_file_flags().expect("read flags after remount"),
+        FILE_FLAG_COMPRESSED,
+        "the flag must be on the inode, not only in memory"
+    );
+
+    // And clearing it is the same round trip in the other direction.
+    file.set_file_flags(0, FILE_FLAG_COMPRESSED)
+        .expect("clear the compression flag");
+    drop(volume);
+    let volume = SimpleFsVolume::new(open_writable_v4_for_test(device));
+    let file = volume.lookup("/README.txt").expect("lookup after remount");
+    assert_eq!(
+        file.get_file_flags().expect("read flags"),
+        0,
+        "a cleared flag must stay cleared"
+    );
+}
+
+/// A V2 volume refuses to set a flag it cannot keep.
+///
+/// The flags byte exists in every format; what only V4 does is write the
+/// compression and dedup bits into it.  A V2 volume that answered `Ok` would
+/// be promising something it loses at the next mount, so it refuses instead.
+#[test]
+fn setting_a_file_flag_on_a_v2_volume_is_refused() {
+    use crate::abi::fs::FILE_FLAG_COMPRESSED;
+
+    let device = build_v2_test_device("v2-flags", b"demo");
+    let fs = SimpleFs::open(device, true).expect("open writable simplefs");
+    let volume = SimpleFsVolume::new(fs);
+
+    let file = volume.lookup("/README.txt").expect("lookup");
+    assert!(matches!(
+        file.set_file_flags(FILE_FLAG_COMPRESSED, 0),
+        Err(Error::Unsupported)
+    ));
+    // The read side still answers rather than refusing: the question is
+    // meaningful even where the answer is always "no".
+    assert_eq!(file.get_file_flags().expect("read flags"), 0);
+}
+
+/// The dedup bit is the filesystem's, not the caller's.
+///
+/// It says an extent is in the pool and the refcount map agrees, so a caller
+/// that could clear it would leave the two disagreeing.  The syscall layer
+/// filters it already; the filesystem refuses it too, because the two gates
+/// are not the same one.
+#[test]
+fn a_caller_cannot_set_or_clear_the_dedup_flag() {
+    use crate::abi::fs::FILE_FLAG_COMPRESSED;
+    use crate::abi::fs::FILE_FLAG_DEDUPED;
+
+    let device = build_v4_test_device("v4-flags-dedup", b"demo");
+    let volume = SimpleFsVolume::new(open_writable_v4_for_test(device));
+    let file = volume.lookup("/README.txt").expect("lookup");
+
+    for (set, clear) in [
+        (FILE_FLAG_DEDUPED, 0),
+        (0, FILE_FLAG_DEDUPED),
+        (FILE_FLAG_COMPRESSED, FILE_FLAG_DEDUPED),
+    ] {
+        assert!(
+            matches!(file.set_file_flags(set, clear), Err(Error::InvalidArgument)),
+            "set={set:#x} clear={clear:#x} is not the caller's to make"
+        );
+    }
+    // And a bit neither side defines is refused rather than stored.
+    assert!(matches!(
+        file.set_file_flags(1 << 7, 0),
+        Err(Error::InvalidArgument)
+    ));
+}
+
 #[test]
 fn metadata_commit_after_the_first_writes_only_the_blocks_that_changed() {
     let device = build_v2_test_device("write-skip", b"demo");

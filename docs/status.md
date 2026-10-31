@@ -381,7 +381,13 @@ PBKDF2 primitives.
 - **Transparent per-file compression**: the encoder and decoder are in
   `src/fs/simplefs/compression.rs`, but no write path calls the encoder and no
   read path calls the decoder, so a compressed extent is never produced or
-  consumed; `SetFileFlags` (#155) is unimplemented in every backend.
+  consumed.  `SetFileFlags` (#155) and `GetFileFlags` (#156) do answer now —
+  SimpleFs reads the flag off the inode and writes it back, and setting it on
+  a V2 volume is refused rather than answering for something that format does
+  not persist — but the flag is only a flag: it says a file *should* be
+  compressed, and nothing compresses it yet.  The gap that blocks it is the
+  encoder's shape, not the switch: `encode_file` rewrites a whole file, while
+  a write is an increment at an offset.
 - **Cross-file deduplication**: the sharing and copy-on-write unsharing logic
   is in `src/fs/simplefs/dedup.rs`, but `maybe_dedup_inode` has no caller and
   the refcount map starts empty at mount, so no extent is pooled; `GetFileFlags`
