@@ -416,8 +416,9 @@ PBKDF2 primitives.
   a write is an increment at an offset.
 - **Cross-file deduplication**: the sharing and copy-on-write unsharing logic
   is in `src/fs/simplefs/dedup.rs`, but `maybe_dedup_inode` has no caller and
-  the refcount map starts empty at mount, so no extent is pooled; `GetFileFlags`
-  (#156) is unimplemented in every backend.
+  the refcount map starts empty at mount, so no extent is pooled.  (The flag
+  syscalls answer now — see the compression row above — but the dedup bit is
+  the filesystem's own bookkeeping and a caller cannot set or clear it.)
 
 #### 3.4 Encryption at Rest
 
@@ -458,9 +459,11 @@ balancing and runtime stack protection.
   (higher score for same-node steals).
 - **Kernel stack protection**: guard pages on all architectures; the
   `dying_thread` pattern prevents Arc leaks on context switch.
-- **Per-thread stack canary**: a random 64-bit canary written to the kernel
-  stack bottom at thread creation and verified on every context switch back to
-  the scheduler.
+- **Per-thread stack canary**: a random 64-bit value drawn from the kernel
+  CSPRNG at thread creation and installed into `__stack_chk_guard` on every
+  context switch, with `__stack_chk_fail` defined to abort.  **Nothing checks a
+  frame against it**: the build does not enable `-C stack-protector`, which is
+  the weakness listed below.
 - **A placement watchdog**: the scheduler periodically asks the process table
   whether every live process has at least one thread the scheduler can still
   find, and counts the ones it cannot. The counts are readable through `/proc`
