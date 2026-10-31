@@ -187,6 +187,29 @@ impl Scheduler {
         *self.stats.lock() = SchedulerStats::new();
     }
 
+    /// The deepest any live thread's kernel stack has been, in bytes used.
+    ///
+    /// Walks the process table once, at the point the boot-work line is
+    /// printed.  A watermark over threads rather than over time: a thread that
+    /// has finished took its number with it, which is why this is asked while
+    /// the boot's threads are still alive.
+    ///
+    /// Compiled only where it is read, for the same reason the scan itself is:
+    /// the answer costs a pass over every live stack.
+    #[cfg(any(feature = "perf_baseline", test))]
+    pub fn peak_kernel_stack_bytes(&self) -> usize {
+        let processes = self.process_table().lock();
+        let mut peak = 0usize;
+        for process in processes.iter() {
+            for tid in process.thread_ids() {
+                if let Some(thread) = self.find_thread_anywhere_by_pid_and_tid(process.pid(), tid) {
+                    peak = peak.max(thread.kernel_stack_peak_bytes());
+                }
+            }
+        }
+        peak
+    }
+
     /// Look up a registered process by its PID.
     ///
     /// Returns `None` if no process with the given PID is found.

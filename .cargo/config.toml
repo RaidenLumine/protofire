@@ -11,6 +11,20 @@ rustflags = [
     # broke release-bin builds: fat/thin LTO tries to merge the project's
     # code-model=large bitcode with the sysroot's default code-model bitcode
     # ("linking module flags 'Code Model': conflicting values").
+    #
+    # `-Z stack-protector=strong` is deliberately absent.  It was measured, it
+    # works for the kernel's own frames, and it cannot be turned on while the
+    # payloads are compiled by this crate: `define_shell_payload!` and the
+    # `demo_program_*` modules emit their code into the same compilation unit
+    # as the kernel, so the protector instruments them too.  Those sections are
+    # copied out and run in ring 3 at a different address, where a reference to
+    # the kernel's `__stack_chk_guard` — 30 of them in
+    # `protofire_shell_payload` alone — faults on the first protected function
+    # that returns.  Measured: with the flag on, the shell printed its banner
+    # and died before its prompt on x86_64 and aarch64, with a user page fault
+    # naming an address inside the payload section.  Turning it on needs the
+    # payloads as their own crate, with their own rustflags; see
+    # `docs/status.md`.
 ]
 
 [target.aarch64-unknown-none]
@@ -19,10 +33,12 @@ rustflags = [
     "relocation-model=static",
     "-C",
     "target-feature=+pan,+rand",
+    # No `-Z stack-protector`: see the x86_64 block above for the measurement.
 ]
 
 [target.riscv64gc-unknown-none-elf]
 rustflags = [
     "-C",
     "relocation-model=static",
+    # No `-Z stack-protector`, for the same reason as the two above.
 ]

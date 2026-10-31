@@ -145,13 +145,6 @@ impl Thread {
             terminate_pending: AtomicBool::new(false),
             cpu_affinity: AtomicU32::new(0),
             boosted: AtomicBool::new(false),
-            // A value no frame can predict, so a write past the end of one
-            // has to change it.  `random_u64` is the kernel's CSPRNG, which
-            // mixes this machine's hardware entropy where it has any and RTC
-            // time with the tick count where it does not — RISC-V is the
-            // latter, and the fallback is why a canary can be generated here
-            // at all.
-            canary: AtomicU64::new(crate::kernel::random::random_u64()),
         });
 
         // If process registration fails (for example process already terminated),
@@ -165,16 +158,6 @@ impl Thread {
     /// Return the thread ID.
     pub fn tid(&self) -> ThreadId {
         self.tid
-    }
-
-    /// The value this thread's stack frames would be checked against.
-    ///
-    /// The dispatcher installs it into `__stack_chk_guard` before switching
-    /// here.  Nothing reads it from a frame today, because the build does not
-    /// enable `-C stack-protector`; what this makes possible is that enabling
-    /// it is a build-flag change rather than a wiring one.
-    pub fn stack_canary(&self) -> usize {
-        self.canary.load(Ordering::Relaxed) as usize
     }
 
     /// Return the process ID this thread belongs to.
@@ -582,6 +565,28 @@ impl Thread {
     /// stack pointer value).
     pub fn kernel_stack_top(&self) -> usize {
         self.kernel_stack.stack_top()
+    }
+
+    /// The deepest this thread's kernel stack has been written to, in bytes.
+    ///
+    /// The number a stack-protector build needs before it is turned on: the
+    /// protector grows every frame, and what decides whether 32 KiB is still
+    /// enough is how much of it the deepest path already takes.
+    ///
+    /// Read out of the stack itself rather than out of the saved context.  A
+    /// context records the stack pointer at a *switch*, which is the one moment
+    /// a thread's depth is written down — and a call chain that went deep and
+    /// returned, or one that ran without ever being switched out, leaves no
+    /// trace in it.  `save_context` used to sample it here, and on a freshly
+    /// booted kernel that reported 8 bytes of 32768.  The stack is painted when
+    /// it is allocated ([`KernelStack::new`]) and scanned here, so the answer
+    /// covers every write since then.
+    ///
+    /// O(stack) to ask, because it is a scan.  That is why nothing on a hot
+    /// path calls it: the one caller is the boot-work line, once.
+    #[cfg(any(feature = "perf_baseline", test))]
+    pub fn kernel_stack_peak_bytes(&self) -> usize {
+        self.kernel_stack.peak_used_bytes()
     }
 
     /// Check whether the saved stack pointer has overflowed into the

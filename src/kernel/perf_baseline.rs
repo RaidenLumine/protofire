@@ -230,6 +230,24 @@ pub(crate) fn log_once(ticks: u64) {
         crate::kernel::irq_stats::total_spurious(),
     );
 
+    // How deep the deepest kernel stack got, on a line no gate compares.
+    //
+    // This is the measurement a `-C stack-protector` build needs before it is
+    // turned on: the protector grows every frame, and whether 32 KiB is still
+    // enough depends on how much of it the deepest path already takes.  It is
+    // a watermark over every thread that has ever run, so it also covers the
+    // boot's own threads, which no header of a single run would.
+    {
+        let peak = crate::kernel::process::Scheduler::global()
+            .map(crate::kernel::process::Scheduler::peak_kernel_stack_bytes)
+            .unwrap_or(0);
+        crate::println!(
+            "[perf  ] kernel stack peak: bytes={} of={}",
+            peak,
+            crate::kernel::process::thread::constants::DEFAULT_KERNEL_STACK_SIZE,
+        );
+    }
+
     // The workload's own duration, on a line no gate compares: a gate that
     // measures a duration measures the machine it ran on, and every gate in
     // this tree compares counters instead.  What this is for is the question a

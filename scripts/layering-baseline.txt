@@ -40,12 +40,11 @@
 # Since `sync` holds only a spinlock and the mutex wrapper over it, naming it
 # is naming the bottom layer.
 #
-# `process` names `random` once, and the direction is the right one: a
-# thread's stack canary is drawn from the CSPRNG when the thread is created,
-# and a canary that were predictable would be no canary.  `random` is below
-# every other user of it — the syscall layer, TLS, DCCP all draw from it — and
-# it names only `crypto` and `sync`, so this is the leaf being used by
-# something above it rather than a layer being reached across.
+# `process` no longer names `random`.  It did, for one line: a thread drew its
+# stack canary from the CSPRNG at creation.  The canary moved out of the thread
+# when the protector was measured — a per-thread value cannot work through that
+# ABI, see `docs/status.md` — so the draw went with it and the edge is gone
+# rather than renumbered.
 #
 # The occurrences of `drivers` naming `process` and `sync` are argued rather
 # than counted as debt: each PCIe driver owns a wait queue for its own device's
@@ -59,14 +58,19 @@
 # holds between finding its device and initialising it — which is the registry
 # shape the note below describes.
 #
-# `perf_baseline` names `fs`, `memory`, `network`, `irq_stats` and `block` on
-# purpose: it is the boot-work summary, and the counters it prints are kept by
-# the subsystems that do the work — including the three heights a read is
-# counted at (the filesystem's own operations and bytes, the block cache's
-# hits and misses, and what reached a device, which is `block`'s).  The edges
-# point one way — the observer depends on what it observes, and nothing
+# `perf_baseline` names `fs`, `memory`, `network`, `irq_stats`, `block` and
+# `process` on purpose: it is the boot-work summary, and the counters it prints
+# are kept by the subsystems that do the work — including the three heights a
+# read is counted at (the filesystem's own operations and bytes, the block
+# cache's hits and misses, and what reached a device, which is `block`'s).  The
+# edges point one way — the observer depends on what it observes, and nothing
 # depends on the observer but `maintenance`, which calls it — so these rows
-# are the shape of the check, not a cycle to cut.  The `fs` -> `block` rows
+# are the shape of the check, not a cycle to cut.  `process` joined them for
+# the kernel-stack depth line: how deep the deepest stack went is a fact about
+# the threads a boot ran, and the scheduler's table is the only thing that
+# knows which threads they were.  The direction is the same as the rest — the
+# summary asks the scheduler, and the scheduler has never heard of the summary.
+# The `fs` -> `block` rows
 # beside them are that direction spelled out: `src/fs/mod.rs` re-exports the
 # block layer's interface, and the counted occurrences are the three places a
 # device is handed to the wrapper the boot-work line reads.
@@ -431,6 +435,7 @@ perf_baseline                fs                           2
 perf_baseline                irq_stats                    3
 perf_baseline                memory                       2
 perf_baseline                network                      1
+perf_baseline                process                      3
 perf_baseline                workload                     1
 power                        sync                         2
 process                      device                       7
@@ -443,7 +448,6 @@ process                      memory                       24
 process                      network                      17
 process                      percpu                       12
 process                      power                        1
-process                      random                       1
 process                      security                     11
 process                      shm                          1
 process                      smp                          15

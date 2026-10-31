@@ -103,16 +103,6 @@ pub struct Thread {
     /// on demotion back to Normal.  Never `true` for native High or
     /// Realtime threads.
     boosted: AtomicBool,
-    /// Random canary value for the compiler-inserted stack-protector check.
-    /// Updated on each context switch from this field into the global
-    /// `__stack_chk_guard`.
-    ///
-    /// Read by the dispatcher, which installs it into `__stack_chk_guard`
-    /// before switching to this thread.  Generating and installing it is the
-    /// whole of the per-thread half; the half that would use it — a build with
-    /// `-C stack-protector` — is not enabled yet, so no frame is checked
-    /// against it today.  See `docs/status.md`.
-    canary: AtomicU64,
 }
 
 // ── Public re-exports ───────────────────────────────────────────────────

@@ -446,7 +446,7 @@ PBKDF2 primitives.
 | Scheduler stats | Load average (sampled ring), per-thread CPU ticks, idle tracking, ProcFs integration | — |
 | Priority boosting | Starvation boost: Normal → High after an idle threshold, demote after a short run | — |
 | Work stealing | Cross-CPU load balancing, NUMA-aware victim selection; the placement runs in a two-node boot (`make check-perf-baseline-numa`) | Validated under QEMU only; no real-load validation |
-| Stack canary | Per-thread random canary, checked on context switch | Software check, not a hardware feature; it detects a smashed stack after the fact |
+| Stack canary | A fixed `__stack_chk_guard` in the image; `__stack_chk_fail` aborts | No frame is checked — the flag cannot be enabled while the payloads share this crate's compilation unit. The per-thread value it used to have was removed: a global slot written while frames are live misreports, measured |
 | Power management | CPU frequency scaling (x86_64 MSR P-state driver; aarch64/riscv64 DT OPP range discovery + target tracking), governors, scheduler-tick integration, DTS temperature reading | AArch64 and RISC-V only track the requested target; no SCMI or CPPC interface is wired |
 
 **Strengths:** preemptive multi-threaded scheduling with NUMA-aware load
@@ -459,11 +459,27 @@ balancing and runtime stack protection.
   (higher score for same-node steals).
 - **Kernel stack protection**: guard pages on all architectures; the
   `dying_thread` pattern prevents Arc leaks on context switch.
-- **Per-thread stack canary**: a random 64-bit value drawn from the kernel
-  CSPRNG at thread creation and installed into `__stack_chk_guard` on every
-  context switch, with `__stack_chk_fail` defined to abort.  **Nothing checks a
-  frame against it**: the build does not enable `-C stack-protector`, which is
-  the weakness listed below.
+- **Stack canary slot**: `__stack_chk_guard` is a fixed value in the image,
+  with `__stack_chk_fail` defined to abort.  It is **not** written per thread
+  any more, and that reversal is measured rather than preferred: writing the
+  incoming thread's value on every context switch made every boot panic the
+  moment the protector was enabled — and it still panicked with every thread
+  given the *same* constant, which ruled out two threads disagreeing and left
+  the write itself.  The ABI is why: a protected frame stores the slot in its
+  prologue and reloads the global slot in its epilogue, so any write in between
+  reports corruption that never happened, and there is always a live frame on
+  some CPU.  **Nothing checks a frame against it yet**: the flag cannot be
+  enabled while the payloads are compiled by this crate.  See the defect below.
+- **Kernel stack depth, measured**: `[perf  ] kernel stack peak` reports the
+  deepest byte any live thread's kernel stack was written to, read by scanning
+  stacks that `KernelStack::new` painted.  Painting is gated to
+  `perf_baseline`/test builds because it writes 32 KiB per stack on the
+  thread-creation path.  Measured on x86_64: `bytes=17936 of=32768` in the
+  shipped build, stable across boots and unchanged when the stack is doubled —
+  which is what makes it a depth rather than a scan artifact.  The same build
+  with `-Z stack-protector=strong` reports `bytes=20272 of=32768`, so the
+  protector's extra ~2.3 KiB still leaves ~12 KiB of headroom: the stack size is
+  not what blocks turning it on (see the defect below).
 - **A placement watchdog**: the scheduler periodically asks the process table
   whether every live process has at least one thread the scheduler can still
   find, and counts the ones it cannot. The counts are readable through `/proc`
@@ -1224,7 +1240,7 @@ leaves out.
 | Access helpers | Central permission checking on VFS operations | — |
 | SHA-256 integrity | Launch manifest and payload hashes; optional detached signatures | Verification is opt-in: an artifact carrying no signature loads anyway, and there is no key distribution or rotation policy |
 | PAN/SMAP | Kernel-user memory isolation on all three architectures | See the interrupt section: the window is opened where the copy is, and the guard saves and restores it |
-| Stack canary | `Thread::canary` exists and is never read | There is no check: the heap block's own canary and the guard page below a kernel stack are what detect an overrun |
+| Stack canary | A fixed `__stack_chk_guard` in the image and `__stack_chk_fail` that aborts | No frame is checked: `-Z stack-protector` cannot be enabled while the payloads share this crate's compilation unit (they run in ring 3, where the kernel's `.data` is unmapped). Overruns are still caught by the heap block's canary and by the guard page below a kernel stack |
 | MAC type enforcement | Types on subjects and objects, allow rules enforced at the VFS file-access hook and, at the syscall boundary, over signals, `ptrace` and every socket operation (`src/syscall/security.rs`, [RFC 0033](rfcs/0033-refuse-a-signal-a-trace-and-a-socket.md)), `MacDenial` audit records; the three policy-writing syscalls (#175-177) require an admin token | Local sockets are ungated, because their names are not in a labelled namespace; the kernel's own signals (SIGCHLD, the OOM killer, a timer) and its background lookups stay below the line by design; default is allow until a policy is loaded |
 | Audit subsystem | Classified event types, ring buffer, syscall entry/exit hooks, AuditSetEnable (#143) and AuditReadLog (#144); persistence is **opt-in** from the boot's command line — `audit=persist` has the maintenance thread drain the ring to `/data/audit.log` (append, sync, then commit the consumer index), and the boot emits a `ConfigChange` record saying so.  `make check-x8664-audit-persist` types at the shell and reads that record back out of the file; the default stays memory-only, which the boot names and the gate checks | A boot without `audit=` captures nothing and persists nothing (the default, left to the operator); a process still enables its own event types with AuditSetEnable (#143), so a machine that records only the kernel's own events is the shape a default boot has |
 | Service authorization | A privileged rc.d declaration names an account that must resolve; the grant or refusal is audited | Provenance, not authentication: no password is involved, so the elevated token is unauthenticated |
@@ -1355,22 +1371,33 @@ control that are unusual in a hobby kernel.
 
 **Weaknesses:**
 
-- **The stack canary is wired, and protects nothing yet.**  Both halves that
-  are this tree's to write now exist: every thread draws a value from the
-  kernel CSPRNG at creation, and the dispatcher installs it into
-  `__stack_chk_guard` before switching to that thread.  `__stack_chk_fail` is
-  defined and aborts rather than returning, because a canary that changed means
-  the frame's return address may have been written by whatever ran past its
-  end.
+- **The stack protector cannot be enabled while the payloads share this
+  crate's compilation unit.**  Measured, not assumed.  With
+  `-Z stack-protector=strong` the kernel's own frames are checked and every
+  arch boots clean (x86_64 single and four CPU, aarch64, riscv64); the shell,
+  however, printed its banner and died before its prompt on x86_64 and aarch64.
+  The cause is structural: `define_shell_payload!` and the `demo_program_*`
+  modules emit their code into the same compilation unit, so the protector
+  instruments them too, and `objdump` finds 30 references to
+  `__stack_chk_guard` inside `protofire_shell_payload` alone (4 in
+  `protofire_init_payload`, 4 in `protofire_demo_program_rust_io`).  Those
+  sections are copied out and run in ring 3 at a different address, where the
+  kernel's `.data` is not mapped — the first protected function to return
+  faults, and the boot log says so: a user page fault naming an address inside
+  the payload section.
 
-  What is missing is the flag: the build does not pass `-C stack-protector`,
-  so **no function has a canary check and none of this is consulted**.  The
-  wiring makes enabling it a build-flag change rather than a writing one, and
-  that is all it does.  Enabling it is its own change, and it needs a
-  measurement first — the protector grows every frame, the kernel stack is a
-  fixed size, and nothing here has measured how deep the deepest path goes.
-  (The heap's block canary is real and is a different mechanism.)  This was listed as a strength before — a reader had no way to
-  tell, which is what `check-docs.sh` now refuses for this document.
+  The depth measurement this needs now exists (`[perf  ] kernel stack peak`),
+  and the answer is that the stack is not the problem: 20272 of 32768 bytes with
+  the protector on, so ~12 KiB of headroom.  What is missing is a boundary the
+  compiler can see.  A `#[no_stack_check]` attribute would do it and has been
+  **removed** from rustc (`error[E0557]: feature has been removed`), and all
+  three strategies (`basic`, `strong`, `all`) instrument these functions.  The
+  way forward is the payloads as their own crate with their own rustflags, which
+  is what `.cargo/config.toml` names as the condition for turning the flag on.
+
+  Removing the per-switch canary write was part of this and is not a loss:
+  writing `__stack_chk_guard` while frames are live cannot work through this
+  ABI, whatever value it writes (see the mount table's stack-canary row).
 - **Default allow**: until a MAC policy is loaded, the default is to allow;
   deny-by-default requires an explicit policy.
 - **Audit log is memory-only unless the boot asks otherwise**: the ring buffer

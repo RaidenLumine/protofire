@@ -984,47 +984,74 @@ fn riscv64_nested_delivery_follows_the_two_flags() {
     );
 }
 
-/// Every thread gets a canary, and no two of them are the same.
+/// The guard is a fixed value, and reading it through the protector's pointer
+/// reaches it.
 ///
-/// The value is what a `-C stack-protector` frame would compare against, so
-/// two threads sharing one would make the check pass for a frame that was
-/// overwritten by the other thread's value.  `random_u64` is the kernel's
-/// CSPRNG — hardware entropy where the machine has it, RTC time and the tick
-/// count where it does not — so this also asserts the fallback produces
-/// distinct values on a host with no hardware source.
+/// The wiring that used to be here — per-thread canaries written into this slot
+/// on every switch — was removed because it cannot work: a protected frame
+/// stores the slot in its prologue and reloads it in its epilogue, so any write
+/// while the frame is live reports corruption that never happened.  Enabling
+/// `-Z stack-protector` with that wiring panicked on every boot.  What is left
+/// is a value that does not move, and this pins both halves: it is not zero (an
+/// unwritten slot's value would make the check pass for a frame that never
+/// stored one) and the pointer the ABI names reads back exactly it.
 #[test]
-fn every_thread_gets_its_own_stack_canary() {
-    let process = Process::new(230, "canary");
-    let first = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
-    let second = Thread::new_user(process.clone(), UserThreadStart::new(0x3000, 0x4000, None));
-
-    assert_ne!(
-        first.stack_canary(),
-        0,
-        "a canary of zero is the value an unwritten frame would have"
-    );
-    assert_ne!(
-        first.stack_canary(),
-        second.stack_canary(),
-        "two threads must not share the value their frames are checked against"
-    );
-}
-
-/// Installing a canary puts it where the protector's ABI reads it.
-///
-/// The slot is the global the compiler-emitted check loads from, so this is
-/// the one assertion that says the wiring reaches the place a protected
-/// function would look.
-#[test]
-fn installing_a_canary_reaches_the_protector_s_slot() {
-    let value = 0x1234_5678_9abc_def0usize;
-    crate::set_stack_canary(value);
-
+fn the_canary_guard_is_a_fixed_value_the_protector_can_read() {
     // SAFETY: the slot is a `static` the kernel owns for its whole life, and
     // this reads it through the same pointer the protector's ABI names.
     let read_back = unsafe { core::ptr::read(crate::__stack_chk_guard_ptr()) };
-    assert_eq!(
-        read_back, value,
-        "the installed value must be what a frame would compare against"
+    assert_ne!(
+        read_back, 0,
+        "a canary of zero is the value an unwritten slot holds"
     );
+    assert_eq!(
+        read_back,
+        crate::__stack_chk_guard.load(core::sync::atomic::Ordering::Acquire),
+        "the pointer must reach the same slot the atomic does"
+    );
+}
+
+/// The stack peak follows a write, at the depth the write happened.
+///
+/// The number exists to answer one question — how deep did a chain get — and a
+/// scan that returned a constant would answer it the same way for a stack
+/// nothing ever touched and one that was written to the brim.  This pins the
+/// two ends: untouched reads zero, and a write at a chosen offset reads back as
+/// exactly that offset, so the arithmetic between `stack_top` and the reported
+/// bytes is exercised rather than assumed.
+#[test]
+fn stack_peak_reports_where_the_deepest_write_landed() {
+    let process = Process::new(240, "stack-peak");
+    let thread = Thread::new_kernel(process.clone(), idle_entry);
+
+    // A thread that has not run has a painted stack and no writes in it.
+    assert_eq!(
+        thread.kernel_stack_peak_bytes(),
+        0,
+        "a stack nothing has written to must report no use"
+    );
+
+    let (bottom, top) = thread.stack_bounds();
+    let depth = 512usize;
+    // SAFETY: `top - depth` is inside the usable range the allocation just
+    // gave this thread, and the thread has not been scheduled, so no frame of
+    // its own is there to be trampled.
+    unsafe {
+        core::ptr::write_volatile((top - depth) as *mut usize, 0xDEAD_BEEF);
+    }
+
+    assert_eq!(
+        thread.kernel_stack_peak_bytes(),
+        depth,
+        "the reported depth must be where the deepest write landed,                       not a constant"
+    );
+    assert!(bottom < top - depth, "the write must be inside the stack");
+
+    // Deeper is reported as deeper, and a shallower write afterwards does not
+    // walk the answer back: the peak is over the stack's whole life.
+    // SAFETY: as the write above, at a lower address still inside the range.
+    unsafe {
+        core::ptr::write_volatile((top - depth * 2) as *mut usize, 0xFEED_FACE);
+    }
+    assert_eq!(thread.kernel_stack_peak_bytes(), depth * 2);
 }

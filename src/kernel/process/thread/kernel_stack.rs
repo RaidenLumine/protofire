@@ -23,6 +23,25 @@ use crate::memory::frame::FRAME_SIZE;
 
 use super::stack_window::StackLayout;
 
+/// The byte a freshly allocated stack is filled with, so the lowest address it
+/// was ever written to can be read back out of it.
+///
+/// `0xCC` is the fill compilers use for uninitialised storage, and it is chosen
+/// here for the same reason: it is not a value a frame is likely to write on
+/// purpose.  The whole width matters — a word whose bytes are all `0xCC` reads
+/// as untouched, so a frame that stored exactly that word in its deepest slot
+/// would be missed.  See [`KernelStack::peak_used_bytes`] for what the number
+/// this produces does and does not bound.
+///
+/// The paint and the scan are gated rather than always on.  Writing 32 KiB into
+/// every stack a boot allocates is work on the thread-creation path, and the
+/// rule here is that a probe stays off the path it measures: the only reader is
+/// the boot-work line, which is itself behind `perf_baseline`.  A default build
+/// therefore pays nothing, and a build that prints the number is the one that
+/// fills the stacks to compute it.
+#[cfg(any(feature = "perf_baseline", test))]
+const STACK_PAINT: u8 = 0xCC;
+
 /// Say once that the overflow hazard the guard exists for is not covered here.
 ///
 /// Once is enough: the answer depends on where the frames landed, so every
@@ -84,10 +103,85 @@ impl KernelStack {
     ///   existed;
     /// - otherwise a heap buffer, when there is no frame allocator at all.
     pub(crate) fn new(guard_size: usize, stack_size: usize) -> Self {
-        if let Some(stack) = Self::new_in_stack_window(guard_size, stack_size) {
-            return stack;
+        let stack = if let Some(stack) = Self::new_in_stack_window(guard_size, stack_size) {
+            stack
+        } else {
+            Self::new_frame_backed(guard_size, stack_size)
+        };
+        #[cfg(any(feature = "perf_baseline", test))]
+        stack.paint();
+        stack
+    }
+
+    /// Fill the usable pages with [`STACK_PAINT`], so the deepest byte ever
+    /// written to this stack can be read back out of it later.
+    ///
+    /// This is the only way to measure the deepest point of a call chain.  The
+    /// alternative — reading the saved stack pointer — can only ever report a
+    /// *switch point*, because that is the only moment a thread's context is
+    /// recorded; a chain that went deep and then returned is invisible to it,
+    /// and a chain that went deep without ever being switched out is invisible
+    /// too.  The paint is written once, at allocation, before the thread that
+    /// owns the stack has run at all.
+    ///
+    /// Compiled only for a build that reads it; see [`STACK_PAINT`] for why.
+    ///
+    /// # Safety
+    ///
+    /// The usable pages are mapped and owned by this stack, and this is the
+    /// only writer that touches them before the thread runs: it is called from
+    /// [`KernelStack::new`], before the `KernelStack` is handed to a `Thread`.
+    #[cfg(any(feature = "perf_baseline", test))]
+    fn paint(&self) {
+        let bottom = self.stack_ptr as usize;
+        let top = self.stack_top();
+        // SAFETY: as the doc comment says — the range is this stack's usable
+        // pages, mapped by whichever constructor just built them, and no other
+        // writer exists yet.
+        unsafe {
+            core::ptr::write_bytes(bottom as *mut u8, STACK_PAINT, top - bottom);
         }
-        Self::new_frame_backed(guard_size, stack_size)
+    }
+
+    /// The deepest this stack has been written to, in bytes measured down from
+    /// its top.
+    ///
+    /// Found by scanning up from the bottom for the first byte the stack no
+    /// longer holds [`STACK_PAINT`] in.  Everything below that is untouched,
+    /// everything above it has been written at some point, so the answer
+    /// counts the deepest a frame ever reached — not the depth when this was
+    /// asked.
+    ///
+    /// Two things bound it, and both are worth naming rather than leaving to
+    /// be discovered.  A frame that stores exactly a paint-coloured word in the
+    /// slot no other frame reached reads as untouched, so the answer can miss
+    /// by that word; and the scan stops at the first untouched *word*, so a
+    /// stray write far below the deepest frame — into the padding between
+    /// chains rather than onto a live one — counts as use.  Both err toward
+    /// over-reporting for a frame-shaped stack and toward under-reporting by at
+    /// most one word, which is the direction a headroom question wants.
+    ///
+    /// Only a painted stack has an answer: the scan is compiled for the same
+    /// builds as [`Self::paint`], because reading an unpainted stack would
+    /// report whatever its previous owner left there.
+    #[cfg(any(feature = "perf_baseline", test))]
+    pub(crate) fn peak_used_bytes(&self) -> usize {
+        let bottom = self.stack_ptr as usize;
+        let top = self.stack_top();
+        let word = core::mem::size_of::<usize>();
+        let painted = usize::from_ne_bytes([STACK_PAINT; core::mem::size_of::<usize>()]);
+
+        let mut address = bottom;
+        while address + word <= top {
+            // SAFETY: `address` is inside the usable pages and `address + word`
+            // is within `top`, so the read stays inside the stack.
+            let value = unsafe { core::ptr::read_unaligned(address as *const usize) };
+            if value != painted {
+                return top - address;
+            }
+            address += word;
+        }
+        0
     }
 
     /// Allocate a kernel stack inside the architecture's stack window.

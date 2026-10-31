@@ -23,50 +23,60 @@ pub mod syscall;
 pub mod user;
 pub mod util;
 
-/// The `__stack_chk_guard` slot a `-C stack-protector` build links against.
+/// The `__stack_chk_guard` slot a `-Z stack-protector` build links against.
 ///
-/// Exposed as an atomic because the dispatcher installs a value here on every
-/// context switch, which has to be visible to the thread that runs next.  The
-/// build does not enable `-C stack-protector`, so **nothing checks a frame
-/// against it** — the per-thread canary is generated and installed, and with
-/// the flag off that is all it does.  See `set_stack_canary`,
-/// `Thread::canary`, and `docs/status.md`.  What *is* real is the heap's block
-/// canary
-/// (`src/memory/heap/tlsf.rs`), which attributes an overrun to the allocation
-/// that caused it.
+/// It is `#[no_mangle]` because the protector's ABI names the *symbol*, not a
+/// Rust path: the compiler emits a load of `__stack_chk_guard` and a call to
+/// `__stack_chk_fail`, and a mangled static leaves the first undefined at link
+/// time — which is what it did until this attribute was added.
+///
+/// **A fixed value, set by the linker, never written at run time.**  Three
+/// boots settled that, and each ruled out the previous explanation:
+///
+/// 1. Written on every context switch with the incoming thread's canary — the
+///    wiring the tree had — panicked on every boot.
+/// 2. Written on every switch with the *same* constant for every thread still
+///    panicked, which ruled out "two threads disagree" and left the write
+///    itself.
+/// 3. A compile-time constant with nothing writing it ran clean.
+///
+/// The mechanism is the ABI: a protected function stores this value into its
+/// frame in the prologue and reloads the global slot to compare in the
+/// epilogue.  Any write in between — a context switch, an install call, this
+/// thread's or another CPU's — makes that frame report corruption that never
+/// happened.  There is no placement for the write that avoids it, because the
+/// write happens while some frame is always live on some CPU.
+///
+/// What that costs is unpredictability: a value in the image is a value an
+/// attacker who can read the image knows.  Per-CPU canaries need a slot each
+/// CPU reads without a memory load that another CPU can rewrite mid-frame — an
+/// `fs:`/`tp:`-relative slot, a change to the context switch rather than to
+/// this static.  `docs/status.md` records that as the remaining work.  What
+/// this value does buy, and the reason it is worth having: an overflow past a
+/// frame turns a silent corruption into `__stack_chk_fail`.
+const STACK_CANARY: usize = 0x4F3A_9C15_B7E2_D806;
+
 #[allow(non_upper_case_globals)]
+#[no_mangle]
 pub static __stack_chk_guard: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+    core::sync::atomic::AtomicUsize::new(STACK_CANARY);
 
 /// Returns a raw `*mut usize` to the stack canary guard slot.
 ///
 /// Used by the `__stack_chk_fail` / `__stack_chk_guard` linkage the compiler
-/// generates for `-C stack-protector` support on bare-metal targets.
+/// generates for `-Z stack-protector` support on bare-metal targets.
 pub fn __stack_chk_guard_ptr() -> *mut usize {
     &__stack_chk_guard as *const core::sync::atomic::AtomicUsize as *mut usize
 }
 
-/// Install `canary` as the value a stack-protected function compares against.
-///
-/// Called from the dispatcher before a context switch, so the slot a running
-/// thread checks against is that thread's own.  A single global slot is what
-/// the protector's ABI gives — it reads memory at `__stack_chk_guard_ptr`
-/// rather than a register — so this is exactly as strong as the switch that
-/// installs it and no stronger: two threads on two CPUs share the slot, and
-/// what makes that sound is that neither can be running a protected function
-/// while the other is being switched to.
-pub fn set_stack_canary(canary: usize) {
-    __stack_chk_guard.store(canary, core::sync::atomic::Ordering::Release);
-}
-
-/// What a `-C stack-protector` build calls when a frame's canary did not come
+/// What a `-Z stack-protector` build calls when a frame's canary did not come
 /// back.
 ///
 /// The kernel aborts rather than returns: a canary that changed means the
 /// frame it belonged to was written past its end, and continuing runs code
-/// whose return address may have been written by whatever did it.  This is
-/// only ever reached by a build that enables the protector, which this one
-/// does not yet — see `docs/status.md`.
+/// whose return address may have been written by whatever did it.  The abort is
+/// the right answer here because the alternative — unwinding — needs a frame
+/// whose return address is exactly what is in doubt.
 #[no_mangle]
 pub extern "C" fn __stack_chk_fail() -> ! {
     crate::println!("[panic ] stack canary mismatch: a frame was written past its end");
