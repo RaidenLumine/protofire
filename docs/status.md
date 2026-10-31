@@ -276,12 +276,23 @@ block-cache management.
   This row used to describe the same observation as a ring-3 program reading
   another writer's text, with a `file: ring3-shell-answered` line as its
   evidence.  A probe on the `read` syscall disproved that: across thirteen
-  regular-file reads in a failing boot, every one returned its file's bytes
-  and the same checksum (`System volume stored inside a block-backed demo
-  image.`, `rust io session`, `rust io data path roundtrip` — no other
-  writer's text among them).  The `file:`-prefixed line in the earlier logs
-  was the probe itself landing on the same line, which is the same defect as
-  the prompt: two writers, one line.
+  regular-file reads in each of three failing boots, every one returned its
+  own file's bytes with the same checksum
+  (`System volume stored inside a block-backed demo image.`, `rust io
+  session`, `rust io data path roundtrip` — no other writer's text among
+  them).  The `file:`-prefixed line in the earlier logs was the probe itself
+  landing on the same line, which is the same defect as the prompt: two
+  writers, one line.
+
+  The three failures in the ten-boot measurement that produced this row had
+  three shapes, which is what the defect looks like from outside:
+  `$ ring3-shell-answered` (the prompt in front), a neighbouring process's
+  `stack-env0:` value with no newline between them, and one where the answer
+  *was* on a line of its own.  That last boot failed a different assertion —
+  zero APs online under relocation — and it is not this row's subject.  It has
+  not been reproduced: six further boots of the same gate gave five passes and
+  one failure of this row's own kind, so one boot is not evidence of a second
+  defect and nothing is claimed about it here.
 
   The fix is one `write` for the prompt; what makes that hard inside a
   payload is [drivers.md](kernel/drivers.md)'s "The console is one stream, and
