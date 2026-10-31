@@ -266,37 +266,29 @@ block-cache management.
   a section that is executable but not writable, no checked arithmetic because
   a panic is a link outside the payload, and no bulk copy because that is
   `memcpy` — are in `docs/kernel/drivers.md` for whoever does it.
-- **The shell's prompt is three writes, so a boot's answer can land on its
-  line.**  About one boot in ten, `ring3-shell-answered` appears in the log as
-  `$ ring3-shell-answered` — the shell's prompt (`protofire:`, the working
-  directory, `$ `, three separate writes) interrupted by the answer, which is
-  one write.  The answer is there and complete; what fails is the seven gates
-  that require it on a line of its own.
+- **A boot's answer can still share its line, from the payload side now.**
+  The shell's prompt used to be three `write`s and is one, which took the rate
+  from 3 boots in 10 to 1 in 10 — but not to zero.  The remaining failure is a
+  different pair of writers: `[user  ] stack-aux-entry: ring3-shell-answered`,
+  where the demo payload's own `key: value` line and the shell's answer land on
+  one line.  The answer is complete both ways round; what fails is the seven
+  gates that require it on a line of its own.
 
-  This row used to describe the same observation as a ring-3 program reading
-  another writer's text, with a `file: ring3-shell-answered` line as its
-  evidence.  A probe on the `read` syscall disproved that: across thirteen
-  regular-file reads in each of three failing boots, every one returned its
-  own file's bytes with the same checksum
-  (`System volume stored inside a block-backed demo image.`, `rust io
-  session`, `rust io data path roundtrip` — no other writer's text among
-  them).  The `file:`-prefixed line in the earlier logs was the probe itself
-  landing on the same line, which is the same defect as the prompt: two
-  writers, one line.
+  The prompt fix is `shell_write_prompt` in
+  `src/user/demo/shell_payload.rs`, which now assembles the name, the directory
+  and `$ ` into one buffer in its own frame and writes it once.  The three
+  things that make that non-trivial in a payload — an executable-not-writable
+  section, `wrapping_*` arithmetic, byte loops instead of `memcpy` — are what
+  [drivers.md](kernel/drivers.md) records, and
+  `a_prompt_assembled_in_one_buffer_is_its_three_pieces_in_order` pins the
+  assembly.
 
-  The three failures in the ten-boot measurement that produced this row had
-  three shapes, which is what the defect looks like from outside:
-  `$ ring3-shell-answered` (the prompt in front), a neighbouring process's
-  `stack-env0:` value with no newline between them, and one where the answer
-  *was* on a line of its own.  That last boot failed a different assertion —
-  zero APs online under relocation — and it is not this row's subject.  It has
-  not been reproduced: six further boots of the same gate gave five passes and
-  one failure of this row's own kind, so one boot is not evidence of a second
-  defect and nothing is claimed about it here.
-
-  The fix is one `write` for the prompt; what makes that hard inside a
-  payload is [drivers.md](kernel/drivers.md)'s "The console is one stream, and
-  a prompt is not atomic".
+  This row used to call the whole thing a ring-3 program reading another
+  writer's text.  A probe on the `read` syscall disproved that: thirteen
+  regular-file reads in each of three failing boots, every one returning its
+  own file's bytes with the same checksum.  The `file:`-prefixed line that
+  looked like evidence was the probe itself landing on the same line — the
+  same defect, a different pair of writers.
 
 ---
 

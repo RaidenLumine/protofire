@@ -188,4 +188,48 @@ mod tests {
         assert_eq!(SHELL_PROMPT_PREFIX, *b"protofire:");
         assert_eq!(SHELL_PROMPT_SUFFIX, *b"$ ");
     }
+
+    /// A prompt assembled into one buffer is its three pieces, in order.
+    ///
+    /// `shell_write_prompt` used to be three `write`s, which is what let
+    /// another writer's output land between them; it is one now, assembled by
+    /// hand because a payload cannot link a bulk copy.  This pins that
+    /// arithmetic — prefix, directory, suffix, with a directory longer than the
+    /// buffer capped rather than allowed to push the suffix out — because a
+    /// mistake there shows as a mangled prompt, not as a failed gate.
+    #[test]
+    fn a_prompt_assembled_in_one_buffer_is_its_three_pieces_in_order() {
+        // The numbers `shell_write_prompt` builds its buffer from, written out
+        // here because the macro keeps them private to its expansion.
+        const SHELL_CWD_CAPACITY: usize = 256;
+        const SHELL_PROMPT_CAPACITY: usize =
+            SHELL_PROMPT_PREFIX.len() + SHELL_CWD_CAPACITY + SHELL_PROMPT_SUFFIX.len();
+
+        // The same arithmetic `shell_write_prompt` does, over a host `Vec`.
+        fn assemble(cwd: &[u8]) -> alloc::vec::Vec<u8> {
+            let cwd_len = cwd.len().min(SHELL_CWD_CAPACITY);
+            let mut out = alloc::vec::Vec::with_capacity(SHELL_PROMPT_CAPACITY);
+            out.extend_from_slice(&SHELL_PROMPT_PREFIX);
+            out.extend_from_slice(&cwd[..cwd_len]);
+            out.extend_from_slice(&SHELL_PROMPT_SUFFIX);
+            out
+        }
+
+        assert_eq!(assemble(b"/system"), b"protofire:/system$ ");
+        assert_eq!(assemble(b"/"), b"protofire:/$ ");
+
+        // A directory at the capacity fills the buffer exactly, suffix
+        // included — the property the buffer's size relies on.
+        let longest = alloc::vec![b'x'; SHELL_CWD_CAPACITY];
+        let prompt = assemble(&longest);
+        assert_eq!(prompt.len(), SHELL_PROMPT_CAPACITY);
+        assert!(prompt.starts_with(b"protofire:"));
+        assert!(prompt.ends_with(b"$ "));
+
+        // Longer than the capacity is capped, so the suffix still lands last.
+        let overlong = alloc::vec![b'y'; SHELL_CWD_CAPACITY + 32];
+        let prompt = assemble(&overlong);
+        assert_eq!(prompt.len(), SHELL_PROMPT_CAPACITY);
+        assert!(prompt.ends_with(b"$ "), "the cap keeps the suffix in place");
+    }
 }

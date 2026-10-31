@@ -244,13 +244,91 @@ static SHELL_FORK_CHILD: [u8; b"fork: child resumed\n".len()] = *b"fork: child r
 #[link_section = $section]
 static SHELL_FORK_FAILED: [u8; b"fork: refused\n".len()] = *b"fork: refused\n";
 
-/// Write the prompt: the shell's name, the working directory, and `$ `.
+/// Longest prompt this shell can print: the name, a working directory up to
+/// [`SHELL_CWD_CAPACITY`], and the two-byte suffix.
+const SHELL_PROMPT_CAPACITY: usize = SHELL_PROMPT_PREFIX.len() + SHELL_CWD_CAPACITY
+    + SHELL_PROMPT_SUFFIX.len();
+
+/// Copy `length` bytes from `source` to `destination`, one byte at a time.
+///
+/// A byte loop rather than a slice copy for the reason
+/// [drivers.md](../../../docs/kernel/drivers.md) gives: a bulk copy links
+/// `memcpy`, and `make check-payload-relocations` refuses a payload reference
+/// to anything outside the payload — which a payload copied to another address
+/// cannot have.
+///
+/// # Safety
+///
+/// `destination` must name `length` writable bytes and `source` `length`
+/// readable ones, both live for this call.
+#[inline(never)]
+#[link_section = $section]
+unsafe fn shell_copy_bytes(destination: usize, source: usize, length: usize) {
+    let mut index = 0usize;
+    while index < length {
+        // SAFETY: the caller's contract says `source` names `length` live
+        // readable bytes and `index` stays below `length`, so this reads one
+        // byte of that range.
+        let byte = unsafe { core::ptr::read((source.wrapping_add(index)) as *const u8) };
+        // SAFETY: as above, for `destination`: the contract says it names
+        // `length` live writable bytes.
+        unsafe { core::ptr::write((destination.wrapping_add(index)) as *mut u8, byte) };
+        index = index.wrapping_add(1);
+    }
+}
+
+/// Write the prompt — the shell's name, the working directory and `$ ` — as
+/// **one** `write`.
+///
+/// It used to be three, and the console serialises a write rather than a line,
+/// so anything printing at that moment landed between the pieces: about one
+/// boot in ten the log held `$ ring3-shell-answered` instead of the answer on a
+/// line of its own, and seven gates that require that line failed.  The answer
+/// was always complete; it was the prompt that took three writes to arrive.
+/// [drivers.md](../../../docs/kernel/drivers.md) records the defect and the
+/// three things that make this fix non-trivial in a payload — the section is
+/// executable but not writable, so the buffer is this frame's; arithmetic is
+/// `wrapping_*`, because a checked add links a panic routine; and copies are
+/// byte loops, because a bulk copy links `memcpy`.
 #[inline(never)]
 #[link_section = $section]
 fn shell_write_prompt(cwd: usize, cwd_len: usize) {
-    shell_message!(SHELL_PROMPT_PREFIX);
-    write_section_message(cwd, cwd_len);
-    shell_message!(SHELL_PROMPT_SUFFIX);
+    let mut buffer = MaybeUninit::<[u8; SHELL_PROMPT_CAPACITY]>::uninit();
+    let buffer_ptr = buffer.as_mut_ptr() as usize;
+
+    // A directory longer than the buffer is truncated rather than refused: the
+    // prompt is a hint, and a shell that will not prompt is worse than one
+    // whose path is short.
+    // The buffer is sized so the three pieces always fit exactly: capping the
+    // directory at SHELL_CWD_CAPACITY is what makes the sum equal to it, so
+    // there is no overflow case to guard and no branch that could be wrong.
+    let cwd_len = if cwd_len > SHELL_CWD_CAPACITY {
+        SHELL_CWD_CAPACITY
+    } else {
+        cwd_len
+    };
+    // The addresses are computed outside the block: `shell_address!` opens its
+    // own `unsafe` for the `asm!`, and nesting it inside this one is a block
+    // the compiler refuses.
+    let prefix = shell_address!(SHELL_PROMPT_PREFIX);
+    let suffix = shell_address!(SHELL_PROMPT_SUFFIX);
+    let mut filled = SHELL_PROMPT_PREFIX.len();
+    // SAFETY: `buffer_ptr` names SHELL_PROMPT_CAPACITY writable bytes in this
+    // frame, `cwd` names `cwd_len` readable ones the caller holds, and each
+    // copy writes within the run `filled` accounts for — which the buffer's
+    // size guarantees, because the three lengths sum to it.
+    unsafe {
+        shell_copy_bytes(buffer_ptr, prefix, SHELL_PROMPT_PREFIX.len());
+        shell_copy_bytes(buffer_ptr.wrapping_add(filled), cwd, cwd_len);
+        filled = filled.wrapping_add(cwd_len);
+        shell_copy_bytes(
+            buffer_ptr.wrapping_add(filled),
+            suffix,
+            SHELL_PROMPT_SUFFIX.len(),
+        );
+        filled = filled.wrapping_add(SHELL_PROMPT_SUFFIX.len());
+    }
+    write_section_message(buffer_ptr, filled);
 }
 
 /// Report a path a builtin could not act on: `<prefix>'<path>'`.

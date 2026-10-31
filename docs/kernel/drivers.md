@@ -166,8 +166,12 @@ time, which the prompt at the top of the shell's loop is what tells it — and
 not in the assertion, because an answer's *boundaries* are exactly what that
 check is for.
 
-What would remove the cause rather than work around it: print the prompt in one
-write.  That is not free in a demo payload.  Its section is executable but not
+What removes most of the cause rather than working around it: print the prompt
+in one write, which the payload shell does now (`shell_write_prompt`).  It took
+a boot's answer sharing its line from 3 in 10 to 1 in 10 and not to zero — the
+remaining one is the demo payload's own `key: value` line landing on the same
+line as the answer, which is the same interleaving one pair of writers over.
+That is not free in a demo payload.  Its section is executable but not
 writable, so the buffer has to be the caller's frame.  Arithmetic has to be
 `wrapping_*`, because a checked add links a panic routine.  And copies have to
 be byte loops, because a bulk copy links `memcpy` — and
