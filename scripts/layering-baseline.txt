@@ -40,6 +40,13 @@
 # Since `sync` holds only a spinlock and the mutex wrapper over it, naming it
 # is naming the bottom layer.
 #
+# `process` names `random` once, and the direction is the right one: a
+# thread's stack canary is drawn from the CSPRNG when the thread is created,
+# and a canary that were predictable would be no canary.  `random` is below
+# every other user of it — the syscall layer, TLS, DCCP all draw from it — and
+# it names only `crypto` and `sync`, so this is the leaf being used by
+# something above it rather than a layer being reached across.
+#
 # The occurrences of `drivers` naming `process` and `sync` are argued rather
 # than counted as debt: each PCIe driver owns a wait queue for its own device's
 # completion interrupt — `virtio_net` for its queues, the block driver for its
@@ -436,6 +443,7 @@ process                      memory                       24
 process                      network                      17
 process                      percpu                       12
 process                      power                        1
+process                      random                       1
 process                      security                     11
 process                      shm                          1
 process                      smp                          15

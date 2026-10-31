@@ -25,11 +25,13 @@ pub mod util;
 
 /// The `__stack_chk_guard` slot a `-C stack-protector` build links against.
 ///
-/// Exposed as an atomic so that installing a value on a context switch would
-/// be race-free — but nothing installs one, nothing checks it, and the build
-/// does not enable the protector: the per-thread canary is planned rather than
-/// wired.  See `Thread::canary`, which is initialised and never read, and
-/// `docs/kernel/process.md`.  What *is* real is the heap's block canary
+/// Exposed as an atomic because the dispatcher installs a value here on every
+/// context switch, which has to be visible to the thread that runs next.  The
+/// build does not enable `-C stack-protector`, so **nothing checks a frame
+/// against it** — the per-thread canary is generated and installed, and with
+/// the flag off that is all it does.  See `set_stack_canary`,
+/// `Thread::canary`, and `docs/status.md`.  What *is* real is the heap's block
+/// canary
 /// (`src/memory/heap/tlsf.rs`), which attributes an overrun to the allocation
 /// that caused it.
 #[allow(non_upper_case_globals)]
@@ -42,6 +44,35 @@ pub static __stack_chk_guard: core::sync::atomic::AtomicUsize =
 /// generates for `-C stack-protector` support on bare-metal targets.
 pub fn __stack_chk_guard_ptr() -> *mut usize {
     &__stack_chk_guard as *const core::sync::atomic::AtomicUsize as *mut usize
+}
+
+/// Install `canary` as the value a stack-protected function compares against.
+///
+/// Called from the dispatcher before a context switch, so the slot a running
+/// thread checks against is that thread's own.  A single global slot is what
+/// the protector's ABI gives — it reads memory at `__stack_chk_guard_ptr`
+/// rather than a register — so this is exactly as strong as the switch that
+/// installs it and no stronger: two threads on two CPUs share the slot, and
+/// what makes that sound is that neither can be running a protected function
+/// while the other is being switched to.
+pub fn set_stack_canary(canary: usize) {
+    __stack_chk_guard.store(canary, core::sync::atomic::Ordering::Release);
+}
+
+/// What a `-C stack-protector` build calls when a frame's canary did not come
+/// back.
+///
+/// The kernel aborts rather than returns: a canary that changed means the
+/// frame it belonged to was written past its end, and continuing runs code
+/// whose return address may have been written by whatever did it.  This is
+/// only ever reached by a build that enables the protector, which this one
+/// does not yet — see `docs/status.md`.
+#[no_mangle]
+pub extern "C" fn __stack_chk_fail() -> ! {
+    crate::println!("[panic ] stack canary mismatch: a frame was written past its end");
+    loop {
+        crate::arch::halt();
+    }
 }
 
 /// Result type used throughout the kernel

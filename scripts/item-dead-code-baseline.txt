@@ -64,7 +64,6 @@
 2 src/kernel/process/process/types.rs
 1 src/kernel/process/scheduler/spawn.rs
 1 src/kernel/process/thread/kernel_stack.rs
-1 src/kernel/process/thread/mod.rs
 1 src/kernel/procfs.rs
 1 src/kernel/random.rs
 1 src/kernel/smp/bringup.rs

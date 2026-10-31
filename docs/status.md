@@ -1352,12 +1352,21 @@ control that are unusual in a hobby kernel.
 
 **Weaknesses:**
 
-- **The stack canary is not wired**: the build does not enable
-  `-C stack-protector`, and `__stack_chk_guard` in `src/lib.rs` exists only so
-  that a build which did enable it would link.  `Thread::canary` is initialised
-  and never read.  The field and the link slot are both there; the check
-  between them is not.  (The heap's block canary is real and is a different
-  mechanism.)  This was listed as a strength before — a reader had no way to
+- **The stack canary is wired, and protects nothing yet.**  Both halves that
+  are this tree's to write now exist: every thread draws a value from the
+  kernel CSPRNG at creation, and the dispatcher installs it into
+  `__stack_chk_guard` before switching to that thread.  `__stack_chk_fail` is
+  defined and aborts rather than returning, because a canary that changed means
+  the frame's return address may have been written by whatever ran past its
+  end.
+
+  What is missing is the flag: the build does not pass `-C stack-protector`,
+  so **no function has a canary check and none of this is consulted**.  The
+  wiring makes enabling it a build-flag change rather than a writing one, and
+  that is all it does.  Enabling it is its own change, and it needs a
+  measurement first — the protector grows every frame, the kernel stack is a
+  fixed size, and nothing here has measured how deep the deepest path goes.
+  (The heap's block canary is real and is a different mechanism.)  This was listed as a strength before — a reader had no way to
   tell, which is what `check-docs.sh` now refuses for this document.
 - **Default allow**: until a MAC policy is loaded, the default is to allow;
   deny-by-default requires an explicit policy.

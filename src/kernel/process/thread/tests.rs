@@ -983,3 +983,48 @@ fn riscv64_nested_delivery_follows_the_two_flags() {
         "a blocked delivery leaves the outer frame where it was"
     );
 }
+
+/// Every thread gets a canary, and no two of them are the same.
+///
+/// The value is what a `-C stack-protector` frame would compare against, so
+/// two threads sharing one would make the check pass for a frame that was
+/// overwritten by the other thread's value.  `random_u64` is the kernel's
+/// CSPRNG — hardware entropy where the machine has it, RTC time and the tick
+/// count where it does not — so this also asserts the fallback produces
+/// distinct values on a host with no hardware source.
+#[test]
+fn every_thread_gets_its_own_stack_canary() {
+    let process = Process::new(230, "canary");
+    let first = Thread::new_user(process.clone(), UserThreadStart::new(0x1000, 0x2000, None));
+    let second = Thread::new_user(process.clone(), UserThreadStart::new(0x3000, 0x4000, None));
+
+    assert_ne!(
+        first.stack_canary(),
+        0,
+        "a canary of zero is the value an unwritten frame would have"
+    );
+    assert_ne!(
+        first.stack_canary(),
+        second.stack_canary(),
+        "two threads must not share the value their frames are checked against"
+    );
+}
+
+/// Installing a canary puts it where the protector's ABI reads it.
+///
+/// The slot is the global the compiler-emitted check loads from, so this is
+/// the one assertion that says the wiring reaches the place a protected
+/// function would look.
+#[test]
+fn installing_a_canary_reaches_the_protector_s_slot() {
+    let value = 0x1234_5678_9abc_def0usize;
+    crate::set_stack_canary(value);
+
+    // SAFETY: the slot is a `static` the kernel owns for its whole life, and
+    // this reads it through the same pointer the protector's ABI names.
+    let read_back = unsafe { core::ptr::read(crate::__stack_chk_guard_ptr()) };
+    assert_eq!(
+        read_back, value,
+        "the installed value must be what a frame would compare against"
+    );
+}

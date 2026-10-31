@@ -141,6 +141,13 @@ impl Scheduler {
                 continue;
             }
             next_thread.restore_context();
+            // Install this thread's canary before its code can run.  The
+            // protector's ABI reads one global slot rather than a register, so
+            // the value a frame compares against is whichever thread put it
+            // there last — and the switch is the only place that has to be
+            // true.  Nothing compares against it yet: the build does not
+            // enable `-C stack-protector`, and `docs/status.md` says so.
+            crate::set_stack_canary(next_thread.stack_canary());
             // Save the raw context pointer before moving the Arc into the
             // current slot, avoiding an unnecessary atomic refcount bump.
             let ctx_ptr = next_thread.context_ptr();

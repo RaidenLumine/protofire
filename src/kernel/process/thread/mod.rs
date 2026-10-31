@@ -107,10 +107,11 @@ pub struct Thread {
     /// Updated on each context switch from this field into the global
     /// `__stack_chk_guard`.
     ///
-    /// Kept (never read) because the per-thread canary → `__stack_chk_guard`
-    /// sync is a planned security feature that is not yet wired into the
-    /// context-switch path; it is still initialized in `thread/lifecycle.rs`.
-    #[allow(dead_code)]
+    /// Read by the dispatcher, which installs it into `__stack_chk_guard`
+    /// before switching to this thread.  Generating and installing it is the
+    /// whole of the per-thread half; the half that would use it — a build with
+    /// `-C stack-protector` — is not enabled yet, so no frame is checked
+    /// against it today.  See `docs/status.md`.
     canary: AtomicU64,
 }
 

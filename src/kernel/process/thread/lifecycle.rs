@@ -145,7 +145,13 @@ impl Thread {
             terminate_pending: AtomicBool::new(false),
             cpu_affinity: AtomicU32::new(0),
             boosted: AtomicBool::new(false),
-            canary: AtomicU64::new(0),
+            // A value no frame can predict, so a write past the end of one
+            // has to change it.  `random_u64` is the kernel's CSPRNG, which
+            // mixes this machine's hardware entropy where it has any and RTC
+            // time with the tick count where it does not — RISC-V is the
+            // latter, and the fallback is why a canary can be generated here
+            // at all.
+            canary: AtomicU64::new(crate::kernel::random::random_u64()),
         });
 
         // If process registration fails (for example process already terminated),
@@ -159,6 +165,16 @@ impl Thread {
     /// Return the thread ID.
     pub fn tid(&self) -> ThreadId {
         self.tid
+    }
+
+    /// The value this thread's stack frames would be checked against.
+    ///
+    /// The dispatcher installs it into `__stack_chk_guard` before switching
+    /// here.  Nothing reads it from a frame today, because the build does not
+    /// enable `-C stack-protector`; what this makes possible is that enabling
+    /// it is a build-flag change rather than a wiring one.
+    pub fn stack_canary(&self) -> usize {
+        self.canary.load(Ordering::Relaxed) as usize
     }
 
     /// Return the process ID this thread belongs to.
