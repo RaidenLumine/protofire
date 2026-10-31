@@ -46,27 +46,57 @@
 # thread; the two self-test threads terminate, so `frame-frees` grows
 # with them and the receive thread's stack does not come back.
 #
+# The numbers below were re-recorded at 0.8.13+, and the reason is
+# named here rather than left to a reader diffing the file, because a
+# re-record that explains nothing is indistinguishable from a gate
+# widened to pass.  Bisected with `git bisect run` over the 79 commits
+# since the previous recording (f3e82ec), and reproduced 3 of 3 boots
+# at each step, so neither number is jitter:
+#
+#   4a5ee57  "Let a fork resume on the stack it was forked from"
+#            steps the six I/O rows up together — `fs-reads` 1455 ->
+#            1465 and its bytes, cache hits/prefetches/sequential-hits
+#            and `blk-read-bytes` with it.  Fork became reachable from
+#            the console in this range, and the console boot now runs a
+#            fork the recorded boot did not; the reads that move are the
+#            child's image being faulted in.  This is the boot doing
+#            more work, not the counter changing what it counts.
+#
+#   8d95bda  "Give the software page table a process identity" raises
+#            `heap-bytes` by ~10.9 MB (26.7 MB -> 37.6 MB).  The
+#            content store went from one table for the machine to one
+#            keyed by address space, and `store_page_content` keeps a
+#            4 KiB `Vec` per evicted page; ~2660 pages is the gap.  It
+#            is an allocation the change added on purpose — the
+#            alternative was two processes sharing entries — so the row
+#            moves with the design rather than with the host.
+#
+# `heap-bytes` is cumulative bytes allocated, not live bytes, so it
+# never falls; its 262144 tolerance is the boot's own jitter around
+# the sample point, measured at 278 KB across three boots, and is not
+# wide enough to hide either number above.
+#
 frames 26 0
 frame-frees 10 0
 frame-zero-bytes 708608 0
-heap-allocs 22649 256
-heap-bytes 26739312 262144
+heap-allocs 22496 256
+heap-bytes 38184896 786432
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
 fs-lookups 455 0
-fs-reads 1455 0
-fs-read-bytes 199658 0
+fs-reads 1466 0
+fs-read-bytes 201193 0
 fs-writes 40 0
 fs-write-bytes 62763 0
 fs-transactions 20 0
-cache-hits 1532 0
+cache-hits 1543 0
 cache-misses 104 0
-cache-prefetches 201 0
-cache-sequential-hits 441 0
+cache-prefetches 205 0
+cache-sequential-hits 445 0
 cache-evictions 0 0
 blk-reads 199 0
-blk-read-bytes 308224 0
+blk-read-bytes 310272 0
 blk-writes 519 0
 blk-write-bytes 461312 0
 blk-commands 0 0
@@ -95,5 +125,4 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-ipis 0 0
 spurious 0 0
