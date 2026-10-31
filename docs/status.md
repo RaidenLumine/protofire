@@ -1696,6 +1696,10 @@ spans modules and cannot be attributed to one of them.
   driven by `.github/workflows/fuzz.yml`. What is still missing is a corpus
   persisted across runs, so each nightly start is from the seedless mutator
   rather than from everything the previous runs found.
-- **No release has been made yet**: the artifacts are reproducible and gated,
-  and `make release` builds and signs them, but no tagged 1.x release exists
-  and no key record has been published (see the roadmap).
+- **No 1.x release has been made, and no key record has been published**:
+  the artifacts are reproducible and gated, `make release` builds and signs
+  them, and every release since `v0.8.1` is tagged — `v0.8.13` is the newest,
+  with four signed artifacts under `dist/0.8.13/` and a `SHA256SUMS`.  What
+  does not exist is a 1.x line and a key record a stranger could fetch to
+  check a signature against; until one is published, `make release` is a
+  procedure this tree runs rather than a thing anybody outside can verify.
