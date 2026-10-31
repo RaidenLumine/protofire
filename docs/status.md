@@ -352,9 +352,35 @@ PBKDF2 primitives.
   views and whatever a `FuseMount` adds.
 - **Unicode 15.1**: full NFC/NFD normalization and a GB18030 codec.
 - **Crash safety**: SimpleFs uses undo-log transactions and two-phase commit.
-- **Encryption at rest, unwired**: `EncryptedBlockDevice` wraps a block device
-  in AES-256 XTS and the LUKS2 parser recovers a key with PBKDF2, but nothing
-  constructs either and no mount is encrypted.
+- **Encryption at rest, unwired — and the LUKS2 unwrap does not work.**
+  `EncryptedBlockDevice` wraps a block device in AES-256 XTS, and that half is
+  sound: the cipher is NIST-vector tested and the device encrypts a sector at a
+  time with the LBA as tweak.  Nothing constructs it, so no mount is encrypted.
+  The other half, `luks2_open`, **cannot open a volume `cryptsetup` wrote.**  A
+  real volume was made to ask (`cryptsetup luksFormat --type luks2 --pbkdf
+  pbkdf2 --key-size 512`) and the function answered `InvalidCredential`.
+
+  Three things were established against that volume before the trail went cold:
+
+  - the digest is taken over the **whole** master key, and the code took its
+    first 32 bytes — fixed, with `a_digest_is_over_the_whole_master_key_not_its_first_half`
+    pinning the model (not the call: see the test's own note);
+  - the keyslot area is itself AES-XTS encrypted and must be decrypted before
+    `AF_merge`, which this code does not do at all;
+  - `af_merge` implements an algorithm that is not LUKS's — its own comment
+    describes "XOR the hash of the previous stripe into the current one",
+    where cryptsetup folds each stripe into a running buffer and diffuses
+    after every fold.
+
+  So the unwrap is wrong at the model level, not at a parameter.  An exhaustive
+  search over the parameters that were left open (the area's starting sector,
+  the AF block size, the diffuse IV's byte order) recovered nothing, which is
+  what says "model" rather than "value".  Rewriting it needs a reference to
+  work against, and `cryptsetup` is now installed here, so the next attempt has
+  one: the volume is reproducible, `luksdump --dump-master-key` gives the
+  answer to compare against, and the digest is the oracle.  What is missing is
+  reading `lib/luks2/luks2.h` for the constants `AF_merge` is called with
+  rather than deriving them.
 - **Read-only is structural**: the synthetic filesystems (`/proc`, `/service`)
   implement the VFS `ReadOnlyFileSystem` half, and one blanket impl supplies
   every mutation as `PermissionDenied` — a view cannot declare a mutation, so

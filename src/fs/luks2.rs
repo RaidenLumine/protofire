@@ -570,19 +570,15 @@ pub fn luks2_open(device: Arc<dyn BlockDevice>, passphrase: &[u8]) -> Result<Enc
     }
 
     // Compute expected digest: PBKDF2(master_key, digest.salt, digest.iterations)
-    let check = pbkdf2_hmac_sha256(
-        &xts_key[..xts_key_size.min(32)],
-        &digest.salt,
-        digest.iterations,
-        digest.digest.len(),
-    );
-
-    // Constant-time comparison.
-    let mut diff: u8 = 0;
-    for (a, b) in check.iter().zip(digest.digest.iter()) {
-        diff |= a ^ b;
-    }
-    if diff != 0 {
+    //
+    // The whole master key, not its first half.  This used to take
+    // `xts_key[..min(32)]`, which is the *data* key of a 512-bit XTS pair and
+    // half of a 256-bit one; the digest is taken over the key the volume
+    // stores, and a volume `cryptsetup` wrote shows the difference at once:
+    // `PBKDF2(full key, salt)` reproduces the digest and `PBKDF2(first 32)`
+    // does not.  Measured against a volume made with
+    // `cryptsetup luksFormat --pbkdf pbkdf2 --key-size 512`.
+    if !digest_matches_key(&xts_key[..xts_key_size], &digest) {
         return Err(Error::InvalidCredential);
     }
 
@@ -612,9 +608,70 @@ pub fn luks2_open(device: Arc<dyn BlockDevice>, passphrase: &[u8]) -> Result<Enc
     ))
 }
 
+/// Whether `key` is the master key a digest was taken over.
+///
+/// A named function so the model can be tested without a volume: the digest
+/// is PBKDF2 over the **whole** key the volume stores, and the comparison is
+/// constant-time because a caller controls the passphrase and a timing
+/// difference here is an oracle.
+fn digest_matches_key(key: &[u8], digest: &DigestParams) -> bool {
+    let check = pbkdf2_hmac_sha256(key, &digest.salt, digest.iterations, digest.digest.len());
+    let mut diff: u8 = 0;
+    for (a, b) in check.iter().zip(digest.digest.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A LUKS2 digest is taken over the whole master key.
+    ///
+    /// This is the one stage of an unwrap whose answer can be checked
+    /// without a volume to hand: `cryptsetup luksDump --dump-master-key`
+    /// prints the key, and the digest in the metadata is that key put
+    /// through PBKDF2.  The parameters here are from a volume made with
+    /// `cryptsetup luksFormat --pbkdf pbkdf2 --pbkdf-force-iterations 1000
+    /// --key-size 512`, and the assertion that matters is the second one:
+    /// the first 32 bytes of the key do *not* reproduce the digest, which
+    /// is what the code used to take.
+    ///
+    /// What this does not cover: the caller's choice of slice.  `luks2_open`
+    /// decides how much of `xts_key` to pass, and a mutation that passes half
+    /// of it from there still leaves this test green — the assertion below is
+    /// about the model, not about the call.  Pinning the call needs a volume,
+    /// which is what `check-luks2-image` is for.
+    #[test]
+    fn a_digest_is_over_the_whole_master_key_not_its_first_half() {
+        let master: [u8; 64] = [
+            0x55, 0xd8, 0xe9, 0x53, 0x4d, 0x9d, 0x75, 0x32, 0xfd, 0x82, 0x4b, 0xab, 0xcc, 0xf4,
+            0x33, 0x44, 0x6d, 0x72, 0x54, 0x00, 0x76, 0x1f, 0x13, 0x15, 0x1f, 0x1a, 0x55, 0xb8,
+            0x86, 0x4b, 0x7b, 0x4a, 0x6f, 0x26, 0x95, 0xbd, 0x18, 0xf8, 0x99, 0x97, 0xd6, 0x1d,
+            0x2d, 0x0b, 0x6a, 0xc8, 0x47, 0xa1, 0xe5, 0xa4, 0xeb, 0xa3, 0xf4, 0x60, 0xd7, 0xe1,
+            0x95, 0x3c, 0x71, 0xce, 0x0d, 0x6b, 0xdb, 0x50,
+        ];
+        let salt = base64_decode(b"WZquuQNQ9EZdtLv/H2w1Jb7vGb48BiaB0FQ4ZaVFGno=").expect("salt");
+        let expected =
+            base64_decode(b"qmQQjGXZlCpnQtBqOlpEuyaNOYn6hJbCynu+acbxx7Y=").expect("digest");
+
+        let digest = DigestParams {
+            salt,
+            iterations: 1000,
+            digest: expected.clone(),
+            hash: alloc::string::String::from("sha256"),
+        };
+
+        assert!(
+            super::digest_matches_key(&master, &digest),
+            "the whole master key reproduces the digest the volume carries"
+        );
+        assert!(
+            !super::digest_matches_key(&master[..32], &digest),
+            "and its first half does not — which is what the old code used"
+        );
+    }
 
     #[test]
     fn base64_decode_roundtrip() {
