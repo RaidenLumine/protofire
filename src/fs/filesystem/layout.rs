@@ -364,3 +364,42 @@ pub(crate) fn carries_luks2_header(device: &dyn BlockDevice) -> bool {
     }
     sector[..6] == crate::fs::luks2::LUKS2_MAGIC
 }
+
+/// Whether any zone on `disk` carries a LUKS2 header.
+///
+/// Asked before the mount so a boot knows whether to ask for a passphrase at
+/// all, and answered from the same bytes the mount will read: the partition
+/// table's zone extents, each probed at its first sector.  A disk with no
+/// partition table is probed at the fixed offsets, because that is where its
+/// zones are.
+///
+/// A read error answers "no" for that zone and the search continues, which is
+/// the same answer the mount gives: the zone is then read as it lies and the
+/// filesystem's own parser reports what is wrong with it.
+pub fn disk_carries_encrypted_zone(disk: &dyn BlockDevice) -> bool {
+    let Ok(Some(table)) = read_partitions(disk) else {
+        // No table: the fixed offsets are the disk's zones.
+        return DEFAULT_ZONES
+            .iter()
+            .any(|zone| zone_carries_luks2(disk, zone.disk_range()));
+    };
+
+    DEFAULT_ZONES.iter().any(|zone| {
+        let mut found = false;
+        for (_, partition) in table.zone_partitions(*zone) {
+            if zone_carries_luks2(disk, (partition.start_block, partition.block_count)) {
+                found = true;
+            }
+        }
+        found
+    })
+}
+
+/// Whether the extent at `(start_block, _)` starts with the LUKS2 magic.
+fn zone_carries_luks2(disk: &dyn BlockDevice, (start_block, _): (u64, u64)) -> bool {
+    let mut sector = [0u8; crate::fs::block::BLOCK_SIZE];
+    if disk.read_blocks(start_block, &mut sector).is_err() {
+        return false;
+    }
+    sector[..6] == crate::fs::luks2::LUKS2_MAGIC
+}

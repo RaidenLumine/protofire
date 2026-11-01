@@ -70,6 +70,15 @@ struct ConsoleState {
     cooked: VecDeque<u8>,
     escape_state: EscapeState,
     history_index: i32,
+    /// Characters typed are collected but not echoed back.
+    ///
+    /// Set while a passphrase is being read and cleared the moment it is in.
+    /// What it protects is the *screen*: the console serialises a write and
+    /// nothing else, so a passphrase echoed by this state machine lands in
+    /// whatever is reading the serial line — a log file, a terminal someone
+    /// else can see, a console server.  It does not protect the bytes in this
+    /// buffer and cannot: the kernel has to hold the passphrase to use it.
+    secret_input: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -232,6 +241,10 @@ impl ConsoleState {
                 self.edit_line.clear();
                 self.edit_echo_widths.clear();
                 self.history_index = 0;
+                // The newline is echoed even for a secret line: the reader
+                // needs to know the input was taken, and a bare newline says
+                // that without saying what was on the line.  The characters
+                // themselves were never written — see the return arms below.
                 let mut result = ConsoleFeedResult::with_echo(b"\r\n");
                 result.cooked_bytes = flushed;
                 result
@@ -240,7 +253,15 @@ impl ConsoleState {
                 // Backspace/delete edits only the pending line, never cooked bytes.
                 if self.edit_line.pop().is_some() {
                     let columns = self.edit_echo_widths.pop().unwrap_or(1) as usize;
-                    ConsoleFeedResult::with_backspace_echo(columns)
+                    if self.secret_input {
+                        // Nothing was written for the character, so there is
+                        // nothing to erase.  `\x08 \x08` here would move the
+                        // cursor over text the console never printed and eat
+                        // whatever else is on that line.
+                        ConsoleFeedResult::default()
+                    } else {
+                        ConsoleFeedResult::with_backspace_echo(columns)
+                    }
                 } else {
                     ConsoleFeedResult::default()
                 }
@@ -277,6 +298,9 @@ impl ConsoleState {
                 if self.edit_line.len() < MAX_EDIT_LINE {
                     self.edit_line.push(b'\t');
                     self.edit_echo_widths.push(TAB_ECHO_COLUMNS as u8);
+                    if self.secret_input {
+                        return ConsoleFeedResult::default();
+                    }
                     let mut result = ConsoleFeedResult::default();
                     result.echoed[..TAB_ECHO_COLUMNS].fill(b' ');
                     result.echoed_len = TAB_ECHO_COLUMNS;
@@ -289,6 +313,9 @@ impl ConsoleState {
                 if self.edit_line.len() < MAX_EDIT_LINE {
                     self.edit_line.push(character as u8);
                     self.edit_echo_widths.push(1);
+                    if self.secret_input {
+                        return ConsoleFeedResult::default();
+                    }
                     ConsoleFeedResult::with_echo(&[character as u8])
                 } else {
                     ConsoleFeedResult::default()
@@ -636,6 +663,41 @@ impl ConsoleTty {
         )
     }
 
+    /// Turn echo off, or back on, for everything that reaches this console.
+    ///
+    /// This is the switch that matters for a passphrase, and it is deliberately
+    /// wider than the read that uses it.  A character typed at the serial port
+    /// does not only reach the reader that asked for it: `poll_hardware_rx`
+    /// feeds every byte it takes to this console as well, so the echo comes
+    /// from *this* path whatever the reader does.  Measured — the first version
+    /// suppressed echo inside the read loop alone and the passphrase still
+    /// appeared in the boot log, because the console had already echoed it.
+    ///
+    /// While this is on, characters are still collected and lines still reach
+    /// the reader; only the write back to the console stops.
+    pub fn set_secret_input(&self, secret: bool) {
+        self.state.lock().secret_input = secret;
+    }
+
+    /// Whether echo is off.
+    pub fn secret_input(&self) -> bool {
+        self.state.lock().secret_input
+    }
+
+    /// Throw away the characters waiting to be read, not the output.
+    ///
+    /// Used after a secret line has been taken: the same bytes were also fed
+    /// to this console, and a program that starts later would read them as its
+    /// own first line.  `clear` is the wrong tool here — it resets the escape
+    /// state and the history index as well, which is more than "forget what
+    /// was typed".
+    fn drop_pending_input(&self) {
+        let mut state = self.state.lock();
+        state.cooked.clear();
+        state.edit_line.clear();
+        state.edit_echo_widths.clear();
+    }
+
     pub fn write_bytes(&self, bytes: &[u8]) -> usize {
         if bytes.is_empty() {
             return 0;
@@ -643,6 +705,81 @@ impl ConsoleTty {
 
         debug::write_bytes(bytes);
         bytes.len()
+    }
+
+    /// Read one line without echoing it, polling the port.
+    ///
+    /// Polling rather than waiting on this console's ready event, because the
+    /// one caller runs during kernel initialisation: the filesystem has to
+    /// know the passphrase before it mounts a zone, and that is before the
+    /// scheduler exists for a waiter to park on.  The port's own receive
+    /// register is what is polled, so nothing here needs an interrupt.
+    ///
+    /// The characters are not echoed and the line is not put in `cooked`; what
+    /// comes back is the string alone.  See [`ConsoleState::secret_input`] for
+    /// what that does and does not protect.
+    ///
+    /// There is no bound on the wait, and that is a decision rather than an
+    /// omission: a boot that times out here would go on to mount a zone it
+    /// could not open, and the machine someone is standing in front of would
+    /// report a failed passphrase instead of waiting for them to type it.  What
+    /// stops a boot nobody types at is the same thing that stops any other
+    /// wait — the operator resets the machine.
+    pub fn read_secret_line_polling(&self) -> Option<String> {
+        let mut line = Vec::new();
+
+        // Ask the console to stop echoing, and put it back however this ends.
+        // The flag is what suppresses the echo, and it has to be set here
+        // rather than relied on by the caller: every byte this loop reads has
+        // already been through `handle_input_byte`, so the console has
+        // *already* echoed it by the time the byte arrives below.
+        self.set_secret_input(true);
+        struct RestoreEcho<'a>(&'a ConsoleTty);
+        impl Drop for RestoreEcho<'_> {
+            fn drop(&mut self) {
+                self.0.set_secret_input(false);
+            }
+        }
+        let _restore = RestoreEcho(self);
+
+        loop {
+            let Some(byte) = crate::drivers::serial::try_read_byte() else {
+                core::hint::spin_loop();
+                continue;
+            };
+            match byte {
+                b'\r' | b'\n' => {
+                    // The same bytes reached this console's own input queue,
+                    // because `poll_hardware_rx` feeds both it and the port
+                    // queue this loop reads.  Left there they are a line the
+                    // *shell* will read and run as a command — measured, the
+                    // passphrase arrived at the shell as
+                    // `unknown command: protofire-zone-passphrase`.  Only the
+                    // secret line is dropped: `clear` would also throw away
+                    // whatever else was pending, which here is the kernel's own
+                    // output — measured, it ate the middle of a log line and
+                    // the check that reads that line never saw it.
+                    self.drop_pending_input();
+                    // The newline is written even though the line is not, so
+                    // whoever is typing sees the input was taken.
+                    let _ = self.write_bytes(b"\r\n");
+                    return core::str::from_utf8(&line).ok().map(String::from);
+                }
+                // Backspace and delete edit the line and write nothing: there
+                // is no echo to erase, and `\x08 \x08` would move the cursor
+                // over text this console never printed.
+                0x08 | 0x7f => {
+                    line.pop();
+                }
+                byte if (byte.is_ascii_graphic() || byte == b' ') && line.len() < MAX_EDIT_LINE => {
+                    line.push(byte);
+                }
+                // Every other byte is dropped rather than stored: a passphrase
+                // is printable ASCII, and a control byte that got in would be
+                // one the prompt could never show.
+                _ => {}
+            }
+        }
     }
 
     pub fn feed_input_char(&self, character: char) -> usize {
@@ -740,6 +877,15 @@ pub fn handle_input_char(character: char) {
 /// ASCII, whitespace, backspace, tab) are forwarded; all other byte values
 /// are silently dropped.  This keeps the path safe to call from hardware
 /// polling contexts such as the serial RX poll in the timer tick.
+/// Whether the console is asking for a secret and nothing may be echoed.
+///
+/// Asked by the serial bridge: bytes that arrive while a passphrase is being
+/// read are that passphrase, and bridging them into the console's input would
+/// give them to whoever reads it next.
+pub fn secret_input() -> bool {
+    global().is_some_and(|console| console.secret_input())
+}
+
 pub fn handle_input_byte(byte: u8) {
     // Forward bytes that the console line discipline knows how to
     // interpret — feed_char already silently ignores unrecognised chars.
@@ -772,4 +918,73 @@ pub fn read_line_timeout(timeout_ticks: u64) -> Option<String> {
 
 pub fn write_bytes(bytes: &[u8]) -> usize {
     init_global().write_bytes(bytes)
+}
+
+#[cfg(test)]
+mod secret_input_tests {
+    use super::*;
+
+    /// A secret line is not written back, character by character.
+    ///
+    /// The echo is what makes a typed passphrase readable in a serial log, and
+    /// this is the assertion that the characters stop at the buffer.  It is
+    /// tested at `feed_char` rather than at the polling reader because that is
+    /// where the echo is produced: the reader that types at a boot does not go
+    /// through this state machine at all, and a test of it would pin the
+    /// reader's own bytes and nothing about the console's echo.
+    #[test]
+    fn a_secret_line_echoes_no_characters() {
+        let mut state = ConsoleState {
+            secret_input: true,
+            ..Default::default()
+        };
+
+        for byte in b"hunter2" {
+            let result = state.feed_char(*byte as char);
+            assert_eq!(
+                result.echoed_bytes(),
+                b"",
+                "a secret character must not be echoed"
+            );
+        }
+
+        // The newline still comes back: the reader has to know the input was
+        // taken, and a bare newline says that without saying what was on it.
+        let committed = state.feed_char('\r');
+        assert_eq!(committed.echoed_bytes(), b"\r\n");
+        assert_eq!(
+            committed.cooked_bytes, 8,
+            "seven characters and the newline reach the reader"
+        );
+    }
+
+    /// A secret line's backspace erases nothing, because nothing was written.
+    ///
+    /// `\x08 \x08` moves the cursor over text the console never printed, which
+    /// on a shared serial line eats whatever the other writer put there.
+    #[test]
+    fn a_secret_backspace_writes_nothing() {
+        let mut state = ConsoleState {
+            secret_input: true,
+            ..Default::default()
+        };
+        state.feed_char('a');
+        let erased = state.feed_char('\u{0008}');
+        assert_eq!(
+            erased.echoed_bytes(),
+            b"",
+            "there is no echo to erase, so nothing may be written"
+        );
+    }
+
+    /// The same line echoes normally once the flag is cleared.
+    ///
+    /// The other half of the switch: what makes the first test about the flag
+    /// rather than about a console that never echoes anything.
+    #[test]
+    fn an_ordinary_line_still_echoes() {
+        let mut state = ConsoleState::default();
+        let result = state.feed_char('a');
+        assert_eq!(result.echoed_bytes(), b"a");
+    }
 }

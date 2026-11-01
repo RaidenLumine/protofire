@@ -240,6 +240,15 @@ impl SerialDevice {
         // when there is no PS/2 keyboard hardware, e.g. QEMU with -display none
         // and -serial stdio.
         for &byte in &console_bytes {
+            if console::secret_input() {
+                // A passphrase is being asked for, and these bytes are part of
+                // it: they reached `console_bytes` on their way to the port
+                // queue the reader drains, and bridging them here puts the same
+                // line in the shell's input.  Suppressing the echo alone is not
+                // enough — measured, the shell ran the passphrase as
+                // `unknown command` and the boot log carried it twice.
+                break;
+            }
             console::handle_input_byte(byte);
         }
 

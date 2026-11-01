@@ -229,24 +229,7 @@ impl Kernel {
         // found.
         crate::kernel::device::log_device_records();
         let boot_disk = self.drivers.boot_disk();
-        // `crypt=` names the passphrase an encrypted zone is opened with, and
-        // it is read here rather than later because this is where the zones
-        // are mounted: the passphrase has to be known before the first zone's
-        // device is wrapped, and the filesystem has no second chance.
-        //
-        // The value is announced without itself — a boot that says "a
-        // passphrase was given" is checkable, and a boot that prints the
-        // passphrase hands it to whoever reads the console.  `docs/status.md`
-        // records that a command-line passphrase is visible to the loader and
-        // to anything logging the console, which is why this is a first step
-        // rather than a recommendation.
-        if let Some(command_line) = crate::arch::boot::boot_command_line() {
-            if let Some(passphrase) = crate::arch::boot::command_line_option(&command_line, "crypt")
-            {
-                self.fs.lock().set_crypt_passphrase(passphrase);
-                println!("[fs    ] a crypt= passphrase was given for the encrypted zones");
-            }
-        }
+        self.obtain_crypt_passphrase(boot_disk.as_ref());
         self.fs.lock().init_with_boot_disk(boot_disk);
         let t3 = tick();
         boot.record_subsystem(
@@ -657,6 +640,83 @@ impl Kernel {
 
         self.initialized = true;
         println!("protofire kernel initialized");
+    }
+
+    /// Ask for the passphrase an encrypted zone is opened with, if one is
+    /// needed and this boot can ask.
+    ///
+    /// Three answers, in the order that makes them distinguishable:
+    ///
+    /// 1. **No zone is encrypted.**  Nothing is asked, because a prompt nobody
+    ///    needs is a boot that stopped for nothing.  The question is put to the
+    ///    medium — the same LUKS2 magic check the mount makes — rather than to
+    ///    a setting, so a disk is what it says it is.
+    /// 2. **`crypt=` was given.** It is used and the fact is announced without
+    ///    the value.  This stays because a machine whose console is not
+    ///    readable from where it boots still has to come up, and because the
+    ///    checks below feed a passphrase more readily this way than by typing.
+    ///    `docs/status.md` records what it does not protect.
+    /// 3. **A zone is encrypted and nothing was given.** The console is asked,
+    ///    with echo off.  This is the path that protects the passphrase from
+    ///    the log: what is typed is never written back, so the only copy is the
+    ///    one the kernel holds.
+    ///
+    /// It runs *before* the filesystem mounts and therefore before the
+    /// scheduler: the read polls the serial port rather than parking a waiter,
+    /// which is why `read_secret_line_polling` exists.
+    fn obtain_crypt_passphrase(
+        &self,
+        boot_disk: Option<&alloc::sync::Arc<dyn crate::fs::block::BlockDevice>>,
+    ) {
+        let command_line = crate::arch::boot::boot_command_line();
+        let given = command_line.as_ref().and_then(|line| {
+            crate::arch::boot::command_line_option(line, "crypt").map(alloc::string::String::from)
+        });
+
+        if let Some(passphrase) = given {
+            self.fs.lock().set_crypt_passphrase(&passphrase);
+            println!("[fs    ] a crypt= passphrase was given for the encrypted zones");
+            return;
+        }
+
+        // Nothing was given.  Ask only if there is something to unlock: a
+        // prompt on an unencrypted machine is a boot that stopped for nothing,
+        // and this is the answer the medium can give without a passphrase.
+        let Some(disk) = boot_disk else {
+            return;
+        };
+        if !crate::fs::filesystem::layout::disk_carries_encrypted_zone(disk.as_ref()) {
+            return;
+        }
+
+        // Echo is turned off *before* the prompt, not when the read begins.
+        // The line just printed is the guest's word that it wants a passphrase,
+        // and an answer can arrive between that write and the first read: with
+        // the flag set inside the read alone, a fast typist's first bytes were
+        // echoed and reached the shell — measured, 1 of 2 runs.
+        let console = crate::kernel::console::global();
+        if let Some(console) = console.as_ref() {
+            console.set_secret_input(true);
+        }
+        println!("[fs    ] an encrypted zone is present; the passphrase is not echoed");
+        while let Some(passphrase) = console
+            .as_ref()
+            .and_then(|console| console.read_secret_line_polling())
+        {
+            if passphrase.is_empty() {
+                // An empty line is not a passphrase: LUKS2 cannot be unlocked
+                // with one, so it is treated as "not yet" rather than as an
+                // attempt.  Saying so is what tells someone their keypresses
+                // arrived.
+                println!("[fs    ] empty passphrase; try again");
+                continue;
+            }
+            self.fs.lock().set_crypt_passphrase(&passphrase);
+            if let Some(console) = console.as_ref() {
+                console.set_secret_input(false);
+            }
+            return;
+        }
     }
 
     /// Initialize the NUMA topology from the table this machine keeps its

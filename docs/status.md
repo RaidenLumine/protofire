@@ -365,12 +365,31 @@ PBKDF2 primitives.
   keyslot area outright.  The zone keeps 512 blocks of payload, which is what
   it was before.
 
-  **The passphrase is not protected.**  It arrives on the boot command line,
-  which lives in the loader's configuration and, on a serial console, in
-  whatever logged that line; the boot prints that it was given without
-  printing it.  This makes the mechanism reachable from a boot; closing the
-  exposure needs a prompt with echo off or a key the kernel derives rather
-  than reads.
+  **The passphrase is asked for with echo off.**  When a zone is encrypted and
+  no `crypt=` was given, the boot prints a prompt and reads a line without
+  echoing it, so the answer never reaches the serial log.  That is asserted
+  rather than assumed: `check-luks2-zone` requires the passphrase to be
+  *absent* from the log it captures, and the capture is a socket the kernel
+  writes to rather than a terminal — with `-serial stdio` the terminal echoes
+  what is typed, so the check could not tell the kernel's echo from the
+  transport's, which is the one thing it has to tell apart.
+
+  Three things had to be right for that, and the first two were measured as
+  leaks before they were fixed:
+
+  * the console's echo has to be off *before* the prompt, not when the read
+    begins, because an answer can arrive between the prompt's write and the
+    first read — 1 of 2 runs leaked the first bytes with the flag set later;
+  * the serial bridge has to stop feeding the console while a secret is being
+    read.  Every byte reaches the console on its way to the port queue the
+    reader drains, and bridging them there gave the shell the passphrase as
+    `unknown command`;
+  * the line is dropped from the console's pending input once read, for the
+    same reason: what is left there is the next program's first command.
+
+  `crypt=` still works and is still honoured first, because a machine whose
+  console is not readable from where it boots has to come up.  It is the
+  caller's decision, and the boot says which one it took.
 
   Getting there needed four corrections, each measured against a real volume
   rather than argued:
@@ -446,7 +465,7 @@ PBKDF2 primitives.
 | AES-256 + AES-XTS | Crypto engine in the kernel | No hardware acceleration path |
 | PBKDF2 key derivation | Key stretching for disk encryption | One KDF; no Argon2 or keyring |
 | EncryptedBlockDevice | Transparent block-device wrapper under any filesystem | Nothing constructs one; no rekey or key rotation; one key per device |
-| LUKS2 header parser | LUKS2 header parsing, keyslot-area XTS decryption and `luks2_open` key recovery — it opens a volume `cryptsetup` wrote (`make check-luks2-image`), and a boot opens a zone through it when `crypt=` names a passphrase | The passphrase comes from the command line, so it is not protected; no keyslot management or `cryptsetup`-style control surface |
+| LUKS2 header parser | LUKS2 header parsing, keyslot-area XTS decryption and `luks2_open` key recovery — it opens a volume `cryptsetup` wrote (`make check-luks2-image`), and a boot opens an encrypted `/data` through it, asking for the passphrase with echo off unless `crypt=` supplied one (`make check-luks2-zone`) | No keyslot management or `cryptsetup`-style control surface; the passphrase is not written down anywhere, but it is not derived from a key the kernel was given either |
 
 ---
 

@@ -30,7 +30,7 @@ CRYPTSETUP="${CRYPTSETUP:-cryptsetup}"
 PROFILE="${PROFILE:-debug}"
 CRATE="${CRATE:-protofire}"
 TARGET_DIR="${TARGET_DIR:-target}"
-TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-30}"
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-90}"
 PASSPHRASE="protofire-zone-passphrase"
 IMAGE="$TARGET_DIR/luks2-zone-disk.img"
 LOG="$TARGET_DIR/luks2-zone-boot.log"
@@ -86,8 +86,8 @@ python3 scripts/luks2-encrypt-payload.py \
 dd if="$volume" of="$IMAGE" bs=512 seek="$data_offset" count="$data_blocks" \
     oflag=seek_bytes conv=notrunc status=none
 
-# The boot.  `crypt=` carries the passphrase; everything else is the demo
-# machine.  The kernel is built with the features a runtime check uses.
+# The boot, with no `crypt=` on the command line: the passphrase is asked for
+# and typed.  Everything else is the demo machine.
 "$CARGO" build --offline --target x86_64-unknown-none --bin "$CRATE" \
     --features "demo-disk" >/dev/null
 
@@ -97,31 +97,115 @@ if [ "$PROFILE" = "release" ]; then
         --bin "$CRATE" --features "demo-disk" >/dev/null
 fi
 
-# The console is two-way here for the same reason the runtime check's is: the
-# shell is where a *file* gets read, and a boot by itself only shows that the
-# zone mounted.  `cat` of a file that exists only inside the encrypted payload
-# is the read that crosses the header, the keyslot, the payload offset and
-# AES-XTS — the mount alone would hold if the device returned zeros.
-shell_commands() {
-    # The feeder, not a `printf`: a line typed before the shell is reading is
-    # the guest's to drop, and it drops the *front* of it — measured here as
-    # `c/shared/note.txt`, which the shell read as an unknown command.  The
-    # feeder waits for the banner and then for the prompt, so the command
-    # arrives when there is something to read it.
-    sh ./scripts/feed-shell-console.sh "$LOG" "$TIMEOUT_SECONDS" \
-        'cat /data/public/shared/note.txt'
-}
+# The console is two-way, and both halves matter here: the passphrase is typed
+# at a boot-time prompt, and the file is read at the shell.  This is the gate
+# for the *protected* path — no `crypt=`, so the kernel asks and the answer
+# never reaches a log.
+#
+# The typing is a schedule rather than a prompt-reader, and it has to be: the
+# passphrase prompt appears while the filesystem is initialising, before the
+# shell exists and before there is anything for `feed-shell-console.sh` to wait
+# for.  The delays are what make that work, which is the shape this check
+# would rather not have — a slower host could type too early.  It is measured
+# rather than assumed: the boot prints its prompt before the read, and the
+# check requires that line, so a run that typed too early fails rather than
+# passing on a fallback.
+# One socket, both directions, and the log is written from what comes *out* of
+# it.  That is the point of not using `-serial stdio`: a terminal echoes what
+# is typed, so the passphrase would appear in the captured log whether or not
+# the kernel echoed it, and this check could not tell the two apart — which is
+# the one thing it exists to tell apart.  Here a byte in `$LOG` is a byte the
+# kernel wrote.
+sock="$TARGET_DIR/luks2-zone.sock"
+rm -f "$sock"
+# Truncated, not appended: the log is this run's, and an earlier run's lines
+# are lines this check would assert on.  Measured — a leak fixed in one change
+# kept failing the check that looks for it, because the record of the run
+# before was still there.
+: >"$LOG"
+
+python3 - "$sock" "$LOG" "$PASSPHRASE" "$TIMEOUT_SECONDS" <<'PYEOF' &
+import socket
+import sys
+import time
+
+path, log, passphrase, timeout = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+deadline = time.monotonic() + timeout
+
+
+def connect():
+    for _ in range(timeout):
+        try:
+            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            connection.connect(path)
+            return connection
+        except (FileNotFoundError, ConnectionRefusedError):
+            time.sleep(1)
+    return None
+
+
+connection = connect()
+if connection is None:
+    print("could not connect to the console socket", file=sys.stderr)
+    sys.exit(1)
+connection.settimeout(1)
+
+seen = b""
+sent_passphrase = False
+sent_command = False
+
+
+def drain():
+    """Read whatever the kernel has written into the log the assertions read."""
+    global seen
+    try:
+        chunk = connection.recv(8192)
+    except socket.timeout:
+        return
+    except OSError:
+        return
+    if not chunk:
+        return
+    seen += chunk
+    # Appended, not rewritten: the earlier version held the whole stream and
+    # wrote it back every time, which is a read-modify-write on a file nothing else
+    # guards and truncated bytes on the runs where it interleaved with the
+    # boot's own writes — measured as "the pssphrase is not echoed".
+    with open(log, "ab") as handle:
+        handle.write(chunk)
+
+
+while time.monotonic() < deadline:
+    drain()
+    if not sent_passphrase and b"the passphrase is not echoed" in seen:
+        connection.sendall(passphrase.encode() + b"\n")
+        sent_passphrase = True
+    # The shell's prompt is what says the zone opened: the shell starts only
+    # after the mount succeeded.
+    if sent_passphrase and not sent_command and b"protofire:" in seen:
+        connection.sendall(b"cat /data/public/shared/note.txt\n")
+        sent_command = True
+    # Keep reading after the command: the assertions are about output that
+    # arrives later, and stopping now would truncate it.
+    time.sleep(0.2)
+
+drain()
+connection.close()
+PYEOF
+session_pid=$!
 
 set +e
-shell_commands | timeout "${TIMEOUT_SECONDS}s" qemu-system-x86_64 \
+timeout "${TIMEOUT_SECONDS}s" qemu-system-x86_64 \
     -machine q35 -cpu max -smp 1 -m 1G \
     -drive file="$IMAGE",if=none,id=disk0,format=raw \
     -device nvme,drive=disk0,serial=protofire \
-    -append "crypt=$PASSPHRASE" \
     -kernel "$kernel_bin" \
     -display none -no-reboot -no-shutdown \
-    -serial stdio >"$LOG" 2>>"$LOG"
+    -chardev "socket,id=c0,path=$sock,server=on,wait=off" \
+    -serial chardev:c0 >/dev/null 2>&1
 status=$?
+# The reader has its own budget; a boot that failed ends the loop early.
+wait "$session_pid" 2>/dev/null
 set -e
 
 case "$status" in
@@ -141,7 +225,18 @@ require_line() {
     fi
 }
 
-require_line "\[fs    \] a crypt= passphrase was given"
+require_line "\[fs    \] an encrypted zone is present; the passphrase is not echoed"
+
+# The passphrase never reaches the log.  This is the whole point of the echoed
+# prompt being a prompt: an answer that is written back is an answer in a file
+# someone else can read, and a check that only asserted on the *unlock* would
+# pass just as happily with every character echoed.  Counted rather than
+# grepped, because the console echoes a character per write and a match could
+# share a line with anything.
+if tr -d '\r' <"$LOG" | grep -aqF -- "$PASSPHRASE"; then
+    printf 'the passphrase appears in the boot log, which is what echo-off is for\n' >&2
+    exit 1
+fi
 require_line "\[fs    \] zone /data is LUKS2 and opened"
 
 # The proof the zone was *read through*: a string that exists only inside this
