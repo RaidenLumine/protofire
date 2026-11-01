@@ -340,13 +340,31 @@ PBKDF2 primitives.
   views and whatever a `FuseMount` adds.
 - **Unicode 15.1**: full NFC/NFD normalization and a GB18030 codec.
 - **Crash safety**: SimpleFs uses undo-log transactions and two-phase commit.
-- **Encryption at rest: the unwrap works, the mount is unwired.**
-  `EncryptedBlockDevice` wraps a block device in AES-256 XTS, and `luks2_open`
-  now **opens a volume `cryptsetup` wrote** — `make check-luks2-image` makes one,
-  writes a plaintext marker into its payload, and asserts both that the key the
-  unwrap recovers is the one `luksDump --dump-master-key` prints and that the
-  payload reads back in the clear.  Nothing constructs the device from a boot
-  yet, so no zone is mounted encrypted.
+- **Encryption at rest: wired from the boot, with a passphrase on the command
+  line.**  `EncryptedBlockDevice` wraps a block device in AES-256 XTS, and
+  `luks2_open` **opens a volume `cryptsetup` wrote** — `make check-luks2-image`
+  makes one, writes a plaintext marker into its payload, and asserts both that
+  the key the unwrap recovers is the one `luksDump --dump-master-key` prints
+  and that the payload reads back in the clear.  The boot reads `crypt=` from
+  its command line and asks each zone's device whether it starts with the LUKS2
+  magic; one that does goes through the unwrap before any filesystem parser
+  sees it, and one that does not is read as it lies, so a disk with only one
+  encrypted zone works.
+
+  **The passphrase is not protected.**  It arrives on the boot command line,
+  which lives in the loader's configuration and, on a serial console, in
+  whatever logged that line; the boot prints that it was given without
+  printing it.  This is a first step that makes the mechanism reachable from a
+  boot, not a recommendation, and closing it needs a prompt with echo off or a
+  key the kernel derives rather than reads.
+
+  A zone that carries the magic and does not open refuses the boot-disk layout
+  — `install_boot_disk_layout` returns the error rather than handing
+  ciphertext to a parser — and the machine then falls back to the in-memory
+  demo volumes, which is the fallback every failed boot disk already had.  It
+  does **not** mount the encrypted zone read-only or skip it: a boot with an
+  encrypted `/data` and a wrong passphrase is one whose `/data` is missing, not
+  one whose `/data` is ciphertext.
 
   Getting there needed four corrections, each measured against a real volume
   rather than argued:
@@ -422,7 +440,7 @@ PBKDF2 primitives.
 | AES-256 + AES-XTS | Crypto engine in the kernel | No hardware acceleration path |
 | PBKDF2 key derivation | Key stretching for disk encryption | One KDF; no Argon2 or keyring |
 | EncryptedBlockDevice | Transparent block-device wrapper under any filesystem | Nothing constructs one; no rekey or key rotation; one key per device |
-| LUKS2 header parser | LUKS2 header parsing, keyslot-area XTS decryption and `luks2_open` key recovery — it opens a volume `cryptsetup` wrote (`make check-luks2-image`) | No caller from a boot, and no keyslot management or `cryptsetup`-style control surface |
+| LUKS2 header parser | LUKS2 header parsing, keyslot-area XTS decryption and `luks2_open` key recovery — it opens a volume `cryptsetup` wrote (`make check-luks2-image`), and a boot opens a zone through it when `crypt=` names a passphrase | The passphrase comes from the command line, so it is not protected; no keyslot management or `cryptsetup`-style control surface |
 
 ---
 

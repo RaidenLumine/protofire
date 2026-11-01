@@ -181,6 +181,22 @@ pub struct FileSystem {
     pub(crate) storage_init_report: Mutex<Option<StorageInitReport>>,
     /// Root filesystem type: `"simplefs"` (default) or `"ext4"`.
     pub(crate) rootfs_type: String,
+    /// The passphrase a LUKS2-encrypted zone is opened with, if any.
+    ///
+    /// `None` means every zone is read as it lies on the medium, which is
+    /// what an unencrypted disk needs and what every boot before this did.
+    /// `Some` makes the boot try `luks2_open` on each zone's device and fall
+    /// back to reading it raw when it carries no LUKS2 header — a disk where
+    /// only `/data` is encrypted is a shape worth supporting, and a boot that
+    /// refused the whole disk because one zone was not encrypted would not.
+    ///
+    /// **A secret held in memory for the boot's life.**  It arrives from the
+    /// boot command line (`crypt=`), which means it is visible in the
+    /// loader's configuration and, on a machine whose console is a serial
+    /// port, in whatever logged that line.  That is a deliberate first step
+    /// rather than a claim of security: it makes the mechanism reachable from
+    /// a boot at all, and `docs/status.md` records what it does not protect.
+    pub(crate) crypt_passphrase: Option<String>,
 }
 
 impl Default for FileSystem {

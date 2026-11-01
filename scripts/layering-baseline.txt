@@ -294,6 +294,14 @@
 # rather than a new direction: the service manager has always read the
 # declarations it runs.
 #
+# `fs` -> `crypto` and `fs` -> `block` each grew by one when the boot learned
+# to open an encrypted zone.  Neither is a new direction: `fs` already asks
+# `crypto` for the digests a service origin and a signature are checked with,
+# and it already names `block` for the device a volume is opened on.  What grew
+# is the number of calls, and the two that grew are the two an unlock makes —
+# AES-XTS over the keyslot area is `crypto`'s, and reading the LUKS2 magic off
+# a zone is `block`'s.
+#
 # `device` names `sync` because the device ledger is a registry, and the boot
 # names `device` because that is where the drivers' findings are published —
 # `drivers` does not name `device`, which would close a cycle with the
@@ -377,9 +385,9 @@ drivers                      memory                       3
 drivers                      network                      2
 drivers                      process                      17
 drivers                      sync                         25
-fs                           block                        3
+fs                           block                        4
 fs                           compression                  2
-fs                           crypto                       10
+fs                           crypto                       11
 fs                           drivers                      2
 fs                           memory                       5
 fs                           security                     29

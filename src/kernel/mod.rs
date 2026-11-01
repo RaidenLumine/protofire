@@ -229,6 +229,24 @@ impl Kernel {
         // found.
         crate::kernel::device::log_device_records();
         let boot_disk = self.drivers.boot_disk();
+        // `crypt=` names the passphrase an encrypted zone is opened with, and
+        // it is read here rather than later because this is where the zones
+        // are mounted: the passphrase has to be known before the first zone's
+        // device is wrapped, and the filesystem has no second chance.
+        //
+        // The value is announced without itself — a boot that says "a
+        // passphrase was given" is checkable, and a boot that prints the
+        // passphrase hands it to whoever reads the console.  `docs/status.md`
+        // records that a command-line passphrase is visible to the loader and
+        // to anything logging the console, which is why this is a first step
+        // rather than a recommendation.
+        if let Some(command_line) = crate::arch::boot::boot_command_line() {
+            if let Some(passphrase) = crate::arch::boot::command_line_option(&command_line, "crypt")
+            {
+                self.fs.lock().set_crypt_passphrase(passphrase);
+                println!("[fs    ] a crypt= passphrase was given for the encrypted zones");
+            }
+        }
         self.fs.lock().init_with_boot_disk(boot_disk);
         let t3 = tick();
         boot.record_subsystem(

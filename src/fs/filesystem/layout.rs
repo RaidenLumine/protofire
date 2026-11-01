@@ -273,6 +273,7 @@ impl FileSystem {
         &mut self,
         zone_devices: Vec<(StorageZone, Arc<dyn BlockDevice>)>,
     ) -> Result<()> {
+        let zone_devices = self.unlock_encrypted_zones(zone_devices)?;
         let use_ext4 = self.rootfs_type == "ext4";
 
         if use_ext4 {
@@ -297,4 +298,69 @@ impl FileSystem {
 
         Ok(())
     }
+
+    /// Replace each zone's device with one that decrypts it, when there is a
+    /// passphrase and the zone carries a LUKS2 header.
+    ///
+    /// Two conditions, and both are answers a boot can give rather than a
+    /// policy this function invents:
+    ///
+    /// * **No passphrase** — every zone stays as it lies on the medium.  That
+    ///   is what every boot before this did, and an unencrypted disk needs
+    ///   nothing else.
+    /// * **A passphrase, and this zone is not encrypted** — the zone is left
+    ///   alone rather than refused.  A disk with only `/data` encrypted is a
+    ///   shape worth supporting, and a boot that stopped because one zone had
+    ///   no header would be refusing the wrong thing.
+    ///
+    /// The check for "is this encrypted" is the header magic, read once from
+    /// the zone's first sector.  A zone that has the magic but does not open
+    /// with the passphrase given is a real failure and stops the boot: the
+    /// alternative is to mount ciphertext as a filesystem and report whatever
+    /// the parser makes of it, which is how a wrong passphrase becomes a
+    /// corrupt-volume report three subsystems later.
+    fn unlock_encrypted_zones(
+        &self,
+        zone_devices: Vec<(StorageZone, Arc<dyn BlockDevice>)>,
+    ) -> Result<Vec<(StorageZone, Arc<dyn BlockDevice>)>> {
+        let Some(passphrase) = self.crypt_passphrase.as_deref() else {
+            return Ok(zone_devices);
+        };
+
+        let mut unlocked = Vec::with_capacity(zone_devices.len());
+        for (zone, device) in zone_devices {
+            if !carries_luks2_header(device.as_ref()) {
+                unlocked.push((zone, device));
+                continue;
+            }
+            // A zone with the header but no key is a boot that cannot do its
+            // job, and this stops rather than mounting ciphertext: handing a
+            // SimpleFs parser an AES-XTS stream produces a corrupt-volume
+            // error three subsystems later, which names the wrong problem.
+            let encrypted = crate::fs::luks2::luks2_open(device.clone(), passphrase.as_bytes())?;
+            crate::println!(
+                "[fs    ] zone {} is LUKS2 and opened with the boot's passphrase",
+                zone.zone_root()
+            );
+            unlocked.push((zone, Arc::new(encrypted) as Arc<dyn BlockDevice>));
+        }
+        Ok(unlocked)
+    }
+}
+
+/// Whether `device`'s first sector carries the LUKS2 magic.
+///
+/// The one question that separates "this zone is encrypted" from "this zone is
+/// not", asked of the medium rather than of a configuration file: a disk is
+/// what it says it is, and a boot that trusted a label instead would try to
+/// merge stripes out of a SimpleFs superblock.  A read error answers "no" —
+/// the caller then reads the zone as it lies and the filesystem's own parser
+/// reports whatever is actually wrong with it, which is a better error than
+/// this one could give.
+pub(crate) fn carries_luks2_header(device: &dyn BlockDevice) -> bool {
+    let mut sector = [0u8; crate::fs::block::BLOCK_SIZE];
+    if device.read_blocks(0, &mut sector).is_err() {
+        return false;
+    }
+    sector[..6] == crate::fs::luks2::LUKS2_MAGIC
 }

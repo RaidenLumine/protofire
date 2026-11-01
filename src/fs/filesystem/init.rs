@@ -28,6 +28,7 @@ impl FileSystem {
             next_handle: Mutex::new(4),
             storage_init_report: Mutex::new(None),
             rootfs_type: String::new(),
+            crypt_passphrase: None,
         }
     }
 
@@ -62,6 +63,26 @@ impl FileSystem {
     /// it.
     pub fn set_rootfs_type(&mut self, fs_type: &str) {
         self.rootfs_type = fs_type.to_string();
+    }
+
+    /// Name the passphrase an encrypted zone is opened with.
+    ///
+    /// Empty is refused rather than stored: a LUKS2 volume cannot be unlocked
+    /// with no passphrase, and a `crypt=` with nothing after it is a boot
+    /// option someone got wrong rather than a request to try the empty one.
+    /// A name that unlocks nothing is a boot that spends its time in PBKDF2
+    /// and then mounts the medium raw, so refusing here says which of those
+    /// happened.
+    pub fn set_crypt_passphrase(&mut self, passphrase: &str) {
+        if passphrase.is_empty() {
+            return;
+        }
+        self.crypt_passphrase = Some(passphrase.to_string());
+    }
+
+    /// Whether this boot has a passphrase to try on its zones.
+    pub fn has_crypt_passphrase(&self) -> bool {
+        self.crypt_passphrase.is_some()
     }
 
     pub fn init_with_boot_disk(&mut self, boot_disk: Option<Arc<dyn BlockDevice>>) {

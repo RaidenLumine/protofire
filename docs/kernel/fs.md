@@ -503,9 +503,13 @@ runtime: `install_zone_devices` has an ext4 branch behind `rootfs_type`, but
 read-only views above and FUSE are the backends a boot or a syscall can
 actually reach; the rest are code and tests awaiting a mount.
 
-The same is true of two encryption modules: `src/fs/crypt_device.rs` wraps a
-`BlockDevice` in AES-XTS and `src/fs/luks2.rs` parses a LUKS2 header and
-recovers a key, but nothing constructs an `EncryptedBlockDevice`.  `tmpfs`
+The encryption pair is the exception: `src/fs/crypt_device.rs` wraps a
+`BlockDevice` in AES-XTS, `src/fs/luks2.rs` parses a LUKS2 header and recovers
+a key, and the boot constructs the device — `install_zone_devices` asks each
+zone's device whether it starts with the LUKS2 magic and, when the boot's
+`crypt=` option named a passphrase, opens it through `luks2_open` before any
+filesystem parser sees the bytes.  A zone with no magic is read as it lies, so
+encrypting one zone of a disk is a shape a boot handles.  `tmpfs`
 (`src/fs/tmpfs/mod.rs`) is a complete in-memory filesystem with xattrs, hard
 links and rename, and it too has no mount in the tree — `/tmp` is a SimpleFs
 volume on a memory device instead.

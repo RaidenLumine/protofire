@@ -24,7 +24,11 @@ use crate::Result;
 // ── LUKS2 magic constants ──────────────────────────────────────────────
 
 /// LUKS2 magic: "LUKS\xBA\xBE"
-const LUKS2_MAGIC: [u8; 6] = [0x4C, 0x55, 0x4B, 0x53, 0xBA, 0xBE];
+///
+/// Public because a boot asks the medium this before it decides whether to try
+/// an unwrap: a zone with no magic is read as it lies, and one with it is
+/// opened or the boot stops.
+pub const LUKS2_MAGIC: [u8; 6] = [0x4C, 0x55, 0x4B, 0x53, 0xBA, 0xBE];
 /// Expected LUKS2 version number (big-endian).
 const LUKS2_VERSION: u16 = 2;
 

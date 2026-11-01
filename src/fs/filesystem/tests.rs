@@ -263,3 +263,102 @@ fn a_table_less_disk_still_reads_the_fixed_offsets() {
         other => panic!("expected the fixed-zone fallback, saw {other:?}"),
     }
 }
+
+/// A zone that carries the LUKS2 magic is not handed to a filesystem parser.
+///
+/// The wiring this pins is the boot's: `crypt=` names a passphrase, the
+/// filesystem asks each zone's device whether it is encrypted, and a device
+/// that answers yes goes through `luks2_open` before any filesystem parser
+/// sees it.  Without this the unwrap was code with a gate and no caller — the
+/// shape `docs/status.md` calls "implemented, not verified".
+///
+/// What the boot does when the unwrap fails is refuse the boot-disk layout and
+/// fall back to the in-memory demo volumes, which is what this asserts: the
+/// report carries the error rather than `BootDiskFixedZoneFallback`, so the
+/// ciphertext was never read as a volume.  That fallback is older than the
+/// encryption and is why a failed unwrap does not stop a machine — it stops
+/// the boot *disk*, and the machine runs the demo volumes.
+#[test]
+fn a_device_with_the_luks2_magic_is_not_read_as_a_filesystem() {
+    use crate::fs::block::MemoryBlockDevice;
+    use crate::fs::filesystem::types::StorageInitReport;
+    use alloc::sync::Arc;
+
+    // A plain device whose first bytes are the LUKS2 magic.  Nothing else has
+    // to be a real header: the unwrap fails at the header parse, which is the
+    // point — what this pins is that the code took the encrypted path rather
+    // than handing the bytes to a filesystem parser.
+    let mut disk = alloc::vec![0u8; 1024 * 1024];
+    disk[..6].copy_from_slice(&crate::fs::luks2::LUKS2_MAGIC);
+
+    let device: Arc<dyn crate::fs::block::BlockDevice> =
+        MemoryBlockDevice::new("luks-zone", disk, false);
+    let mut fs = FileSystem::new();
+    fs.set_crypt_passphrase("a passphrase");
+    assert!(
+        fs.has_crypt_passphrase(),
+        "the setter must record what it was given"
+    );
+    fs.init_with_boot_disk(Some(device));
+
+    match fs.storage_init_report() {
+        Some(StorageInitReport::BootDiskFixedZoneFallback) => panic!(
+            "a device with the LUKS2 magic fell through to the fixed-offset \
+             layout, which reads ciphertext as a volume"
+        ),
+        Some(StorageInitReport::MemoryDemo { .. }) => {}
+        other => panic!("expected the demo fallback after a failed unwrap, saw {other:?}"),
+    }
+}
+
+/// With no passphrase, a zone is read exactly as it lies.
+///
+/// The other half of the same switch, and the one every existing boot is in:
+/// an unencrypted disk mounts, and a boot that was never given `crypt=` does
+/// not pay for a header probe's answer any differently.
+#[test]
+fn without_a_passphrase_every_zone_is_read_as_it_lies() {
+    use crate::fs::block::MemoryBlockDevice;
+    use alloc::sync::Arc;
+
+    let device: Arc<dyn crate::fs::block::BlockDevice> =
+        MemoryBlockDevice::new("plain-zone", crate::fs::build_demo_disk_image(), false);
+    let mut fs = FileSystem::new();
+    assert!(!fs.has_crypt_passphrase());
+    fs.init_with_boot_disk(Some(device));
+
+    assert!(
+        fs.filesystems.contains_key("simplefs-system"),
+        "an unencrypted disk must still mount as the SimpleFs system zone"
+    );
+}
+
+/// A local unit test of the header probe itself.
+///
+/// The two tests above assert on what a boot did, and neither can separate
+/// "the probe said no" from "the probe said yes and the unwrap failed" — both
+/// end in the same fallback.  This asks the probe directly, which is what
+/// makes the detection itself testable rather than only its consequences.
+#[test]
+fn the_luks2_probe_answers_from_the_magic_and_nothing_else() {
+    use crate::fs::block::MemoryBlockDevice;
+    use alloc::sync::Arc;
+
+    let mut plain = alloc::vec![0u8; 4096];
+    plain[..8].copy_from_slice(b"PROTOFIR");
+    let plain_device: Arc<dyn crate::fs::block::BlockDevice> =
+        MemoryBlockDevice::new("plain", plain, false);
+    assert!(
+        !super::layout::carries_luks2_header(plain_device.as_ref()),
+        "a device that does not start with the magic is not encrypted"
+    );
+
+    let mut magic = alloc::vec![0u8; 4096];
+    magic[..6].copy_from_slice(&crate::fs::luks2::LUKS2_MAGIC);
+    let magic_device: Arc<dyn crate::fs::block::BlockDevice> =
+        MemoryBlockDevice::new("magic", magic, false);
+    assert!(
+        super::layout::carries_luks2_header(magic_device.as_ref()),
+        "a device whose first bytes are the magic is what the unwrap is for"
+    );
+}

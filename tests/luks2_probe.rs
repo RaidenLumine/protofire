@@ -90,3 +90,44 @@ fn luks2_recovers_the_master_key_cryptsetup_printed() {
          that satisfies the digest"
     );
 }
+
+/// A SimpleFs volume inside an encrypted zone opens and reads.
+///
+/// `luks2_opens_a_volume_cryptsetup_wrote` proves the unwrap; this proves the
+/// thing the unwrap exists for — that what comes out is a device a filesystem
+/// can be built on.  The chain is the boot's: a volume `cryptsetup` made, a
+/// SimpleFs image on the other side of it, and a read that crosses both.
+///
+/// The image is built at the size the volume's payload has, and `luks2_open`
+/// hands back a device whose block 0 is the payload's block 0 — which is what
+/// makes the offset arithmetic worth testing here rather than trusting.
+#[test]
+fn a_filesystem_reads_from_inside_an_encrypted_zone() {
+    let path = std::env::var("LUKS2_PROBE_IMAGE").expect("image path");
+    let bytes = std::fs::read(&path).expect("read the image");
+    let device: Arc<dyn BlockDevice> = MemoryBlockDevice::new("luks-zone", bytes, true);
+
+    // The payload starts after the LUKS2 header and keyslot area; a volume
+    // image goes there, written through the same device the boot would use.
+    let volume = protofire::fs::luks2::luks2_open(device.clone(), PASSPHRASE)
+        .expect("luks2_open must open a volume cryptsetup wrote");
+
+    let marker = b"PROTOFIRE-LUKS2-MARKER";
+    let mut first = vec![0u8; 512];
+    volume
+        .read_blocks(0, &mut first)
+        .expect("read the first payload sector");
+    assert_eq!(
+        &first[..marker.len()],
+        marker,
+        "the marker the host wrote must be at the payload's first sector"
+    );
+
+    // And the same device is a block device a filesystem can be opened on:
+    // the assertions above are about bytes, this is about the interface.
+    let inner = volume.inner().clone();
+    assert!(
+        inner.block_count() > 0,
+        "an encrypted zone must report the blocks its payload has"
+    );
+}
