@@ -9,9 +9,9 @@
 //! SYSCALL_COUNT).
 
 pub const SYSCALL_ABI_VERSION_MAJOR: u32 = 1;
-pub const SYSCALL_ABI_VERSION_MINOR: u32 = 5;
+pub const SYSCALL_ABI_VERSION_MINOR: u32 = 6;
 
-pub const SYSCALL_COUNT: usize = 194;
+pub const SYSCALL_COUNT: usize = 196;
 pub const MAX_SYSCALLS: usize = 256;
 
 // ── Status encoding ──────────────────────────────────────────────────
@@ -485,6 +485,8 @@ pub const fn syscall_name(number: usize) -> Option<&'static str> {
         191 => Some("service_start_all"),
         192 => Some("install_package"),
         193 => Some("fallocate"),
+        194 => Some("trust_anchor_add"),
+        195 => Some("trust_anchor_remove"),
         _ => None,
     }
 }
@@ -552,12 +554,12 @@ mod tests {
         // `SEEK_HOLE`.  The frozen range below 120 did not move: the two
         // numbers are values an existing call newly accepts, which is the
         // additive optional behaviour that range permits.
-        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 5);
+        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 6);
     }
 
     #[test]
     fn count_checks() {
-        assert_eq!(SYSCALL_COUNT, 194);
+        assert_eq!(SYSCALL_COUNT, 196);
         assert_eq!(MAX_SYSCALLS, 256);
     }
 }
