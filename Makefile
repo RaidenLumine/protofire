@@ -163,6 +163,7 @@ help:
 		'  make check-ntfs-image                 - mount a volume `mkntfs` made, write to it, and have ntfs-3g'"'"'s own reader judge what came out' \
 		'  make check-ext4-image                 - open a volume `mkfs.ext4` made and read the file the host wrote into it' \
 		'  make check-luks2-image                - open a volume `cryptsetup` wrote and compare the key it recovers to the one `luksDump` prints' \
+		'  make check-luks2-zone                 - boot a machine whose /data is encrypted and read a file out of it' \
 		'' \
 		'Runtime gates:' \
 		'  make check-perf-baseline              - boot the demo and compare its measured work to the baseline' \
@@ -343,7 +344,7 @@ test-service:
 	check-feature-matrix \
 	check-abi-mirror check-abi-frozen-payload \
 	check-abi-frozen-payload-aarch64 check-abi-frozen-payload-riscv64 \
-	check-ntfs-image check-ext4-image check-luks2-image
+	check-ntfs-image check-ext4-image check-luks2-image check-luks2-zone
 
 # A `git commit` that is interrupted while it writes objects can leave a ref or
 # the index naming something that is not there, and the first symptom is a
@@ -517,6 +518,14 @@ check-ext4-image:
 check-luks2-image:
 	CARGO="$(CARGO)" PROFILE="$(PROFILE)" CRATE="$(CRATE)" \
 		sh ./scripts/check-luks2-image.sh
+
+# A machine whose /data zone is a LUKS2 volume, booted with the passphrase on
+# its command line.  The image check proves the unwrap opens a volume; this
+# proves the boot *uses* it — the difference between "implemented" and
+# "verified".  Needs cryptsetup and QEMU.
+check-luks2-zone:
+	CARGO="$(CARGO)" PROFILE="$(PROFILE)" CRATE="$(CRATE)" \
+		sh ./scripts/check-luks2-zone.sh
 
 # Every configuration `Cargo.toml` declares, built: the shipped `demo-disk`
 # build plus each switch the manifest names, and then all of them at once.  The

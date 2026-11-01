@@ -340,31 +340,37 @@ PBKDF2 primitives.
   views and whatever a `FuseMount` adds.
 - **Unicode 15.1**: full NFC/NFD normalization and a GB18030 codec.
 - **Crash safety**: SimpleFs uses undo-log transactions and two-phase commit.
-- **Encryption at rest: wired from the boot, with a passphrase on the command
-  line.**  `EncryptedBlockDevice` wraps a block device in AES-256 XTS, and
-  `luks2_open` **opens a volume `cryptsetup` wrote** — `make check-luks2-image`
-  makes one, writes a plaintext marker into its payload, and asserts both that
-  the key the unwrap recovers is the one `luksDump --dump-master-key` prints
-  and that the payload reads back in the clear.  The boot reads `crypt=` from
-  its command line and asks each zone's device whether it starts with the LUKS2
-  magic; one that does goes through the unwrap before any filesystem parser
-  sees it, and one that does not is read as it lies, so a disk with only one
-  encrypted zone works.
+- **Encryption at rest: a boot opens an encrypted `/data` and reads files from
+  it.**  `make check-luks2-zone` builds a machine whose `/data` zone is a LUKS2
+  volume, boots it with the passphrase on the command line, and `cat`s a file
+  whose text exists nowhere else — only in that volume's payload.  The string
+  is the point: an earlier version of the gate asserted on the file's original
+  text, which also lives in the in-memory demo volume, and stayed green with
+  the payload stored as plaintext.  Three mutations were measured after that
+  was fixed: storing the payload unencrypted, booting with the wrong
+  passphrase, and corrupting the keyslot area all fail the gate, each on its
+  own line.
+
+  The boot reads `crypt=` from its command line and asks each zone's device
+  whether it starts with the LUKS2 magic; one that does goes through the unwrap
+  before any filesystem parser sees it, and one that does not is read as it
+  lies, so a disk with one encrypted zone works.  A zone that carries the magic
+  and does not open refuses the boot-disk layout rather than handing ciphertext
+  to a parser, and the machine falls back to the in-memory demo volumes.
+
+  **`/data` had to grow to 1536 blocks to be encryptable at all**, which is a
+  format limit rather than a preference: a LUKS2 volume's smallest legal layout
+  is a 16 KiB metadata area, a 256 KiB keyslot area and a payload aligned past
+  both, so the header takes 1024 blocks and `cryptsetup` refuses a smaller
+  keyslot area outright.  The zone keeps 512 blocks of payload, which is what
+  it was before.
 
   **The passphrase is not protected.**  It arrives on the boot command line,
   which lives in the loader's configuration and, on a serial console, in
   whatever logged that line; the boot prints that it was given without
-  printing it.  This is a first step that makes the mechanism reachable from a
-  boot, not a recommendation, and closing it needs a prompt with echo off or a
-  key the kernel derives rather than reads.
-
-  A zone that carries the magic and does not open refuses the boot-disk layout
-  — `install_boot_disk_layout` returns the error rather than handing
-  ciphertext to a parser — and the machine then falls back to the in-memory
-  demo volumes, which is the fallback every failed boot disk already had.  It
-  does **not** mount the encrypted zone read-only or skip it: a boot with an
-  encrypted `/data` and a wrong passphrase is one whose `/data` is missing, not
-  one whose `/data` is ciphertext.
+  printing it.  This makes the mechanism reachable from a boot; closing the
+  exposure needs a prompt with echo off or a key the kernel derives rather
+  than reads.
 
   Getting there needed four corrections, each measured against a real volume
   rather than argued:

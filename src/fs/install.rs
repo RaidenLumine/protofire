@@ -484,6 +484,7 @@ mod tests {
     use super::install_zones_into_blank_disk_image;
     use super::install_zones_into_disk_image;
     use crate::fs::layout::StorageZone;
+    use crate::fs::layout::DEMO_DISK_DATA_BLOCKS;
     #[allow(unused_imports)]
     use crate::fs::partition::read_gpt_from_bytes;
     use crate::fs::partition::read_gpt_layout_from_bytes;
@@ -935,7 +936,12 @@ mod tests {
             (0, STRANGER_TYPE, STRANGER_FIRST, STRANGER_BLOCKS),
             (1, StorageZone::System.gpt_type_guid(), 8192, 256),
             (2, StorageZone::Apps.gpt_type_guid(), 12288, 512),
-            (3, StorageZone::Data.gpt_type_guid(), 16384, 512),
+            (
+                3,
+                StorageZone::Data.gpt_type_guid(),
+                16384,
+                DEMO_DISK_DATA_BLOCKS,
+            ),
         ];
         write_gpt_partitions(&mut disk, &one_system).expect("the table writes");
         // And the single system slot is a committed volume, so the reinstall

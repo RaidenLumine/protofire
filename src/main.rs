@@ -62,6 +62,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             write_demo_disk_image(Path::new(&output), table)?;
         }
+        Some("mkzone") => {
+            // `mkzone <system|apps|data> <path>`: one zone's image, as the
+            // demo disk would carry it.  The disk builder writes zones at fixed
+            // offsets, so a caller that wants to put something *else* at one of
+            // those offsets — an encrypted volume, say — needs the zone's own
+            // bytes to encrypt rather than the whole disk.  `check-luks2-zone`
+            // is that caller.
+            let name = args.next().unwrap_or_default();
+            let output = args.next().unwrap_or_default();
+            if name.is_empty() || output.is_empty() || args.next().is_some() {
+                print_host_usage_and_exit(2);
+            }
+            let zone = match name.as_str() {
+                "system" => protofire::fs::layout::StorageZone::System,
+                "apps" => protofire::fs::layout::StorageZone::Apps,
+                "data" => protofire::fs::layout::StorageZone::Data,
+                _ => print_host_usage_and_exit(2),
+            };
+            let image = protofire::fs::build_zone_image(zone);
+            fs::write(Path::new(&output), &image)?;
+            println!("wrote {} bytes to {}", image.len(), output);
+        }
         Some("install") => {
             // `install [--yes] [--new-table] <disk-image>`: put this kernel's
             // zones onto a disk a machine already has, adding the zones to

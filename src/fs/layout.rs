@@ -16,7 +16,20 @@ pub const DEMO_DISK_APPS_BLOCKS: u64 = 512;
 /// it, which carries `DATA_ZONE_EXTRA_DATA_BLOCKS` of headroom.  256 blocks was
 /// smaller than that image, so the disk path substituted its fallback zone and
 /// the demo's data files were only ever present on the in-memory layout.
-pub const DEMO_DISK_DATA_BLOCKS: u64 = 512;
+///
+/// 1024 rather than 512 since the boot learned to open an encrypted zone.  A
+/// LUKS2 volume's smallest legal layout is a 16 KiB metadata area, a 256 KiB
+/// keyslot area and a payload aligned past both — 524288 bytes, which is 1024
+/// blocks of 512 — and `cryptsetup` refuses a smaller keyslot area outright.
+/// A zone under that size cannot hold a header at all, so `/data` is sized for
+/// a format that carries one, and past it too: the header takes the first 1024
+/// blocks and a LUKS2 zone's payload is what is left, so 1536 leaves 512 for
+/// the filesystem — the size `/data` was before, which is what keeps the demo
+/// disk's own data files fitting.
+///
+/// It is the right zone for this: `/data` is the writable user area, which is
+/// what someone encrypts.
+pub const DEMO_DISK_DATA_BLOCKS: u64 = 1536;
 pub const DEMO_DISK_TEMP_BLOCKS: u64 = 128;
 pub const DEMO_DISK_SYSTEM_START_BLOCK: u64 = 2048;
 pub const DEMO_DISK_APPS_START_BLOCK: u64 = DEMO_DISK_SYSTEM_START_BLOCK + DEMO_DISK_SYSTEM_BLOCKS;
