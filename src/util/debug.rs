@@ -19,12 +19,20 @@ pub fn init() {
 
 /// Serialises one formatted line onto the console.
 ///
-/// Without it, concurrent `print!` calls from different CPUs interleave *at
-/// byte granularity*: the UART write loop takes no lock (see
-/// `SerialDevice::write_bytes`), and `_print` reaches it in two separate calls
-/// — the per-CPU prefix and then the message.  The result is text like
+/// The UART write loop takes no lock of its own (see
+/// `SerialDevice::write_bytes`), and `_print` reaches it twice — the per-CPU
+/// prefix and then the message.  Without this, two CPUs printing at once put
+/// those four writes in any order and the result reads like
 /// `p[user  ] rust data: rotofire shell (user)`, where another CPU's prefix
-/// landed inside a word and a character was lost.
+/// landed inside a word and a character was lost.  The lock is what makes the
+/// four one line.
+///
+/// What it does *not* do is order two lines: this is held for one `_print`,
+/// and the next line is a different caller's.  Two writers each printing a
+/// whole line still produce one log line rather than two, which is the
+/// weakness `docs/status.md` records — the defect this fixes is bytes of one
+/// line interleaving with another's, not the spacing between two complete
+/// lines.
 ///
 /// That is worse than untidy output.  The console is the only diagnostic
 /// channel this kernel has, and every log-based tool — including

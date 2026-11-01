@@ -242,18 +242,21 @@ block-cache management.
 - **I/O paths verified under emulation only**: the blocks a boot reads and
   writes are counted and gated (`make check-perf-baseline`), but no latency or
   throughput under load has been measured on real disks or SSDs.
-- **Console output from two threads interleaves**: the console serialises a
-  write and nothing else, so two writers at once put their bytes in each
-  other's lines.  Every line the shell produces is now one `write` — the
-  prompt, its answers, its `echo` builtin — and so are the payloads'
-  `key: value` lines, where earlier versions split each into three.  That
-  removed the class of defect where a line's own *boundaries* were violated,
-  which cost two gates about one boot in three; what remains is two writers'
-  complete lines sharing one line, which no per-writer change can remove
-  because the ordering is between writers.  The demo boot always has a second
-  writer: `demo-launcher-fault` is a program meant to fault, and its
-  supervisor restarts it while the shell sits at the prompt.  The three that were split cost two gates about one
-  boot in three before the feeder learned to wait for the shell's own line,
+- **Console output from two threads interleaves**: `CONSOLE_LOCK` makes one
+  write atomic and says nothing about the spacing between writes, so two
+  writers each putting out a complete line produce one log line rather than
+  two.  Every line the shell produces is a single write — the prompt, its
+  answers, its `echo` builtin — and so are the payloads' `key: value` lines,
+  where earlier versions split each into three.  That removed the defect where
+  a line's own *boundaries* were violated, which cost two gates about one boot
+  in three.  What remains is between writers, and no per-writer change reaches
+  it: the write that ends one line and the write that starts the next belong to
+  two different threads, and the console has no way to know one continues the
+  other.  Closing it would mean a writer declaring its lines to the console —
+  an interface nobody has asked for, and the shell is the only writer that
+  could adopt it today.  The demo boot always has a second writer:
+  `demo-launcher-fault` is a program meant to fault, and its supervisor
+  restarts it while the shell sits at the prompt.
 - **A boot's answer can still share its line, from the payload side now.**
   The shell's prompt used to be three `write`s and is one, which took the rate
   from 3 boots in 10 to 1 in 10 — but not to zero.  The remaining failure is a
