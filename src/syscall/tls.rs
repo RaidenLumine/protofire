@@ -43,6 +43,62 @@ pub(super) fn tls_connect(context: &mut super::SyscallContext) -> Result<super::
     })
 }
 
+/// Syscall #194: TrustAnchorAdd — trust a root certificate at run time.
+///
+/// Arguments:
+///   arg0 = DER pointer, arg1 = DER length, arg2..arg5 = 0
+///
+/// Returns the anchor's id, which `TrustAnchorRemove` takes.
+///
+/// Unprivileged on purpose: an anchor is the caller's own trust decision, not
+/// a policy the whole machine inherits.  What it grants is the ability to
+/// verify a chain against one more root — the caller's handshakes, not
+/// anyone else's — and a program that would rather trust a certificate it was
+/// handed than fail is a decision this kernel cannot make for it.
+///
+/// The DER is copied.  A certificate that pointed into the caller's buffer
+/// would be a dangling reference the moment that buffer went away, and the
+/// copy is the whole reason this is a syscall rather than a pointer the
+/// verifier keeps.
+pub(super) fn trust_anchor_add(
+    context: &mut super::SyscallContext,
+) -> Result<super::SyscallDispatch> {
+    let (pointer, length) = (context.arg(0), context.arg(1));
+    super::validate_zeroed_args(context, 2)?;
+    if length == 0 {
+        return Err(Error::InvalidArgument);
+    }
+    // Staged exactly rather than through the short-read helper: a truncated
+    // certificate is not a short certificate, it is a different one, and an
+    // anchor that was cut in half would never match a chain while looking as
+    // though it had been added.
+    let der = super::user_memory::with_staged_input_exact(pointer as *const u8, length, |bytes| {
+        tls::root_store::add_trusted_root(bytes).ok_or(Error::OutOfMemory)
+    })?;
+    Ok(super::SyscallDispatch::complete(der as usize))
+}
+
+/// Syscall #195: TrustAnchorRemove — withdraw an anchor by its id.
+///
+/// Arguments:
+///   arg0 = the id `TrustAnchorAdd` returned, arg1..arg5 = 0
+///
+/// Returns 0 when the anchor was there and is now gone, `NotFound` when it was
+/// not.  A caller that never added one gets `NotFound` rather than a success,
+/// because "it is not trusted" and "I removed what you asked me to remove" are
+/// different answers and the second is the one a program can act on.
+pub(super) fn trust_anchor_remove(
+    context: &mut super::SyscallContext,
+) -> Result<super::SyscallDispatch> {
+    let id = context.arg(0);
+    super::validate_zeroed_args(context, 1)?;
+    if tls::root_store::remove_trusted_root(id as u64) {
+        Ok(super::SyscallDispatch::complete(0))
+    } else {
+        Err(Error::NotFound)
+    }
+}
+
 /// Parse and validate TlsConnect arguments from the syscall context.
 ///
 /// Mirrors `network::connect_tcp_request` — same argument layout:

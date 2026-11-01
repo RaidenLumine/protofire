@@ -732,7 +732,13 @@ pub fn build_chain(certs: &[X509Certificate], hostname: &str) -> Option<Vec<X509
 ///
 /// Returns `ChainVerifyStatus::Trusted` if all checks pass.
 pub fn verify_chain(chain: &[X509Certificate], hostname: &str) -> ChainVerifyStatus {
-    verify_chain_against_roots(chain, hostname, super::root_store::trusted_roots())
+    // The built-in anchors and whatever a program added at run time.  This
+    // allocates, which is the price of a trust set that is not fixed at
+    // compile time; a caller that only needs the compiled-in set can call
+    // `verify_chain_against_roots` with `trusted_roots()` and skip it.
+    let roots = super::root_store::all_trusted_roots();
+    let borrowed: alloc::vec::Vec<&[u8]> = roots.iter().map(|der| der.as_slice()).collect();
+    verify_chain_against_roots(chain, hostname, &borrowed)
 }
 
 /// Verify a chain against an explicit set of trust anchors (raw DER root

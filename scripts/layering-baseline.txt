@@ -294,6 +294,10 @@
 # rather than a new direction: the service manager has always read the
 # declarations it runs.
 #
+# `network` -> `sync` grew by one for the trust-anchor table: the added anchors
+# live behind a `Mutex`, and a `Vec` a program appends to is what that layer is
+# for.  `network` already names `sync` for every other shared table it keeps.
+#
 # `network` -> `process` grew by two when `poll` started parking on a
 # connection: a wait queue parks the *current thread*, so the wait handle names
 # `Scheduler` to find it.  That is the direction the row already had — a
@@ -457,7 +461,7 @@ network                      fs                           7
 network                      ipc                          1
 network                      process                      11
 network                      random                       6
-network                      sync                         18
+network                      sync                         19
 nmi                          sync                         1
 oom                          process                      3
 percpu                       topology                     2

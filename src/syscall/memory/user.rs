@@ -1256,6 +1256,10 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[SyscallPointerSpec::input(0, Some(1), None)],
     // 193 fallocate                — no pointers (fd/mode/offset/length)
     &[],
+    // 194 trust_anchor_add         — arg0=DER (in), arg1=len
+    &[SyscallPointerSpec::input(0, Some(1), None)],
+    // 195 trust_anchor_remove      — no pointers (the anchor id)
+    &[],
 ];
 
 /// Pre-validate every user-memory pointer declared in the syscall's

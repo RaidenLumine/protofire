@@ -1189,8 +1189,14 @@ networking, with more protocols in the tree than the receive path dispatches.
   is answered by the probe alone, which is correct for an object that is ready
   or is not, and a mixed set is woken by whichever descriptor became ready and
   re-probes all of them.
-- **In-kernel TLS has a fixed trust set**: the anchors are compiled in, with no
-  way to add or replace one at runtime.
+- **In-kernel TLS trusts one compiled-in anchor plus whatever a program adds.**
+  `trust_anchor_add` (#194) copies a DER root into the trust set and returns an
+  id, `trust_anchor_remove` (#195) withdraws it, and `verify_chain` tries the
+  built-in anchor first so a caller's addition cannot shadow the tree's own.
+  What is still missing: the built-in set is a single demonstration CA rather
+  than a system store, and an anchor belongs to the machine rather than to the
+  process that added it — a program that exits without removing its anchor
+  leaves it trusted until the boot ends.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,
   PIM-DM, etc. compile only under `educational_networking`.
 - **Throughput and concurrency not benchmarked**: the packets a boot sends and
@@ -1537,11 +1543,13 @@ user-memory validation.
 
 **Weaknesses:**
 
-- **The experimental range is still Experimental** (121-193): it is not frozen,
+- **The experimental range is still Experimental** (121-195): it is not frozen,
   so there is no cross-major stability guarantee above the boundary.  The range
-  is derived, not written down anywhere else: `PUBLIC_SYSCALL_COUNT` is
-  `Fallocate`'s number plus one, so a new slot moves the upper end and this
-  sentence has to move with it.
+  is derived, not written down anywhere else: `PUBLIC_SYSCALL_COUNT` is the
+  highest experimental number plus one, so a new slot moves the upper end and
+  this sentence has to move with it — which is why the two newest slots,
+  `TrustAnchorAdd` (#194) and `TrustAnchorRemove` (#195), are named here rather
+  than described as "the last one".
 - **No external toolchain or conformance suite**: the ABI is self-consistent
   within the kernel crate but has no independent toolchain or POSIX conformance
   tests.

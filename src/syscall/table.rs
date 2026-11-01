@@ -478,9 +478,23 @@ pub enum SyscallNumber {
     /// fallocate — punch a hole in a file: the range reads as zeros and its
     /// clusters go back to the volume (#193).
     Fallocate = 193,
+    /// trust_anchor_add — trust a DER-encoded root certificate the kernel was
+    /// not built with, returning the id that withdraws it (#194).
+    ///
+    /// The built-in set is a demonstration one, so a machine talking to a
+    /// private CA had no way to say so short of a rebuild.
+    TrustAnchorAdd = 194,
+    /// trust_anchor_remove — withdraw an anchor `trust_anchor_add` returned,
+    /// by its id (#195).
+    ///
+    /// The pair is split rather than the add being permanent because trust a
+    /// caller granted should stop when that caller stops needing it: an anchor
+    /// that outlived its program would make "trusted" a property of the
+    /// machine's uptime.
+    TrustAnchorRemove = 195,
 }
 
-pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::Fallocate as u32 + 1;
+pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::TrustAnchorRemove as u32 + 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyscallContext {
@@ -847,6 +861,14 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
     (SyscallNumber::EpollWait as usize, epoll::epoll_wait),
     // tls_connect — establish a TLS 1.3 encrypted connection.
     (SyscallNumber::TlsConnect as usize, tls_handler::tls_connect),
+    (
+        SyscallNumber::TrustAnchorAdd as usize,
+        tls_handler::trust_anchor_add,
+    ),
+    (
+        SyscallNumber::TrustAnchorRemove as usize,
+        tls_handler::trust_anchor_remove,
+    ),
     // filter_add_rule — add a packet filter rule.
     (
         SyscallNumber::FilterAddRule as usize,
@@ -1230,7 +1252,10 @@ mod tests {
             );
         }
 
-        assert_eq!(PUBLIC_SYSCALL_COUNT, SyscallNumber::Fallocate as u32 + 1);
+        assert_eq!(
+            PUBLIC_SYSCALL_COUNT,
+            SyscallNumber::TrustAnchorRemove as u32 + 1
+        );
         assert!(table.entries[PUBLIC_SYSCALL_COUNT as usize].is_none());
     }
 

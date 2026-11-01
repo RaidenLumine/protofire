@@ -1,6 +1,6 @@
 //! src/network/tls/root_store.rs
 //!
-//! Built-in trusted root CA store.
+//! Built-in trusted root CA store, and the anchors a program adds at run time.
 //!
 //! The kernel ships a small set of trust anchors (the "demo" CA set).  Each
 //! entry is a DER-encoded self-signed root certificate.  A presented
@@ -71,7 +71,156 @@ pub(crate) const DEMO_ROOT_CA_DER: &[u8] = &[
     0xb9, 0x5a, 0x88, 0x78, 0xe2, 0x25, 0xde,
 ];
 
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
+
+use crate::kernel::sync::Mutex;
+
+/// The trust anchors a program added at run time.
+///
+/// The built-in set is a demonstration one, and a kernel that can only trust
+/// what it was compiled with cannot be told about a private CA without a
+/// rebuild.  These are kept apart from the compiled-in anchor rather than
+/// merged into one list, because the two have different lifetimes and different
+/// answers to "who put this here": one is the tree's, and the others are a
+/// caller's and can be withdrawn by the caller that added them.
+static ADDED_ROOTS: Mutex<alloc::vec::Vec<(u64, alloc::vec::Vec<u8>)>> =
+    Mutex::new(alloc::vec::Vec::new());
+
+/// The next identifier an added anchor will be given.
+///
+/// Never zero, so zero is not a valid identifier and a withdrawn anchor's id
+/// cannot be mistaken for a live one.
+static NEXT_ROOT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Add a DER-encoded root certificate to the trust set, returning its id.
+///
+/// The certificate is copied: a caller's buffer is theirs, and an anchor that
+/// pointed into it would be a dangling reference the moment they freed it.
+/// Nothing is validated here — a malformed certificate simply never matches a
+/// chain, and validating DER would be a second parser to keep in step with the
+/// one that reads chains.
+///
+/// Returns `None` when there is no heap to copy into, which is the only way
+/// this can fail.
+pub fn add_trusted_root(der: &[u8]) -> Option<u64> {
+    if der.is_empty() {
+        return None;
+    }
+    let id = NEXT_ROOT_ID.fetch_add(1, Ordering::Relaxed);
+    ADDED_ROOTS.lock().push((id, alloc::vec::Vec::from(der)));
+    Some(id)
+}
+
+/// Withdraw an anchor [`add_trusted_root`] returned, by its id.
+///
+/// Returns whether it was there.  A caller that added one and wants it gone —
+/// a session that ended, a program that is exiting — is the only thing that
+/// knows it should stop being trusted, and leaving it to the boot's end would
+/// make "trusted" a property of the machine's uptime rather than of the caller.
+pub fn remove_trusted_root(id: u64) -> bool {
+    if id == 0 {
+        return false;
+    }
+    let mut roots = ADDED_ROOTS.lock();
+    let before = roots.len();
+    roots.retain(|(existing, _)| *existing != id);
+    roots.len() != before
+}
+
 /// Return the built-in trust anchors as DER-encoded certificates.
+///
+/// The compiled-in set only.  A caller that wants to verify against the whole
+/// set — which is what [`verify_chain`](super::certificate::verify_chain) does
+/// — wants [`all_trusted_roots`], and the difference is not academic: this one
+/// borrows from the image and the other allocates, so a hot path that can use
+/// the built-in set alone should.
 pub fn trusted_roots() -> &'static [&'static [u8]] {
     &[DEMO_ROOT_CA_DER]
+}
+
+/// Return the built-in anchors and every anchor added at run time.
+///
+/// The built-in entries come first so a caller's additions cannot shadow the
+/// tree's own, and the returned vector owns its copies — the added ones are
+/// copied out of the lock, so a chain being verified is not holding it.
+pub fn all_trusted_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
+    let mut roots: alloc::vec::Vec<alloc::vec::Vec<u8>> = trusted_roots()
+        .iter()
+        .map(|der| alloc::vec::Vec::from(*der))
+        .collect();
+    for (_, der) in ADDED_ROOTS.lock().iter() {
+        roots.push(der.clone());
+    }
+    roots
+}
+
+/// How many anchors have been added at run time.
+///
+/// Read by `/proc`'s TLS line and by the tests, so "an anchor was added" is
+/// checkable without going through a handshake.
+pub fn added_root_count() -> usize {
+    ADDED_ROOTS.lock().len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An added anchor joins the trust set, and removing it takes it out.
+    ///
+    /// The pair is one test because either half alone is a misleading claim:
+    /// an add that never reaches the verifier is a syscall that returns an id
+    /// and does nothing, and a remove that reports success without removing is
+    /// worse — it says trust was withdrawn while it was not.
+    #[test]
+    fn an_anchor_added_at_run_time_joins_the_set_and_leaves_it() {
+        let builtin = all_trusted_roots().len();
+        assert_eq!(builtin, trusted_roots().len(), "nothing added yet");
+
+        let id = add_trusted_root(b"not a real certificate").expect("a heap to copy into");
+        assert!(id != 0, "zero is not a valid id");
+        assert_eq!(added_root_count(), 1);
+        assert_eq!(
+            all_trusted_roots().len(),
+            builtin + 1,
+            "the verifier's set is the one that grew"
+        );
+
+        assert!(remove_trusted_root(id), "removing an id that is there");
+        assert_eq!(added_root_count(), 0);
+        assert_eq!(
+            all_trusted_roots().len(),
+            builtin,
+            "and the verifier's set is back to the compiled-in one"
+        );
+        assert!(
+            !remove_trusted_root(id),
+            "removing it twice is not a success"
+        );
+    }
+
+    /// The compiled-in anchor is first, and adding one cannot shadow it.
+    ///
+    /// A caller that adds a certificate with the same subject as a built-in
+    /// root must not be able to make the built-in one unreachable: the order
+    /// is what puts the tree's own trust ahead of whatever a program brought.
+    #[test]
+    fn the_built_in_anchor_comes_first() {
+        let id = add_trusted_root(b"a caller's certificate").expect("a heap");
+        let all = all_trusted_roots();
+        assert_eq!(
+            all[0].as_slice(),
+            trusted_roots()[0],
+            "the compiled-in anchor must be the first one tried"
+        );
+        remove_trusted_root(id);
+    }
+
+    /// A zero id is not a thing, and neither is an empty certificate.
+    #[test]
+    fn an_empty_certificate_is_not_an_anchor() {
+        assert!(add_trusted_root(b"").is_none());
+        assert!(!remove_trusted_root(0));
+    }
 }
