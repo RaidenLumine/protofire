@@ -337,8 +337,8 @@ behind `rootfs_type`, and `set_rootfs_type` has no caller.
 | Volume recovery | Transaction undo-log replay and check-and-repair at boot | Boot-time only, under the filesystem lock; no online repair |
 | Fault injection matrix | Single- and dual-fault, multi-cycle crash testing, and the V4-only crash points — the shadow xattr table and the two superblock phases a V3+ commit adds (`tests/simplefs/fault_matrix.rs`) | Deterministic and bounded, so it does not search for a failing sequence; V3 has no case of its own, since its commit sequence is V4's without the xattr table |
 | Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the xattr syscalls | The VNode default is `Unsupported`, so the other filesystems do not expose xattrs; tmpfs is not mounted, and the shipped SimpleFs images are V2, so the persistent table is exercised by the tests |
-| Transparent file compression | Encoder and decoder in `src/fs/simplefs/compression.rs`; the per-inode flag round-trips through the on-disk format | Nothing calls the encoder: no write path produces a compressed extent, and `set_file_flags` is unimplemented in every backend |
-| Cross-file deduplication | Sharing and copy-on-write unsharing in `src/fs/simplefs/dedup.rs`; the refcount map starts empty at mount | `maybe_dedup_inode` and `unshare_inode_extent` have no caller, so no extent is ever pooled; `get_file_flags`/`set_file_flags` are unimplemented |
+| Transparent file compression | Encoder and decoder in `src/fs/simplefs/compression.rs`; the per-inode `COMPRESSED` flag round-trips through the on-disk format and `SetFileFlags`/`GetFileFlags` answer for it on SimpleFs | Nothing calls the encoder: no write path produces a compressed extent, so the flag is settable and never honoured |
+| Cross-file deduplication | Sharing and copy-on-write unsharing in `src/fs/simplefs/dedup.rs`; the refcount map starts empty at mount; the `DEDUPED` flag is readable and `SetFileFlags` refuses to set it for a caller | `maybe_dedup_inode` and `unshare_inode_extent` have no caller, so no extent is ever pooled — the flag is answered but nothing produces the state it describes |
 | Block backend abstraction | ATA, VirtIO and NVMe all implement one `BlockDevice` trait, which also carries the queued path: `queue_depth`, `submit_read` (whose buffer must outlive the ticket, so it is `unsafe`) and `submit_write` (which the driver copies, so it is safe), with one `poll` for both.  A request carries a **run** — a whole number of blocks — and the NVMe driver issues one command for it, up to the 16 blocks its two-frame per-slot buffer holds; a longer request is split by the waiting calls, and a driver may refuse a run it cannot hold ([RFC 0010](rfcs/0010-carry-a-run-in-one-queued-request.md)).  A waiting read and a waiting write are those pairs polled at once, so the driver has one path per direction.  Both halves have a caller that does work somebody wanted: the write half is a flush's independent dirty blocks ([RFC 0009](rfcs/0009-queue-the-writes-a-flush-makes.md)), and the read half is the mount — the two superblock mirrors and, now that a request can carry one, the inode and dirent tables ([RFC 0007](rfcs/0007-hold-a-second-request-on-a-device.md), [RFC 0008](rfcs/0008-keep-a-sequential-miss-in-one-request.md)) | No hot-remove or device-error recovery path; a run bigger than the driver's buffer is the caller's to split, and only the waiting calls do |
 
 **Strengths:** the native SimpleFs with undo-log transactions and the two-phase
@@ -377,10 +377,11 @@ PBKDF2 primitives.
   the AF block size, the diffuse IV's byte order) recovered nothing, which is
   what says "model" rather than "value".  Rewriting it needs a reference to
   work against, and `cryptsetup` is now installed here, so the next attempt has
-  one: the volume is reproducible, `luksdump --dump-master-key` gives the
-  answer to compare against, and the digest is the oracle.  What is missing is
-  reading `lib/luks2/luks2.h` for the constants `AF_merge` is called with
-  rather than deriving them.
+  one: the volume is reproducible, `luksdump --dump-master-key` reports the
+  master key to compare against, and the digest is the oracle.  What is missing
+  is the constants `AF_merge` is called with — `cryptsetup`'s source names them
+  in `lib/luks2/luks2.h`, which is not in this tree, so the next attempt reads
+  them from that source rather than deriving them.
 - **Read-only is structural**: the synthetic filesystems (`/proc`, `/service`)
   implement the VFS `ReadOnlyFileSystem` half, and one blanket impl supplies
   every mutation as `PermissionDenied` — a view cannot declare a mutation, so
