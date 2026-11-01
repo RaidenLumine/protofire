@@ -162,6 +162,7 @@ help:
 		'  make check-abi-frozen-payload-riscv64 - the same frozen payload on riscv64' \
 		'  make check-ntfs-image                 - mount a volume `mkntfs` made, write to it, and have ntfs-3g'"'"'s own reader judge what came out' \
 		'  make check-ext4-image                 - open a volume `mkfs.ext4` made and read the file the host wrote into it' \
+		'  make check-luks2-image                - open a volume `cryptsetup` wrote and compare the key it recovers to the one `luksDump` prints' \
 		'' \
 		'Runtime gates:' \
 		'  make check-perf-baseline              - boot the demo and compare its measured work to the baseline' \
@@ -342,7 +343,7 @@ test-service:
 	check-feature-matrix \
 	check-abi-mirror check-abi-frozen-payload \
 	check-abi-frozen-payload-aarch64 check-abi-frozen-payload-riscv64 \
-	check-ntfs-image check-ext4-image
+	check-ntfs-image check-ext4-image check-luks2-image
 
 # A `git commit` that is interrupted while it writes objects can leave a ref or
 # the index naming something that is not there, and the first symptom is a
@@ -505,6 +506,17 @@ check-ntfs-image:
 check-ext4-image:
 	CARGO="$(CARGO)" PROFILE="$(PROFILE)" CRATE="$(CRATE)" \
 		sh ./scripts/check-ext4-image.sh
+
+# The LUKS2 unwrap against a volume `cryptsetup` wrote.  Every other LUKS2
+# test feeds the parser bytes this tree made, which is why three model errors
+# survived together: the keyslot area was never decrypted, the AF merge was not
+# LUKS's algorithm, and the merge was XORed with the derived key, which is
+# LUKS1's wrap.  The judge is `cryptsetup luksDump --dump-master-key` and a
+# plaintext the host wrote into the payload.  Needs cryptsetup rather than
+# QEMU.
+check-luks2-image:
+	CARGO="$(CARGO)" PROFILE="$(PROFILE)" CRATE="$(CRATE)" \
+		sh ./scripts/check-luks2-image.sh
 
 # Every configuration `Cargo.toml` declares, built: the shipped `demo-disk`
 # build plus each switch the manifest names, and then all of them at once.  The

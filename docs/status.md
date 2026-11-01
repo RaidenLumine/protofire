@@ -340,36 +340,42 @@ PBKDF2 primitives.
   views and whatever a `FuseMount` adds.
 - **Unicode 15.1**: full NFC/NFD normalization and a GB18030 codec.
 - **Crash safety**: SimpleFs uses undo-log transactions and two-phase commit.
-- **Encryption at rest, unwired — and the LUKS2 unwrap does not work.**
-  `EncryptedBlockDevice` wraps a block device in AES-256 XTS, and that half is
-  sound: the cipher is NIST-vector tested and the device encrypts a sector at a
-  time with the LBA as tweak.  Nothing constructs it, so no mount is encrypted.
-  The other half, `luks2_open`, **cannot open a volume `cryptsetup` wrote.**  A
-  real volume was made to ask (`cryptsetup luksFormat --type luks2 --pbkdf
-  pbkdf2 --key-size 512`) and the function answered `InvalidCredential`.
+- **Encryption at rest: the unwrap works, the mount is unwired.**
+  `EncryptedBlockDevice` wraps a block device in AES-256 XTS, and `luks2_open`
+  now **opens a volume `cryptsetup` wrote** — `make check-luks2-image` makes one,
+  writes a plaintext marker into its payload, and asserts both that the key the
+  unwrap recovers is the one `luksDump --dump-master-key` prints and that the
+  payload reads back in the clear.  Nothing constructs the device from a boot
+  yet, so no zone is mounted encrypted.
 
-  Three things were established against that volume before the trail went cold:
+  Getting there needed four corrections, each measured against a real volume
+  rather than argued:
 
-  - the digest is taken over the **whole** master key, and the code took its
-    first 32 bytes — fixed, with `a_digest_is_over_the_whole_master_key_not_its_first_half`
-    pinning the model (not the call: see the test's own note);
-  - the keyslot area is itself AES-XTS encrypted and must be decrypted before
-    `AF_merge`, which this code does not do at all;
-  - `af_merge` implements an algorithm that is not LUKS's — its own comment
-    describes "XOR the hash of the previous stripe into the current one",
-    where cryptsetup folds each stripe into a running buffer and diffuses
-    after every fold.
+  - the digest is taken over the **whole** master key, not its first 32 bytes;
+  - the keyslot area is itself AES-XTS and must be decrypted before the merge
+    — this was missing entirely;
+  - `af_merge` implemented an algorithm that is not LUKS's.  It XORed the hash
+    of the previous stripe into the current one; the format XORs each stripe
+    into a running buffer and diffuses after every fold, then unwraps with the
+    last stripe;
+  - LUKS2 does **not** XOR the merge output with the derived key.  That is
+    LUKS1's wrap; in LUKS2 the derived key's job is to decrypt the area and
+    what comes out of the merge is the volume key already.
 
-  So the unwrap is wrong at the model level, not at a parameter.  An exhaustive
-  search over the parameters that were left open (the area's starting sector,
-  the AF block size, the diffuse IV's byte order) recovered nothing, which is
-  what says "model" rather than "value".  Rewriting it needs a reference to
-  work against, and `cryptsetup` is now installed here, so the next attempt has
-  one: the volume is reproducible, `luksdump --dump-master-key` reports the
-  master key to compare against, and the digest is the oracle.  What is missing
-  is the constants `AF_merge` is called with — `cryptsetup`'s source names them
-  in `lib/luks2/luks2.h`, which is not in this tree, so the next attempt reads
-  them from that source rather than deriving them.
+  One of those four was not in LUKS2 at all: the XTS tweak's alpha step
+  multiplied in the **wrong byte order** — carry out of the first byte and
+  0x87 into the last, where IEEE 1619 carries out of the last and folds into
+  the first.  That is a defect in `src/kernel/crypto.rs` that predates this
+  work and affects every user of `aes_xts_encrypt`/`decrypt`, and only LUKS2
+  exposed it because it is the first caller to decrypt more than one 16-byte
+  block in a unit.  The single-block NIST vector passed either way;
+  `aes_xts_known_vector_across_blocks` is the one that bites, and it was
+  mutation-tested by reverting the direction.
+
+  The area's tweak index starts at **0**, not at `area_offset / 512` — the one
+  parameter no reading of the source settles, because
+  `luks2_decrypt_from_storage` passes the offset as the *device* position and
+  `crypt_storage_init` counts from zero within it.
 - **Read-only is structural**: the synthetic filesystems (`/proc`, `/service`)
   implement the VFS `ReadOnlyFileSystem` half, and one blanket impl supplies
   every mutation as `PermissionDenied` — a view cannot declare a mutation, so
@@ -416,7 +422,7 @@ PBKDF2 primitives.
 | AES-256 + AES-XTS | Crypto engine in the kernel | No hardware acceleration path |
 | PBKDF2 key derivation | Key stretching for disk encryption | One KDF; no Argon2 or keyring |
 | EncryptedBlockDevice | Transparent block-device wrapper under any filesystem | Nothing constructs one; no rekey or key rotation; one key per device |
-| LUKS2 header parser | LUKS2 on-disk header parsing and `luks2_open` key recovery | No caller: no keyslot management or `cryptsetup`-style control surface |
+| LUKS2 header parser | LUKS2 header parsing, keyslot-area XTS decryption and `luks2_open` key recovery — it opens a volume `cryptsetup` wrote (`make check-luks2-image`) | No caller from a boot, and no keyslot management or `cryptsetup`-style control surface |
 
 ---
 

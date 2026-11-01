@@ -15,6 +15,7 @@ use alloc::vec::Vec;
 use crate::fs::block::BlockDevice;
 use crate::fs::block::BLOCK_SIZE;
 use crate::fs::crypt_device::EncryptedBlockDevice;
+use crate::kernel::crypto::aes_xts_decrypt;
 use crate::kernel::crypto::pbkdf2_hmac_sha256;
 use crate::kernel::crypto::sha256;
 use crate::Error;
@@ -402,36 +403,119 @@ fn parse_digest(json: &[u8]) -> Option<DigestParams> {
 
 // ── AF merge (anti-forensic split merge) ───────────────────────────────
 
-/// Merge AF stripes to recover the wrapped master key.
+/// Decrypt a keyslot area with AES-256-XTS and the derived key.
 ///
-/// Uses SHA-256 as the hash function for the AF chain.
-/// The AF data is `stripes * key_size` bytes on disk.
-/// After the merge, the first `key_size` bytes contain the wrapped key.
-fn af_merge(af_data: &[u8], _stripes: u32, key_size: usize) -> Vec<u8> {
-    let stripes = _stripes as usize;
-    if af_data.len() < stripes * key_size {
+/// The area is `aes-xts-plain64` with a 512-byte data unit, and the tweak's
+/// unit index counts from **0** within the area — see the call site for how
+/// that was established.  `derived_key` is used whole: its first half is the
+/// data key and its second half the tweak key, which is what a 64-byte
+/// `key_size` means here.
+///
+/// A key that is not a whole number of 64-byte XTS keys cannot be one, so an
+/// area under that is returned unchanged rather than half-decrypted; the merge
+/// after it then fails the digest, which is the honest outcome for a volume
+/// this function does not understand.
+fn decrypt_keyslot_area(area: &[u8], derived_key: &[u8]) -> Vec<u8> {
+    /// The XTS data unit the format uses for a keyslot area.
+    const KEYS_AREA_UNIT: usize = 512;
+
+    if derived_key.len() < 64 {
+        return area.to_vec();
+    }
+    let key: &[u8; 64] = match derived_key[..64].try_into() {
+        Ok(key) => key,
+        Err(_) => return area.to_vec(),
+    };
+
+    let mut plain = area.to_vec();
+    for (unit_index, unit) in plain.chunks_mut(KEYS_AREA_UNIT).enumerate() {
+        // The last chunk may be short; XTS decrypts a whole number of blocks,
+        // so it is decrypted up to its own length and the tail left as is.
+        aes_xts_decrypt(key, unit_index as u64, unit);
+    }
+    plain
+}
+
+/// Diffuse one block with SHA-256, the block index as a big-endian IV.
+///
+/// This is `diffuse` via `hash_buf` in cryptsetup's `lib/luks1/af.c`: the
+/// buffer is hashed in digest-sized pieces, and each piece is preceded by its
+/// own index as a `uint32_t` in big-endian order.  A trailing piece shorter
+/// than a digest is hashed (and written) at its own length, which is why the
+/// last piece is handled separately rather than zero-padded.
+fn af_diffuse_into(src: &[u8], dst: &mut [u8]) {
+    const DIGEST_SIZE: usize = 32; // SHA-256
+    let blocks = src.len() / DIGEST_SIZE;
+    let padding = src.len() % DIGEST_SIZE;
+
+    for i in 0..blocks {
+        let start = i * DIGEST_SIZE;
+        let mut input = Vec::with_capacity(4 + DIGEST_SIZE);
+        input.extend_from_slice(&(i as u32).to_be_bytes());
+        input.extend_from_slice(&src[start..start + DIGEST_SIZE]);
+        let digest = sha256(&input);
+        dst[start..start + DIGEST_SIZE].copy_from_slice(&digest[..DIGEST_SIZE]);
+    }
+    if padding > 0 {
+        let start = blocks * DIGEST_SIZE;
+        let mut input = Vec::with_capacity(4 + padding);
+        input.extend_from_slice(&(blocks as u32).to_be_bytes());
+        input.extend_from_slice(&src[start..start + padding]);
+        let digest = sha256(&input);
+        dst[start..start + padding].copy_from_slice(&digest[..padding]);
+    }
+}
+
+/// Recover the master key from the AF stripes a keyslot's area holds.
+///
+/// This is `AF_merge` in cryptsetup's `lib/luks1/af.c`, and it is not what
+/// this function used to do.  The old version XORed the hash of the *previous
+/// stripe* into the current one and returned the first stripe, which recovers
+/// nothing from a volume `AF_split` actually wrote.  The real algorithm folds
+/// each stripe into a running buffer, diffusing after every fold, and the last
+/// stripe is the one that unwraps it:
+///
+/// ```text
+/// buffer = 0
+/// for i in 0 .. stripes-1:
+///     buffer ^= stripe[i]
+///     buffer  = diffuse(buffer)
+/// key = stripe[stripes-1] ^ buffer
+/// ```
+///
+/// The asymmetry with `AF_split` is the format's point: splitting XORs the
+/// running buffer *into* each freshly drawn random stripe, so merging walks
+/// the same chain forward, and the last stripe is computed rather than drawn.
+///
+/// `af_data` is the whole area, `stripes * key_size` bytes, where `key_size`
+/// is the volume key length.  An area too short for that returns an empty
+/// vector, which the caller already refuses on.
+fn af_merge(af_data: &[u8], stripes: u32, key_size: usize) -> Vec<u8> {
+    let stripes = stripes as usize;
+    if stripes == 0 || key_size == 0 || af_data.len() < stripes * key_size {
         return Vec::new();
     }
 
-    let mut result = af_data.to_vec();
+    let mut buffer = alloc::vec![0u8; key_size];
 
-    // Process stripes in forward order: for each stripe i >= 1,
-    // XOR the hash of the previous stripe into the current stripe.
-    for i in 1..stripes {
-        let prev_start = (i - 1) * key_size;
-        let cur_start = i * key_size;
-
-        let prev_stripe = &result[prev_start..prev_start + key_size];
-        let hash_val = sha256(prev_stripe);
-
-        // XOR hash into current stripe (repeat hash if key_size > 32).
+    for i in 0..stripes - 1 {
+        let start = i * key_size;
         for j in 0..key_size {
-            result[cur_start + j] ^= hash_val[j % 32];
+            buffer[j] ^= af_data[start + j];
         }
+        // `diffuse` reads and writes one block in cryptsetup; a separate
+        // destination keeps that aliasing out of the borrow checker's way.
+        let mut diffused = alloc::vec![0u8; key_size];
+        af_diffuse_into(&buffer, &mut diffused);
+        buffer = diffused;
     }
 
-    // The first key_size bytes now contain the wrapped key.
-    result[..key_size].to_vec()
+    let last = (stripes - 1) * key_size;
+    let mut key = alloc::vec![0u8; key_size];
+    for j in 0..key_size {
+        key[j] = af_data[last + j] ^ buffer[j];
+    }
+    key
 }
 
 // ── Main LUKS2 open function ──────────────────────────────────────────
@@ -447,8 +531,53 @@ fn af_merge(af_data: &[u8], _stripes: u32, key_size: usize) -> Vec<u8> {
 /// starts after the LUKS2 header/payload offset, so data-unit indices
 /// are relative to the payload.
 pub fn luks2_open(device: Arc<dyn BlockDevice>, passphrase: &[u8]) -> Result<EncryptedBlockDevice> {
+    let (master_key, payload_offset_sectors) = unwrap(device.as_ref(), passphrase)?;
+
+    let payload_block_count = device
+        .block_count()
+        .saturating_sub(payload_offset_sectors / (BLOCK_SIZE as u64));
+
+    let payload_slice = crate::fs::block::BlockSliceDevice::new(
+        "luks2-payload",
+        device,
+        payload_offset_sectors / (BLOCK_SIZE as u64),
+        payload_block_count,
+        false,
+    );
+
+    let mut final_key = [0u8; 64];
+    final_key.copy_from_slice(&master_key[..64]);
+
+    Ok(EncryptedBlockDevice::new(
+        payload_slice,
+        final_key,
+        "luks2-crypt",
+    ))
+}
+
+/// Recover the volume key from a whole LUKS2 image held in memory.
+///
+/// The same unwrap `luks2_open` performs, split out so a test can compare the
+/// key itself against what `cryptsetup luksDump --dump-master-key` printed
+/// rather than only whether it satisfied the digest.  Those are different
+/// claims: a key that reproduces the digest is *a* key the volume would
+/// accept, and the assertion worth making is that it is *the* key.
+pub fn recover_master_key(image: &[u8], passphrase: &[u8]) -> Result<Vec<u8>> {
+    let device = crate::kernel::block::MemoryBlockDevice::new(
+        "luks2-recover",
+        alloc::vec::Vec::from(image),
+        true,
+    );
+    let (key, _payload_offset) = unwrap(device.as_ref(), passphrase)?;
+    Ok(key)
+}
+
+/// The unwrap's core: header, JSON, keyslot, decrypt, merge, digest.
+///
+/// Returns the volume key and the payload offset in sectors.
+fn unwrap(device: &dyn BlockDevice, passphrase: &[u8]) -> Result<(Vec<u8>, u64)> {
     // 1. Parse the binary header.
-    let header = parse_luks2_header(device.as_ref())?;
+    let header = parse_luks2_header(device)?;
 
     // 2. Read the JSON metadata area.
     let json_size = header.json_size as usize;
@@ -536,29 +665,39 @@ pub fn luks2_open(device: Arc<dyn BlockDevice>, passphrase: &[u8]) -> Result<Enc
         af_data.copy_from_slice(&extended[af_byte_offset..af_byte_offset + af_total_size]);
     }
 
-    // 6. AF merge to recover the wrapped key.
-    let wrapped_key = af_merge(&af_data, keyslot.af_stripes, keyslot.key_size);
+    // 6. Decrypt the keyslot area, then AF-merge it.
+    //
+    // The area is itself encrypted — `"encryption": "aes-xts-plain64"` names
+    // the cipher and the derived key *is* the XTS key — so the stripes only
+    // become stripes after this.  This step did not exist, and a volume
+    // `cryptsetup` wrote shows it immediately: merging the raw area recovers
+    // nothing.
+    //
+    // The tweak's data-unit index starts at **0**, not at the area's offset.
+    // That is the one parameter no amount of reading the source settles by
+    // inspection — `luks2_decrypt_from_storage` passes `area_offset /
+    // SECTOR_SIZE`, which reads like a starting index — and it was measured
+    // against a real volume: with the index at 0 the merge reproduces the
+    // master key `luksDump --dump-master-key` reports, and with it at
+    // `area_offset / 512` it does not.  `crypt_storage_init` is given the
+    // area's own offset as the *device* offset and counts from zero within it.
+    let area_plain = decrypt_keyslot_area(&af_data, &derived_key);
 
-    if wrapped_key.len() != keyslot.key_size {
+    // 7. AF merge recovers the master key.
+    let master_key = af_merge(&area_plain, keyslot.af_stripes, keyslot.key_size);
+
+    if master_key.len() != keyslot.key_size {
         return Err(Error::InvalidCredential);
     }
 
-    // 7. XOR with derived key to get the candidate master key. For AES-256-XTS,
-    //    key_size is 64 bytes (two 32-byte keys). For AES-128-XTS, key_size is 32
-    //    bytes.
+    // There is no XOR with the derived key here, and no XTS key expansion from
+    // a single half.  LUKS1 wraps the master key by XORing it with the KDF
+    // output; LUKS2 does not — the derived key's job is to decrypt the area,
+    // and what comes out of the merge *is* the volume key, already
+    // `key_size` bytes with an XTS pair inside it when the cipher needs one.
+    // Adding the XOR back would recover the right answer only for a volume
+    // whose key happened to be the XOR of two things.
     let xts_key_size = keyslot.key_size;
-    let mut xts_key = alloc::vec![0u8; xts_key_size.max(64)];
-
-    for j in 0..xts_key_size {
-        xts_key[j] = wrapped_key[j] ^ derived_key[j];
-    }
-
-    // If key is only 32 bytes (AES-128-XTS), derive Key2 = SHA256(Key1).
-    if xts_key_size == 32 {
-        let key1 = &xts_key[..32];
-        let key2 = sha256(key1);
-        xts_key[32..64].copy_from_slice(&key2);
-    }
 
     // 8. Verify the digest.
     let digest = parse_digest(&json_raw).ok_or(Error::NotFound)?;
@@ -578,34 +717,14 @@ pub fn luks2_open(device: Arc<dyn BlockDevice>, passphrase: &[u8]) -> Result<Enc
     // `PBKDF2(full key, salt)` reproduces the digest and `PBKDF2(first 32)`
     // does not.  Measured against a volume made with
     // `cryptsetup luksFormat --pbkdf pbkdf2 --key-size 512`.
-    if !digest_matches_key(&xts_key[..xts_key_size], &digest) {
+    if !digest_matches_key(&master_key[..xts_key_size], &digest) {
         return Err(Error::InvalidCredential);
     }
 
     // 9. Determine the payload offset from JSON.
     let payload_offset_sectors = get_payload_offset_from_json(&json_raw).unwrap_or(0);
 
-    // 10. Build the payload slice and wrap in EncryptedBlockDevice.
-    let payload_block_count = device
-        .block_count()
-        .saturating_sub(payload_offset_sectors / (BLOCK_SIZE as u64));
-
-    let payload_slice = crate::fs::block::BlockSliceDevice::new(
-        "luks2-payload",
-        device,
-        payload_offset_sectors / (BLOCK_SIZE as u64),
-        payload_block_count,
-        false,
-    );
-
-    let mut final_key = [0u8; 64];
-    final_key.copy_from_slice(&xts_key[..64]);
-
-    Ok(EncryptedBlockDevice::new(
-        payload_slice,
-        final_key,
-        "luks2-crypt",
-    ))
+    Ok((master_key, payload_offset_sectors))
 }
 
 /// Whether `key` is the master key a digest was taken over.

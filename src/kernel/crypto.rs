@@ -1291,24 +1291,35 @@ pub fn aes128_gcm_decrypt(
 // the sector id and encrypted with the tweak key; each 16-byte data block is
 // XORed with the running tweak, encrypted with the data key, and XORed with
 // the tweak again.  Between blocks the tweak is multiplied by `x` in
-// GF(2^128) (reduction polynomial 0x87, big-endian representation).
+// GF(2^128) (reduction polynomial 0x87, little-endian byte order).
 
-/// Multiply a 128-bit tweak by `x` in GF(2^128) (XTS "alpha" step).
+/// Multiply a 128-bit tweak by `x` in GF(2^128) (the XTS "alpha" step).
 ///
-/// IEEE 1619 represents field elements as 16 big-endian bytes with reduction
-/// polynomial x^128 + x^7 + x^2 + x + 1 (0x87).  Multiplying by x is a 1-bit
-/// left shift; if the top bit was set, XOR the low byte with 0x87.
+/// IEEE 1619 stores an element as 16 bytes with the *low* byte first: the
+/// tweak a sector starts from is the tweak key's encryption of the sector
+/// number as a little-endian integer, and the bytes that come out are then
+/// read that way.  Multiplying by `x` is therefore a 1-bit left shift that
+/// carries **into the higher byte**, with the bit shifted out of the last byte
+/// folded back into the first with the polynomial's 0x87.
+///
+/// This was written the other way round — carry out of `t[0]`, 0x87 into
+/// `t[15]`, which is the big-endian reading — and the comment above said
+/// "big-endian" to match.  It is wrong, and a LUKS2 keyslot area is where it
+/// shows: the first 32 bytes of a decrypted area came out right and everything
+/// after it was garbage, because the first two blocks share a tweak that is
+/// correct for both and the third is the first one that needs the step.  With
+/// the carry reversed the whole unit matches OpenSSL's XTS.
 fn xts_mul_alpha(tweak: &[u8; 16]) -> [u8; 16] {
     let mut t = *tweak;
-    let carry = t[0] >> 7;
-    let mut i = 0;
-    while i < 15 {
-        t[i] = (t[i] << 1) | (t[i + 1] >> 7);
-        i += 1;
+    let carry = t[15] >> 7;
+    let mut i = 15;
+    while i > 0 {
+        t[i] = (t[i] << 1) | (t[i - 1] >> 7);
+        i -= 1;
     }
-    t[15] <<= 1;
+    t[0] <<= 1;
     if carry == 1 {
-        t[15] ^= 0x87;
+        t[0] ^= 0x87;
     }
     t
 }
@@ -4038,6 +4049,45 @@ mod tests {
                 0x0e, 0x0f
             ]
         );
+    }
+
+    /// The alpha step across four blocks, not one.
+    ///
+    /// The single-block NIST vector above cannot see `xts_mul_alpha`: one
+    /// block never advances the tweak, so a multiplication that shifts the
+    /// bytes the wrong way passes it.  This one is four blocks of the same key
+    /// and the same sector, generated with OpenSSL through Python's
+    /// `cryptography`, and its first block is the single-block answer — which
+    /// is what makes it the same test extended rather than a second opinion.
+    ///
+    /// Measured, this is what the wrong direction costs: the first 32 bytes
+    /// decrypt correctly and everything after them is garbage, which reads as
+    /// "the cipher works" until something spans a block.  A LUKS2 keyslot area
+    /// spans 500 of them.
+    #[test]
+    fn aes_xts_known_vector_across_blocks() {
+        let key: [u8; 64] = [
+            0x27, 0x18, 0x28, 0x18, 0x28, 0x45, 0x90, 0x45, 0x23, 0x53, 0x60, 0x28, 0x74, 0x71,
+            0x35, 0x26, 0x62, 0x49, 0x77, 0x57, 0x24, 0x70, 0x93, 0x69, 0x99, 0x59, 0x57, 0x49,
+            0x66, 0x96, 0x76, 0x27, 0x31, 0x41, 0x59, 0x26, 0x53, 0x58, 0x97, 0x93, 0x23, 0x84,
+            0x62, 0x64, 0x33, 0x83, 0x27, 0x95, 0x02, 0x88, 0x41, 0x97, 0x16, 0x93, 0x99, 0x37,
+            0x51, 0x05, 0x82, 0x09, 0x74, 0x94, 0x45, 0x92,
+        ];
+        let mut data = [0u8; 64];
+        for (i, byte) in data.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+        let expected: [u8; 64] = [
+            0x1c, 0x3b, 0x3a, 0x10, 0x2f, 0x77, 0x03, 0x86, 0xe4, 0x83, 0x6c, 0x99, 0xe3, 0x70,
+            0xcf, 0x9b, 0xea, 0x00, 0x80, 0x3f, 0x5e, 0x48, 0x23, 0x57, 0xa4, 0xae, 0x12, 0xd4,
+            0x14, 0xa3, 0xe6, 0x3b, 0x5d, 0x31, 0xe2, 0x76, 0xf8, 0xfe, 0x4a, 0x8d, 0x66, 0xb3,
+            0x17, 0xf9, 0xac, 0x68, 0x3f, 0x44, 0x68, 0x0a, 0x86, 0xac, 0x35, 0xad, 0xfc, 0x33,
+            0x45, 0xbe, 0xfe, 0xcb, 0x4b, 0xb1, 0x88, 0xfd,
+        ];
+        super::aes_xts_encrypt(&key, 255, &mut data);
+        assert_eq!(data, expected);
+        super::aes_xts_decrypt(&key, 255, &mut data);
+        assert_eq!(data[0], 0, "decrypt must recover the plaintext");
     }
 
     #[test]
