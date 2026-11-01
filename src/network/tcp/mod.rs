@@ -41,6 +41,7 @@ pub use table::TcpConnectionTable;
 pub use types::TcpConnectionState;
 pub use types::TcpHeader;
 pub use types::TcpState;
+pub use types::TcpWriteWait;
 pub use types::TCP_MIN_HEADER_SIZE;
 
 // ─── tests ───
@@ -81,6 +82,101 @@ mod tests {
     /// the connection's own queue rather than through `read`, because the
     /// host's simulated scheduler lets the caller's frame keep running after a
     /// park — so `read`'s loop cannot be observed from outside it.  The two
+    /// A full send buffer parks a writer, and room releases it.
+    ///
+    /// The mirror of the reader test below, and the half `poll` needed: before
+    /// this, a `POLLOUT` wait re-probed on a timer, so an acknowledgement that
+    /// freed room mid-sleep was noticed at the next tick rather than when it
+    /// arrived.  The assertions are the same shape — the writer is the thread
+    /// that leaves the CPU, and the wake is what brings it back — because it is
+    /// the same mechanism and the same three-way answer.
+    #[test]
+    fn a_tcp_writer_parks_on_a_full_buffer_and_room_wakes_it() {
+        use crate::kernel::process::Scheduler;
+        use crate::network::link::device::mock::MockNetworkDevice;
+        use alloc::sync::Arc;
+
+        let scheduler: &'static Scheduler =
+            alloc::boxed::Box::leak(alloc::boxed::Box::new(Scheduler::new()));
+        // SAFETY: the scheduler is leaked, so it outlives every global lookup
+        // in this thread, and the host slot is thread-local.
+        unsafe {
+            scheduler.install_global_unchecked();
+        }
+        let writer = scheduler.spawn_named("tcp-writer", 0x1000);
+        let filler = scheduler.spawn_named("tcp-filler", 0x2000);
+        scheduler.schedule();
+        assert_eq!(scheduler.current_thread_id(), Some(writer.tid()));
+
+        // SAFETY: nothing is using the stack; this test installs it.
+        unsafe {
+            crate::network::stack::NetworkStack::uninstall_global();
+        }
+        let device = Arc::new(MockNetworkDevice::new(
+            "tcp-write",
+            [0x52, 0x54, 1, 2, 3, 4],
+        ));
+        crate::network::stack::NetworkStack::init_with_device(device, [10, 0, 2, 16]);
+        let stack = crate::network::stack::NetworkStack::global().expect("stack");
+        let remote = [10, 0, 2, 3];
+
+        let mut established = TcpConnectionState::new(40011, remote, 80, 1, 0);
+        established.state = TcpState::Established;
+        stack
+            .tcp_table()
+            .lock()
+            .insert(established)
+            .expect("insert");
+
+        // Fill the send buffer, which is the state a short write leaves.
+        let wait = {
+            let conn = stack
+                .tcp_table()
+                .lock()
+                .lookup(40011, remote, 80)
+                .expect("connection");
+            let mut state = conn.lock();
+            let filler_bytes = alloc::vec![0xAAu8; super::types::MAX_SEND_BUFFER];
+            let accepted = state.write(&filler_bytes);
+            assert_eq!(accepted, super::types::MAX_SEND_BUFFER, "the buffer fills");
+            state.writer()
+        };
+        assert_eq!(wait.room(), 0, "a full buffer has no room");
+
+        // The writer parks, and nothing else can run, so it is the one that
+        // leaves the CPU.
+        assert_eq!(
+            wait.wait(scheduler.current_tick() + 100),
+            crate::network::udp::DatagramWaitOutcome::Parked
+        );
+        assert_eq!(
+            scheduler.current_thread_id(),
+            Some(filler.tid()),
+            "the writer parked and the filler ran"
+        );
+        assert_eq!(scheduler.waiting_count(), 1, "the writer is parked");
+
+        // Room appears, which is what an acknowledgement does.
+        {
+            let conn = stack
+                .tcp_table()
+                .lock()
+                .lookup(40011, remote, 80)
+                .expect("connection");
+            let mut state = conn.lock();
+            state.send_buffer.clear();
+            state.wake_writer();
+        }
+        assert_eq!(scheduler.waiting_count(), 0, "the room released it");
+
+        scheduler.schedule();
+        assert_eq!(scheduler.current_thread_id(), Some(writer.tid()));
+        assert!(
+            wait.room() > 0,
+            "the published room is what a re-probe reads"
+        );
+    }
+
     /// facts that make `read` work are checked directly: a reader parks, and
     /// the delivery path releases it with the bytes in place.
     #[test]

@@ -235,6 +235,70 @@ struct PollFd {
 
 /// Probe all PollFd entries and set their `revents` fields.
 /// Returns the number of fds with non-zero revents.
+/// Park the calling thread on the connections these descriptors name.
+///
+/// One descriptor is enough: the wait is per connection, and a thread blocked
+/// on any of them is woken by whichever becomes ready — the loop re-probes
+/// every descriptor when it wakes, so a wake from one is a wake for all.  A
+/// descriptor that names no connection (a file, a pipe, a device) has nothing
+/// to park on and is answered by the probe alone, which is what those objects
+/// have always done: they are ready or they are not.
+///
+/// Bare metal only: the host build has no connections to park on, and its
+/// scheduler has no waiter to park.
+fn park_on_polled_descriptors(process: &crate::kernel::process::Process, fds: &[i32]) {
+    #[cfg(target_os = "none")]
+    {
+        use crate::network::udp::DatagramWaitOutcome;
+
+        let Some(stack) = crate::network::stack::NetworkStack::global() else {
+            return;
+        };
+        for &raw in fds {
+            let fd = raw as crate::kernel::process::FileDescriptor;
+            let Ok(handle) = process.fd_entry(fd) else {
+                continue;
+            };
+            let Some(wait) = handle.tcp_write_wait(&stack) else {
+                continue;
+            };
+            // One park, then return: the caller's loop re-probes, so a second
+            // wait here would be a second deadline for the same decision.
+            if wait.wait(stack.current_tick().saturating_add(POLL_PROBE_TICKS))
+                == DatagramWaitOutcome::CannotPark
+            {
+                // No scheduler.  The caller's own loop handles that by
+                // returning; parking again would spin.
+                return;
+            }
+            return;
+        }
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = (process, fds);
+    }
+}
+
+/// The descriptors of `fds` that ask for `POLLOUT`, and are real.
+///
+/// Taken before the wait so the waiting closures do not borrow the same slice
+/// the probe writes to.
+fn writable_descriptors(fds: &[PollFd]) -> alloc::vec::Vec<i32> {
+    fds.iter()
+        .filter(|entry| entry.fd >= 0 && entry.events & POLLOUT != 0)
+        .map(|entry| entry.fd)
+        .collect()
+}
+
+/// How long one park lasts before the loop re-probes on its own.
+///
+/// The park is released by the connection when room appears, so this is a
+/// backstop rather than the mechanism — but it has to be short enough that a
+/// missed wake costs a tick rather than the caller's whole timeout.
+#[cfg(target_os = "none")]
+const POLL_PROBE_TICKS: u64 = 1;
+
 fn probe_all(process: &crate::kernel::process::Process, fds: &mut [PollFd]) -> usize {
     let mut ready_count: usize = 0;
 
@@ -305,10 +369,22 @@ pub(super) fn poll(context: &mut super::SyscallContext) -> Result<super::Syscall
                 return Ok(super::SyscallDispatch::complete(ready_count));
             }
 
-            // Phase 2: blocking wait with timeout.
-            // Re-probe after sleeping; the scheduler's timer tick handler wakes
-            // the thread when the deadline expires.  This is a timer-based poll
-            // (not event-driven) — correct but adds wake-up latency.
+            // Phase 2: block on what the descriptors name, with the deadline
+            // as a backstop rather than as the mechanism.
+            //
+            // The probe is still the answer — a wake means "look again", not
+            // "ready", because another thread may have taken what was reported
+            // and the deadline arrives as a wake too.  What changed is *when*
+            // it looks: the wait registers on the connections the polled
+            // descriptors name, so the acknowledgement that frees send-buffer
+            // room wakes this thread when it arrives rather than at the next
+            // timer tick.  Measured before, a write that found the buffer full
+            // and a `poll` for `POLLOUT` sat out the whole probe interval with
+            // room available the whole time.
+            // The parked-on descriptors are taken once, before the wait closures
+            // borrow `fds` mutably: the set does not change during one `poll`,
+            // and a closure that read `fds` here would be borrowing it twice.
+            let waiting_on = writable_descriptors(fds);
             let ready_count = super::wait_common::wait_until_ready(
                 timeout_ticks,
                 u64::MAX,
@@ -317,14 +393,19 @@ pub(super) fn poll(context: &mut super::SyscallContext) -> Result<super::Syscall
                     (n > 0).then_some(n)
                 },
                 || {
-                    // Short sleep between probes (used only for the
-                    // block-indefinitely path, which poll never enters since we
-                    // always pass an explicit timeout_ticks > 0 here).
-                    crate::kernel::process::scheduler::api::sleep_current(1);
+                    // Only the block-indefinitely path reaches this, and poll
+                    // never enters it: an explicit timeout is always passed.
+                    park_on_polled_descriptors(process, &waiting_on);
                     true
                 },
                 |remaining| {
-                    crate::kernel::process::scheduler::api::sleep_current(remaining);
+                    park_on_polled_descriptors(process, &waiting_on);
+                    // The deadline is the backstop, so it still has to advance
+                    // the clock this loop reads even when a connection is
+                    // waiting on: a descriptor that never becomes ready is a
+                    // poll that has to return at its deadline, not one that
+                    // parks forever.
+                    crate::kernel::process::scheduler::api::sleep_current(remaining.min(1));
                     true
                 },
                 super::wait_common::current_wait_timed_out,

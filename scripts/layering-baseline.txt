@@ -294,6 +294,27 @@
 # rather than a new direction: the service manager has always read the
 # declarations it runs.
 #
+# `network` -> `process` grew by two when `poll` started parking on a
+# connection: a wait queue parks the *current thread*, so the wait handle names
+# `Scheduler` to find it.  That is the direction the row already had — a
+# network wait has always been a thread parked on the scheduler — and the two
+# additions are the writer's half of what the reader already had.
+#
+# `mod` -> `fs` grew by two for the boot's encrypted-zone question: the kernel
+# asks the filesystem layer whether any zone on the disk carries a LUKS2 header
+# before it mounts.  `mod` already names `fs` for the mount itself.
+#
+# `mod` -> `console` and `console` -> `drivers` are one pair: the boot asks the
+# console for a passphrase before the filesystem mounts, and the console reads
+# it by polling the serial port rather than parking a waiter, because at that
+# point there is no scheduler to park one on.  Neither is a new direction —
+# `mod` already names `console` for the banner and `console` already names
+# `drivers` for the keyboard — what is new is the *reverse* direction on the
+# second: the console asking a driver for a byte is the one place the ordering
+# between them is not "driver feeds console".  It is argued rather than removed
+# because the alternative is a secret read that needs the scheduler, and the
+# scheduler is exactly what does not exist yet at that point in the boot.
+#
 # `fs` -> `crypto` and `fs` -> `block` each grew by one when the boot learned
 # to open an encrypted zone.  Neither is a new direction: `fs` already asks
 # `crypto` for the digests a service origin and a signature are checked with,
@@ -374,6 +395,7 @@ audit                        handle_rights                2
 audit                        process                      1
 block                        sync                         2
 boot_report                  sync                         1
+console                      drivers                      1
 console                      process                      5
 console                      sync                         1
 device                       drivers                      8
@@ -415,9 +437,10 @@ memory                       smp                          1
 memory                       topology                     1
 mod                          audit                        6
 mod                          block                        1
+mod                          console                      1
 mod                          device                       1
 mod                          drivers                      1
-mod                          fs                           17
+mod                          fs                           19
 mod                          kernel_log                   1
 mod                          memory                       6
 mod                          network                      9
@@ -432,7 +455,7 @@ mod                          workload                     3
 network                      crypto                       30
 network                      fs                           7
 network                      ipc                          1
-network                      process                      9
+network                      process                      11
 network                      random                       6
 network                      sync                         18
 nmi                          sync                         1
@@ -453,7 +476,7 @@ process                      handle_rights                2
 process                      irq_balance                  2
 process                      maintenance                  2
 process                      memory                       24
-process                      network                      17
+process                      network                      19
 process                      percpu                       12
 process                      power                        1
 process                      security                     11
@@ -490,10 +513,10 @@ syscall                      irq_balance                  3
 syscall                      irq_stats                    1
 syscall                      kernel_log                   4
 syscall                      memory                       14
-syscall                      network                      18
+syscall                      network                      20
 syscall                      percpu                       1
 syscall                      power                        1
-syscall                      process                      167
+syscall                      process                      168
 syscall                      random                       1
 syscall                      security                     4
 syscall                      service                      1

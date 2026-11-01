@@ -289,7 +289,14 @@ fn process_data_ack(state: &mut TcpConnectionState, ack_val: u32) {
             state.retransmit.count = 0;
         }
         let pop_bytes = (diff as usize).min(state.send_buffer.len());
-        state.send_buffer.drain(..pop_bytes);
+        if pop_bytes > 0 {
+            state.send_buffer.drain(..pop_bytes);
+            // Room came back, so a writer parked on a full buffer has
+            // something to do now.  Woken here rather than left to `poll`'s
+            // timer: the acknowledgement that freed the room is the event, and
+            // the timer only ever approximates when it arrived.
+            state.wake_writer();
+        }
     }
 }
 

@@ -1178,15 +1178,17 @@ networking, with more protocols in the tree than the receive path dispatches.
 **Weaknesses:**
 
 - **Not every network syscall is wrapped** in the shared user library.
-- **`poll` wakes on its timer, not on the connection**: a write that finds
-  `MAX_SEND_BUFFER` full returns a short count
+- **`poll` parks on the connection it waits for, and the deadline is a
+  backstop.**  A write that finds `MAX_SEND_BUFFER` full returns a short count
   ([RFC 0032](rfcs/0032-decide-what-a-full-send-buffer-does.md)) and `poll`
-  reports `POLLOUT` only when the send buffer has room, so a program can wait
-  rather than spin — but the wait is a timed re-probe, not a park on the
-  connection the way a TCP read parks
-  ([RFC 0031](rfcs/0031-let-a-tcp-reader-wait-instead-of-spin.md)) and a name
-  resolution does ([RFC 0029](rfcs/0029-wait-for-a-dns-answer-instead-of-polling.md)),
-  so the wake is bounded by the probe interval rather than immediate.
+  reports `POLLOUT` only when the send buffer has room; the wait registers on
+  the connection's writable queue, which `process_data_ack` wakes the moment an
+  acknowledgement drains bytes.  Before this the wait was a timed re-probe, so
+  room that appeared mid-sleep was noticed at the next tick.  What is still not
+  immediate: a descriptor with nothing to park on — a file, a pipe, a device —
+  is answered by the probe alone, which is correct for an object that is ready
+  or is not, and a mixed set is woken by whichever descriptor became ready and
+  re-probes all of them.
 - **In-kernel TLS has a fixed trust set**: the anchors are compiled in, with no
   way to add or replace one at runtime.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,
@@ -1207,7 +1209,7 @@ networking, with more protocols in the tree than the receive path dispatches.
 | Pipe | VFS-backed, anonymous, blocking read/write | No named pipe and no descriptor passing over a pipe |
 | Signal | Signals 1-31 (a 32-slot handler table, slot 0 unused); install/enqueue/wait | No real-time signals (32-42), and no signal-storm stress baseline |
 | Signal mask | Per-process blocked signal tracking, u32 bitfield | — |
-| Async signal delivery | Signal frame on user stack carrying the interrupted context, arch-specific trampoline, sigreturn; all three architectures | The kernel half is on all three; the user-side trampoline the path needs is shipped by the shell payload's `sigasync` builtin on x86_64 only, so aarch64 and RISC-V are unexercised end to end |
+| Async signal delivery | Signal frame on user stack carrying the interrupted context, arch-specific trampoline, sigreturn; all three architectures, and `sigasync` drives it end to end on each — delivery, the trampoline, `sigreturn` and a caller-saved register's restore are asserted by the console gates | No real-time signal delivery, and the trampoline exists in the shell payload rather than in a userspace library |
 | SA_SIGINFO support | Not implemented: a handler is entered with the signal number, and `wait_signal` returns a `ProcessSignalRecord { signal, sender_pid, payload }` | An siginfo_t (`si_code`, `si_uid`, `si_addr`) and the `SA_SIGINFO` flag |
 | SA_RESTART support | Automatic syscall restart on signal return, RestartBlock per thread | — |
 | sigsuspend (#135) | Atomic mask swap and thread suspend until a signal | — |

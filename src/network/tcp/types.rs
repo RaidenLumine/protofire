@@ -266,6 +266,59 @@ impl TcpReadWait {
     }
 }
 
+/// A handle a writer can park on without holding the connection's lock.
+///
+/// The mirror of [`TcpReadWait`], and what a `poll` reporting `POLLOUT` needs:
+/// without it the only thing a waiting writer can do is re-probe on a timer,
+/// so an acknowledgement that frees room mid-sleep is noticed at the next tick
+/// rather than when it arrived.  `send_buffer` reaching zero is not the
+/// condition — room for one byte is — which is why the published count is the
+/// room left rather than the buffer's length.
+pub struct TcpWriteWait {
+    pub(super) writable: WaitQueue<usize>,
+}
+
+impl TcpWriteWait {
+    /// Block until the send buffer has room or `deadline` passes.
+    ///
+    /// The same three-way answer [`TcpReadWait::wait`] gives, for the same
+    /// reasons.
+    pub fn wait(&self, deadline: u64) -> crate::network::udp::DatagramWaitOutcome {
+        use crate::network::udp::DatagramWaitOutcome;
+
+        if self.room() != 0 {
+            return DatagramWaitOutcome::AlreadyQueued;
+        }
+        let Some(scheduler) = crate::kernel::process::Scheduler::global() else {
+            return DatagramWaitOutcome::CannotPark;
+        };
+        if scheduler.current_thread().is_none() {
+            return DatagramWaitOutcome::CannotPark;
+        }
+
+        let parked =
+            self.writable
+                .block_current_until_if(deadline, |available, waiters, thread| {
+                    if *available != 0 {
+                        false
+                    } else {
+                        waiters.push_back(thread.clone());
+                        true
+                    }
+                });
+        if parked {
+            DatagramWaitOutcome::Parked
+        } else {
+            DatagramWaitOutcome::AlreadyQueued
+        }
+    }
+
+    /// How much room the send buffer has right now.
+    pub fn room(&self) -> usize {
+        self.writable.with_lock(|available, _| *available)
+    }
+}
+
 /// Wakes a connection's readers when it goes out of scope.
 ///
 /// `process_segment` has a dozen return paths and several of them can end a
@@ -354,6 +407,15 @@ pub struct TcpConnectionState {
     /// and wakes one waiter after extending the buffer, and a close wakes
     /// every waiter so nobody sleeps through EOF.
     pub(super) readable: WaitQueue<usize>,
+    /// Writers parked because the send buffer had no room.
+    ///
+    /// The mirror of `readable`, and it exists for the mirror reason: a write
+    /// that found [`MAX_SEND_BUFFER`] full returns a short count (RFC 0032),
+    /// and a `poll` that reports `POLLOUT` only on a timer leaves the program
+    /// sleeping until its own deadline when the acknowledgement that freed
+    /// room arrived a millisecond later.  `pop_acknowledged` wakes one of
+    /// these the moment the buffer shrinks.
+    pub(super) writable: WaitQueue<usize>,
 }
 
 impl TcpConnectionState {
@@ -386,6 +448,7 @@ impl TcpConnectionState {
             peer_mss: MIN_PEER_MSS,
             peer_window_scale: 0,
             readable: WaitQueue::with_state(0),
+            writable: WaitQueue::with_state(0),
             ooo_queue: VecDeque::new(),
             peer_sack_blocks: Vec::new(),
             peer_sack_ok: false,
@@ -430,6 +493,7 @@ impl TcpConnectionState {
             peer_mss: MIN_PEER_MSS,
             peer_window_scale: 0,
             readable: WaitQueue::with_state(0),
+            writable: WaitQueue::with_state(0),
             ooo_queue: VecDeque::new(),
             peer_sack_blocks: Vec::new(),
             peer_sack_ok: false,
@@ -476,9 +540,31 @@ impl TcpConnectionState {
         });
     }
 
+    /// Announce room in the send buffer and wake one writer.
+    ///
+    /// Called after `send_buffer` shrank — an acknowledgement arrived, or a
+    /// segment was sent and retired — under the connection's lock, so the room
+    /// is visible before the wake for the same reason `wake_reader` publishes
+    /// the byte count first: a writer that wakes and finds the buffer still
+    /// full can only be looking at room another writer took.
+    pub(super) fn wake_writer(&self) {
+        let room = MAX_SEND_BUFFER.saturating_sub(self.send_buffer.len());
+        self.writable.wake_with(|available, waiters, waking| {
+            *available = room;
+            if let Some(thread) = WaitQueue::<usize>::take_next_waiter(waiters) {
+                waking.push(thread);
+            }
+        });
+    }
+
     /// How many threads are parked waiting to read.
     pub fn waiter_count(&self) -> usize {
         self.readable.waiter_count()
+    }
+
+    /// How many threads are parked waiting for room to write.
+    pub fn writer_waiter_count(&self) -> usize {
+        self.writable.waiter_count()
     }
 
     /// How many bytes are buffered for transmission and not yet acknowledged.
@@ -511,6 +597,13 @@ impl TcpConnectionState {
     pub fn reader(&self) -> TcpReadWait {
         TcpReadWait {
             readable: self.readable.clone(),
+        }
+    }
+
+    /// A handle a writer can park on, for the same reason.
+    pub fn writer(&self) -> TcpWriteWait {
+        TcpWriteWait {
+            writable: self.writable.clone(),
         }
     }
 

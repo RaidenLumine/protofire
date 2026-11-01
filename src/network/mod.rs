@@ -131,6 +131,18 @@ enum HostReadReset {
     ReadTimeout,
 }
 
+impl TcpConnection {
+    /// The bare-metal connection handle, which names the wait queues.
+    ///
+    /// `poll` needs this to park on the connection rather than on a timer: the
+    /// acknowledgement that frees send-buffer room wakes the queue this handle
+    /// holds, and a descriptor number does not name it.
+    #[cfg(target_os = "none")]
+    pub(crate) fn native(&self) -> &crate::network::tcp::NativeTcpConnection {
+        &self.native
+    }
+}
+
 /// A listening TCP socket.
 ///
 /// On host builds this wraps a `std::net::TcpListener`.  On bare-metal it

@@ -245,6 +245,24 @@ impl HandleEntry {
         }
     }
 
+    /// A handle to park on until this descriptor accepts a write.
+    ///
+    /// `None` for every object that has nothing to wait on: a file is always
+    /// writable, a device completes in place, and a listener never accepts a
+    /// write at all — `poll` answers all three from its own probe.  The one
+    /// object with a real wait is a TCP connection whose send buffer is full,
+    /// which is the case RFC 0032 made a short write rather than a block.
+    #[cfg(target_os = "none")]
+    pub(crate) fn tcp_write_wait(
+        &self,
+        stack: &crate::network::stack::NetworkStack,
+    ) -> Option<crate::network::tcp::TcpWriteWait> {
+        match &self.object {
+            KernelObject::Network(connection) => connection.native().write_wait(stack),
+            _ => None,
+        }
+    }
+
     pub(crate) fn into_file(self) -> Result<OpenFile> {
         match self.object {
             KernelObject::File(file) => Ok(file),

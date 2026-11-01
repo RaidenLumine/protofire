@@ -195,6 +195,28 @@ impl NativeTcpConnection {
         alloc::format!("{}:{}", self.remote_ip, self.remote_port)
     }
 
+    /// A handle to park on until the send buffer has room (bare-metal only).
+    ///
+    /// What `poll` needs to report `POLLOUT` on the event rather than on a
+    /// timer: the acknowledgement that frees room is the thing to wait for, and
+    /// a probe on an interval only ever approximates when it arrived.  The
+    /// handle is taken under the connection's lock and waited on after it is
+    /// released, for the reason `read` does the same — `process_segment` needs
+    /// that lock to shrink the buffer.
+    ///
+    /// `None` when this stack has no such connection, which a caller treats as
+    /// "nothing to wait on" rather than as an error: a `poll` of a descriptor
+    /// that has gone away is answered by its own probe.
+    pub fn write_wait(&self, stack: &NetworkStack) -> Option<crate::network::tcp::TcpWriteWait> {
+        let conn =
+            stack
+                .tcp_table()
+                .lock()
+                .lookup(self.local_port, self.remote_ip, self.remote_port)?;
+        let wait = conn.lock().writer();
+        Some(wait)
+    }
+
     /// Read up to `buffer.len()` bytes from the connection's receive buffer
     /// (bare-metal only).
     ///
