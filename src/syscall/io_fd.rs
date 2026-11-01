@@ -233,8 +233,6 @@ struct PollFd {
     revents: u16,
 }
 
-/// Probe all PollFd entries and set their `revents` fields.
-/// Returns the number of fds with non-zero revents.
 /// Park the calling thread on the connections these descriptors name.
 ///
 /// One descriptor is enough: the wait is per connection, and a thread blocked
@@ -299,6 +297,8 @@ fn writable_descriptors(fds: &[PollFd]) -> alloc::vec::Vec<i32> {
 #[cfg(target_os = "none")]
 const POLL_PROBE_TICKS: u64 = 1;
 
+/// Probe all PollFd entries and set their `revents` fields.
+/// Returns the number of fds with non-zero revents.
 fn probe_all(process: &crate::kernel::process::Process, fds: &mut [PollFd]) -> usize {
     let mut ready_count: usize = 0;
 
@@ -393,8 +393,11 @@ pub(super) fn poll(context: &mut super::SyscallContext) -> Result<super::Syscall
                     (n > 0).then_some(n)
                 },
                 || {
-                    // Only the block-indefinitely path reaches this, and poll
-                    // never enters it: an explicit timeout is always passed.
+                    // The block-indefinitely path: a caller that passed
+                    // `u64::MAX` as its timeout.  It is reached, so it parks
+                    // the same way the timed path does — the difference is
+                    // that nothing here advances the clock, which is what
+                    // "indefinitely" means.
                     park_on_polled_descriptors(process, &waiting_on);
                     true
                 },

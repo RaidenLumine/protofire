@@ -70,9 +70,10 @@ impl FileSystem {
     /// Empty is refused rather than stored: a LUKS2 volume cannot be unlocked
     /// with no passphrase, and a `crypt=` with nothing after it is a boot
     /// option someone got wrong rather than a request to try the empty one.
-    /// A name that unlocks nothing is a boot that spends its time in PBKDF2
-    /// and then mounts the medium raw, so refusing here says which of those
-    /// happened.
+    /// An empty name is a boot option someone got wrong rather than a request
+    /// to try the empty one, and LUKS2 cannot be unlocked with it: the boot
+    /// would spend its time in PBKDF2 and then fail the unwrap, which is a
+    /// second and later way to learn what this refusal says at once.
     pub fn set_crypt_passphrase(&mut self, passphrase: &str) {
         if passphrase.is_empty() {
             return;

@@ -315,10 +315,12 @@ impl FileSystem {
     ///
     /// The check for "is this encrypted" is the header magic, read once from
     /// the zone's first sector.  A zone that has the magic but does not open
-    /// with the passphrase given is a real failure and stops the boot: the
-    /// alternative is to mount ciphertext as a filesystem and report whatever
-    /// the parser makes of it, which is how a wrong passphrase becomes a
-    /// corrupt-volume report three subsystems later.
+    /// with the passphrase given is a real failure and refuses the *boot-disk
+    /// layout*: the alternative is to mount ciphertext as a filesystem and
+    /// report whatever the parser makes of it, which is how a wrong passphrase
+    /// becomes a corrupt-volume report three subsystems later.  The machine
+    /// then falls back to the in-memory demo volumes, which is what every
+    /// failed boot disk already did — see `init_with_boot_disk`.
     fn unlock_encrypted_zones(
         &self,
         zone_devices: Vec<(StorageZone, Arc<dyn BlockDevice>)>,
@@ -333,10 +335,11 @@ impl FileSystem {
                 unlocked.push((zone, device));
                 continue;
             }
-            // A zone with the header but no key is a boot that cannot do its
-            // job, and this stops rather than mounting ciphertext: handing a
-            // SimpleFs parser an AES-XTS stream produces a corrupt-volume
-            // error three subsystems later, which names the wrong problem.
+            // A zone with the header but no key is a boot disk that cannot be
+            // used, and this refuses it rather than mounting ciphertext:
+            // handing a SimpleFs parser an AES-XTS stream produces a
+            // corrupt-volume error three subsystems later, which names the
+            // wrong problem.
             let encrypted = crate::fs::luks2::luks2_open(device.clone(), passphrase.as_bytes())?;
             crate::println!(
                 "[fs    ] zone {} is LUKS2 and opened with the boot's passphrase",

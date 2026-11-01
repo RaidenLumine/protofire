@@ -192,12 +192,13 @@ pub struct FileSystem {
     /// only `/data` is encrypted is a shape worth supporting, and a boot that
     /// refused the whole disk because one zone was not encrypted would not.
     ///
-    /// **A secret held in memory for the boot's life.**  It arrives from the
-    /// boot command line (`crypt=`), which means it is visible in the
-    /// loader's configuration and, on a machine whose console is a serial
-    /// port, in whatever logged that line.  That is a deliberate first step
-    /// rather than a claim of security: it makes the mechanism reachable from
-    /// a boot at all, and `docs/status.md` records what it does not protect.
+    /// **A secret held in memory for the boot's life.**  Two sources, and the
+    /// boot says which it used.  `crypt=` on the command line is honoured
+    /// first, because a machine whose console cannot be read from where it
+    /// boots still has to come up — and that path is visible in the loader's
+    /// configuration and in whatever logged the console.  Without it, a boot
+    /// that finds an encrypted zone prints a prompt and reads the answer with
+    /// echo off, which is the path that does not reach a log.
     pub(crate) crypt_passphrase: Option<String>,
 }
 

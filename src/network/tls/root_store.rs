@@ -101,8 +101,8 @@ static NEXT_ROOT_ID: AtomicU64 = AtomicU64::new(1);
 /// chain, and validating DER would be a second parser to keep in step with the
 /// one that reads chains.
 ///
-/// Returns `None` when there is no heap to copy into, which is the only way
-/// this can fail.
+/// Returns `None` for an empty certificate — which is not an anchor — and for
+/// a heap that cannot take the copy.
 pub fn add_trusted_root(der: &[u8]) -> Option<u64> {
     if der.is_empty() {
         return None;
@@ -157,8 +157,9 @@ pub fn all_trusted_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
 
 /// How many anchors have been added at run time.
 ///
-/// Read by `/proc`'s TLS line and by the tests, so "an anchor was added" is
-/// checkable without going through a handshake.
+/// For a test that wants to know an anchor was added without going through a
+/// handshake.  Nothing in the boot reads it: there is no `/proc` line for TLS
+/// yet, and this is the counter such a line would print.
 pub fn added_root_count() -> usize {
     ADDED_ROOTS.lock().len()
 }

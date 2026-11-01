@@ -665,13 +665,14 @@ impl ConsoleTty {
 
     /// Turn echo off, or back on, for everything that reaches this console.
     ///
-    /// This is the switch that matters for a passphrase, and it is deliberately
-    /// wider than the read that uses it.  A character typed at the serial port
-    /// does not only reach the reader that asked for it: `poll_hardware_rx`
-    /// feeds every byte it takes to this console as well, so the echo comes
-    /// from *this* path whatever the reader does.  Measured — the first version
-    /// suppressed echo inside the read loop alone and the passphrase still
-    /// appeared in the boot log, because the console had already echoed it.
+    /// This is the switch that matters for a passphrase, and it is wider than
+    /// the read that uses it for two reasons.  A character typed at the serial
+    /// port also reaches this console through `poll_hardware_rx`, which is
+    /// where the echo comes from — so suppressing it inside the read loop
+    /// alone was measured leaving the passphrase in the boot log, the console
+    /// having echoed it already.  And the flag is also what
+    /// `poll_hardware_rx` asks before bridging a byte here at all, so setting
+    /// it is what keeps the secret out of the shell's input as well.
     ///
     /// While this is on, characters are still collected and lines still reach
     /// the reader; only the write back to the console stops.
@@ -686,11 +687,11 @@ impl ConsoleTty {
 
     /// Throw away the characters waiting to be read, not the output.
     ///
-    /// Used after a secret line has been taken: the same bytes were also fed
-    /// to this console, and a program that starts later would read them as its
-    /// own first line.  `clear` is the wrong tool here — it resets the escape
-    /// state and the history index as well, which is more than "forget what
-    /// was typed".
+    /// Used after a secret line has been taken.  Bytes that reached this
+    /// console before the echo flag was set are still queued, and a program
+    /// that starts later would read them as its own first line.  `clear` is
+    /// the wrong tool here — it resets the escape state and the history index
+    /// as well, which is more than "forget what was typed".
     fn drop_pending_input(&self) {
         let mut state = self.state.lock();
         state.cooked.clear();
@@ -749,16 +750,18 @@ impl ConsoleTty {
             };
             match byte {
                 b'\r' | b'\n' => {
-                    // The same bytes reached this console's own input queue,
-                    // because `poll_hardware_rx` feeds both it and the port
-                    // queue this loop reads.  Left there they are a line the
-                    // *shell* will read and run as a command — measured, the
-                    // passphrase arrived at the shell as
-                    // `unknown command: protofire-zone-passphrase`.  Only the
-                    // secret line is dropped: `clear` would also throw away
-                    // whatever else was pending, which here is the kernel's own
-                    // output — measured, it ate the middle of a log line and
-                    // the check that reads that line never saw it.
+                    // Drop whatever this console has queued, so a secret typed
+                    // *before* the flag was set — the case the prompt's own
+                    // line cannot rule out — does not become the next
+                    // program's first command.  While the read is in progress
+                    // the serial bridge is already held off (see
+                    // `drivers::serial::poll_hardware_rx`), so this covers the
+                    // bytes that arrived before it, not during it.
+                    //
+                    // Only the input queues are cleared, not `clear()`: that
+                    // also resets the escape state and the history index, and
+                    // it was measured eating the middle of a log line that a
+                    // check reads.
                     self.drop_pending_input();
                     // The newline is written even though the line is not, so
                     // whoever is typing sees the input was taken.
@@ -871,12 +874,6 @@ pub fn handle_input_char(character: char) {
     }
 }
 
-/// Feed a raw byte (e.g. from a serial port) into the console TTY.
-///
-/// Only bytes that correspond to recognised console characters (printable
-/// ASCII, whitespace, backspace, tab) are forwarded; all other byte values
-/// are silently dropped.  This keeps the path safe to call from hardware
-/// polling contexts such as the serial RX poll in the timer tick.
 /// Whether the console is asking for a secret and nothing may be echoed.
 ///
 /// Asked by the serial bridge: bytes that arrive while a passphrase is being
@@ -886,6 +883,12 @@ pub fn secret_input() -> bool {
     global().is_some_and(|console| console.secret_input())
 }
 
+/// Feed a raw byte (e.g. from a serial port) into the console TTY.
+///
+/// Only bytes that correspond to recognised console characters (printable
+/// ASCII, whitespace, backspace, tab) are forwarded; all other byte values are
+/// silently dropped.  This keeps the path safe to call from a hardware polling
+/// context, which is where `drivers::serial` calls it from.
 pub fn handle_input_byte(byte: u8) {
     // Forward bytes that the console line discipline knows how to
     // interpret — feed_char already silently ignores unrecognised chars.

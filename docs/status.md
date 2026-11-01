@@ -309,9 +309,9 @@ behind `rootfs_type`, and `set_rootfs_type` has no caller.
 
 | Driver | Now | Missing |
 |--------|-----|---------|
-| ext4 | Read/write; journaling (revoke replay, v3 checksum tags), extent tree, dir index; `make check-ext4-image` builds a volume with `mkfs.ext4`, writes a file into it from the host, and the driver opens the volume and reads that file back byte for byte — the only ext4 test whose input this tree did not make, and the one that found the superblock's feature words being read a word late | A volume carrying `metadata_csum` is refused: the driver does not read `s_checksum_seed`, which `mkfs.ext4` sets by default; journal replay is verified on emulated images and not against real corruption |
+| ext4 | Read/write; journaling (revoke replay, v3 checksum tags), extent tree, dir index; `make check-ext4-image` builds a volume with `mkfs.ext4`, writes a file into it from the host, and the driver opens the volume and reads that file back byte for byte — the only ext4 test whose input this tree did not make, and the one that found the superblock's feature words being read a word late | A volume is refused when its **incompat** word carries a bit this driver does not know, and `metadata_csum` is in the *ro_compat* word, which is not read at all — so a checksummed volume is not refused for that reason (a default `mke2fs` volume may still be, for an unknown incompat bit such as `orphan_file`); journal replay is verified on emulated images and not against real corruption |
 | F2FS | Read/write; checkpoint (SIT persistence), orphan recovery, atomic CP+SB write | Same emulation-only validation; no ageing or garbage-collection stress |
-| XFS v5 | Read/write with journal replay; B+tree, CRC32C, v5 superblock | Same emulation-only validation; no xattr exposure |
+| XFS v5 | Read/write with journal replay; B+tree, CRC32C, v5 superblock; xattrs listed from its own table | Same emulation-only validation; no mount, so the xattrs are reachable only from tests |
 | exFAT | Read/write; VFAT extension | No journal, so crash behaviour depends on the write order; QEMU only |
 | FAT32 | Read/write; LFN, OEM code pages, FSInfo accounting | No journal; QEMU only |
 | BtrFS | Read-only; B-tree traversal | Write support is the mid-term roadmap item |
@@ -327,7 +327,7 @@ behind `rootfs_type`, and `set_rootfs_type` has no caller.
 | VFS core (mount, path resolution, ops) | Full path resolution, mount and unmount, per-node operations; a node answers where its data and its holes are (`VNode::next_extent`, [RFC 0017](rfcs/0017-ask-a-file-where-its-holes-are.md)) for the two `lseek` values that ask (`SEEK_DATA`, `SEEK_HOLE`), and a node with no holes answers from the trait's own default rather than a refusal | One mount table for the machine; no per-process mount namespace; the answers are the run list's, so a hole inside a compression unit is not one (the unit walk's reader is RFC 0014's) |
 | Volume recovery | Transaction undo-log replay and check-and-repair at boot | Boot-time only, under the filesystem lock; no online repair |
 | Fault injection matrix | Single- and dual-fault, multi-cycle crash testing, and the V4-only crash points — the shadow xattr table and the two superblock phases a V3+ commit adds (`tests/simplefs/fault_matrix.rs`) | Deterministic and bounded, so it does not search for a failing sequence; V3 has no case of its own, since its commit sequence is V4's without the xattr table |
-| Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the xattr syscalls | The VNode default is `Unsupported`, so the other filesystems do not expose xattrs; tmpfs is not mounted, and the shipped SimpleFs images are V2, so the persistent table is exercised by the tests |
+| Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the xattr syscalls | The VNode default is `Unsupported`, so most filesystems do not expose xattrs — SquashFS and XFS are the two that do, reading them from their own on-disk tables; tmpfs is not mounted, and the shipped SimpleFs images are V2, so the persistent table is exercised by the tests |
 | Transparent file compression | Encoder and decoder in `src/fs/simplefs/compression.rs`; the per-inode `COMPRESSED` flag round-trips through the on-disk format and `SetFileFlags`/`GetFileFlags` answer for it on SimpleFs | Nothing calls the encoder: no write path produces a compressed extent, so the flag is settable and never honoured |
 | Cross-file deduplication | Sharing and copy-on-write unsharing in `src/fs/simplefs/dedup.rs`; the refcount map starts empty at mount; the `DEDUPED` flag is readable and `SetFileFlags` refuses to set it for a caller | `maybe_dedup_inode` and `unshare_inode_extent` have no caller, so no extent is ever pooled — the flag is answered but nothing produces the state it describes |
 | Block backend abstraction | ATA, VirtIO and NVMe all implement one `BlockDevice` trait, which also carries the queued path: `queue_depth`, `submit_read` (whose buffer must outlive the ticket, so it is `unsafe`) and `submit_write` (which the driver copies, so it is safe), with one `poll` for both.  A request carries a **run** — a whole number of blocks — and the NVMe driver issues one command for it, up to the 16 blocks its two-frame per-slot buffer holds; a longer request is split by the waiting calls, and a driver may refuse a run it cannot hold ([RFC 0010](rfcs/0010-carry-a-run-in-one-queued-request.md)).  A waiting read and a waiting write are those pairs polled at once, so the driver has one path per direction.  Both halves have a caller that does work somebody wanted: the write half is a flush's independent dirty blocks ([RFC 0009](rfcs/0009-queue-the-writes-a-flush-makes.md)), and the read half is the mount — the two superblock mirrors and, now that a request can carry one, the inode and dirent tables ([RFC 0007](rfcs/0007-hold-a-second-request-on-a-device.md), [RFC 0008](rfcs/0008-keep-a-sequential-miss-in-one-request.md)) | No hot-remove or device-error recovery path; a run bigger than the driver's buffer is the caller's to split, and only the waiting calls do |
@@ -345,8 +345,9 @@ PBKDF2 primitives.
 - **Crash safety**: SimpleFs uses undo-log transactions and two-phase commit.
 - **Encryption at rest: a boot opens an encrypted `/data` and reads files from
   it.**  `make check-luks2-zone` builds a machine whose `/data` zone is a LUKS2
-  volume, boots it with the passphrase on the command line, and `cat`s a file
-  whose text exists nowhere else — only in that volume's payload.  The string
+  volume, boots it with **no `crypt=`** so the passphrase is asked for and
+  typed with echo off, and `cat`s a file whose text exists nowhere else — only
+  in that volume's payload.  The string
   is the point: an earlier version of the gate asserted on the file's original
   text, which also lives in the in-memory demo volume, and stayed green with
   the payload stored as plaintext.  Three mutations were measured after that
@@ -467,7 +468,7 @@ PBKDF2 primitives.
 |-----------|-----|---------|
 | AES-256 + AES-XTS | Crypto engine in the kernel | No hardware acceleration path |
 | PBKDF2 key derivation | Key stretching for disk encryption | One KDF; no Argon2 or keyring |
-| EncryptedBlockDevice | Transparent block-device wrapper under any filesystem | Nothing constructs one; no rekey or key rotation; one key per device |
+| EncryptedBlockDevice | Transparent block-device wrapper under any filesystem; a boot constructs one per encrypted zone through `luks2_open` | No rekey or key rotation; one key per device |
 | LUKS2 header parser | LUKS2 header parsing, keyslot-area XTS decryption and `luks2_open` key recovery — it opens a volume `cryptsetup` wrote (`make check-luks2-image`), and a boot opens an encrypted `/data` through it, asking for the passphrase with echo off unless `crypt=` supplied one (`make check-luks2-zone`) | No keyslot management or `cryptsetup`-style control surface; the passphrase is not written down anywhere, but it is not derived from a key the kernel was given either |
 
 ---
@@ -1128,7 +1129,7 @@ multicast routing, and raw sockets.
 | **Internet** | IPv4, IPv6, ICMP, ICMPv6, IGMP, MLD; NAT and IPv4 options are in the tree | NAT is consulted but never enabled outside tests; IPv4 options are feature-gated |
 | **Transport** | TCP (congestion control, ECN), UDP; a UDP socket has a wait queue, so a receiver parks until a datagram is delivered; SCTP and DCCP are in the tree | Congestion control is Tahoe/Reno only; no CUBIC or BBR; DCCP has no receive dispatch and SCTP has no syscall, so neither carries a connection |
 | **Application** | DHCP (discovery and renewal), DNS (cache and resolve, waiting on the socket rather than polling), mDNS, NTP; PPP/PPPoE state is in the tree | IPv4 only: no DHCPv6 or prefix delegation; DNS has no DNSSEC validation; each lookup allocates its own source port and transaction id, so the old shared-port collision is gone ([RFC 0030](rfcs/0030-give-each-dns-lookup-its-own-source-port.md)); the PPPoE consumer is enabled only by a test |
-| **Security** | TLS 1.3 (handshake, record, certificate chain), IPsec outbound ESP/AH transform | TLS trust anchors are a fixed built-in demo set; IPsec inbound is unwired and SAD/SPD is manual |
+| **Security** | TLS 1.3 (handshake, record, certificate chain), IPsec outbound ESP/AH transform | TLS trusts one compiled-in demo root plus whatever a program adds through `trust_anchor_add`/`trust_anchor_remove` (#194/#195); IPsec inbound is unwired and SAD/SPD is manual |
 | **VPN** | WireGuard handshake, transport and session tables (Noise_IKpsk2, ChaCha20-Poly1305, key management) | Not wired up: nothing outside the module constructs a device, so a program cannot open a tunnel yet |
 | **Multicast routing** | MFC/VIF forwarding, IGMPv2/MLDv1 router mode, MRT API | PIM-DM only, and only under a feature flag; no PIM-SM |
 | **Raw** | Raw sockets, raw packet | Not every raw entry has a typed shared-library wrapper |
@@ -1486,7 +1487,7 @@ control that are unusual in a hobby kernel.
 | Shared wrappers (`src/user/shared/syscall.rs`) | Typed wrappers plus raw entry points | Not every syscall has a typed wrapper |
 | ABI types | Wire-format records with compile-time layout assertions | — |
 | Per-category handler files | fs, network, process, diagnostic, tls, filter, io_uring, ptrace, and the rest | — |
-| Syscall profiling | Per-syscall counters behind an optional feature | Off by default, so a normal boot has no syscall profile |
+| Syscall profiling | None: `dispatch_with_action` runs seccomp, the handler and the audit hooks with no per-syscall tally | There is no syscall-profiling feature in `Cargo.toml` and no counter in the dispatch path |
 
 **Categories of syscall handlers:**
 

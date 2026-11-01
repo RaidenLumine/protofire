@@ -30,7 +30,7 @@ pub mod util;
 /// `__stack_chk_fail`, and a mangled static leaves the first undefined at link
 /// time — which is what it did until this attribute was added.
 ///
-/// **A fixed value, set by the linker, never written at run time.**  Three
+/// **A fixed value from the initialiser, never written at run time.**  Three
 /// boots settled that, and each ruled out the previous explanation:
 ///
 /// 1. Written on every context switch with the incoming thread's canary — the
@@ -51,9 +51,15 @@ pub mod util;
 /// attacker who can read the image knows.  Per-CPU canaries need a slot each
 /// CPU reads without a memory load that another CPU can rewrite mid-frame — an
 /// `fs:`/`tp:`-relative slot, a change to the context switch rather than to
-/// this static.  `docs/status.md` records that as the remaining work.  What
-/// this value does buy, and the reason it is worth having: an overflow past a
-/// frame turns a silent corruption into `__stack_chk_fail`.
+/// this static.  `docs/status.md` records that as the remaining work.
+///
+/// **What this does not do yet: guard a frame.**  No build in the tree passes
+/// `-Z stack-protector`, so no function stores or compares this value and
+/// `__stack_chk_fail` is never reached by generated code.  What exists is the
+/// slot and the handler, which is what turning the flag on needs; the flag
+/// waits on the payloads being their own compilation unit, and
+/// `docs/status.md` records why.  A comment here that claimed an overflow is
+/// caught today would be the defect this tree names most often.
 const STACK_CANARY: usize = 0x4F3A_9C15_B7E2_D806;
 
 #[allow(non_upper_case_globals)]
@@ -63,8 +69,10 @@ pub static __stack_chk_guard: core::sync::atomic::AtomicUsize =
 
 /// Returns a raw `*mut usize` to the stack canary guard slot.
 ///
-/// Used by the `__stack_chk_fail` / `__stack_chk_guard` linkage the compiler
-/// generates for `-Z stack-protector` support on bare-metal targets.
+/// For a test that wants to read the slot through the address the protector
+/// names.  The compiler does not call this — it emits a load of the symbol
+/// directly, which is why the static is `#[no_mangle]` — so the only caller in
+/// the tree is `the_canary_guard_is_a_fixed_value_the_protector_can_read`.
 pub fn __stack_chk_guard_ptr() -> *mut usize {
     &__stack_chk_guard as *const core::sync::atomic::AtomicUsize as *mut usize
 }

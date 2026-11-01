@@ -1068,8 +1068,11 @@ fn aes_inv_mix_columns(state: &mut [u8; 16]) {
 }
 
 /// Decrypt a single 16-byte block with AES-128, in place.
-/// GCM/CTR decryption uses the encryption primitive, so this is only needed
-/// for standalone block decryption (e.g. AES-128-XTS data-key usage and tests).
+///
+/// GCM and CTR decrypt with the *encrypt* primitive, so nothing in the tree
+/// calls this outside its own test: the XTS entry points here are AES-256 and
+/// take 64-byte keys.  Kept because a block-mode cipher that can only go one
+/// way is an invitation to write the inverse somewhere worse.
 #[allow(dead_code)]
 fn aes128_decrypt_block(key: &[u8; 16], block: &mut [u8; 16]) {
     let rk = aes128_key_expand(key);
@@ -1305,10 +1308,12 @@ pub fn aes128_gcm_decrypt(
 /// This was written the other way round — carry out of `t[0]`, 0x87 into
 /// `t[15]`, which is the big-endian reading — and the comment above said
 /// "big-endian" to match.  It is wrong, and a LUKS2 keyslot area is where it
-/// shows: the first 32 bytes of a decrypted area came out right and everything
-/// after it was garbage, because the first two blocks share a tweak that is
-/// correct for both and the third is the first one that needs the step.  With
-/// the carry reversed the whole unit matches OpenSSL's XTS.
+/// shows: a decrypted area came out right for its first block and garbage
+/// after, because the first block is the only one whose tweak is used as
+/// computed — every later one needs this step.  Measured against the tree's
+/// own fixture, the correct direction and the old one agree on the leading
+/// 16 bytes and nothing after them.  With the carry reversed the whole unit
+/// matches OpenSSL's XTS.
 fn xts_mul_alpha(tweak: &[u8; 16]) -> [u8; 16] {
     let mut t = *tweak;
     let carry = t[15] >> 7;
@@ -3509,56 +3514,33 @@ mod tests {
             a1 = t1 as u64;
             a2 = a2.wrapping_add((t1 >> 64) as u64);
 
-            // After add: a0=0x72676f7470797243, a1=0x06f46206369687061, a2=0x0
-            // Wait, Python says a2=0x1 after block 0 add. Why?
-            // Because n has the 0x01 high byte, making n a 129-bit number.
-            // In Python: n = int.from_bytes(chunk + b'\x01', 'little')
-            // n = n0 + n1*2^64 + 2^128 (the 0x01 byte is at position 16, i.e. bit 128)
-            // So a2 should have 1 added!
+            // The 0x01 appended to each 16-byte block is what makes the
+            // accumulator a 130-bit number rather than a 128-bit one, and its
+            // contribution lands in `a2`: the block is
+            // `n0 + n1·2^64 + 2^128`, so adding it to `a` adds one to the
+            // third limb as well as folding in the carry from `n0 + n1`.
             assert_eq!(a0, 0x72676f7470797243, "blk0 after add a0");
             assert_eq!(a1, 0x06f46206369687061, "blk0 after add a1");
-            // The 0x01 at byte 16 sets bit 128 → a2 += 1
-            // But my code doesn't add this! Let me check...
-            // In Python: t1 = 0 + n1 + carry0 = n1
-            // a2 = (acc >> 128) + (t1 >> 64) = 0 + (n1 >> 64)
-            // n1 = 0x06f46206369687061, n1 >> 64 = 0
-            // So a2 = 0. But Python says a2=1???
+            // The accumulator after the first block is the block's value as a
+            // 129-bit number: `0x1_6f4620_63696870_6172676f_7470797243`.  Split
+            // into three limbs it is exactly what the assertions above read,
+            // and the leading one is the appended byte's contribution.
             //
-            // Wait, I think my Python trace was also decomposed wrong.
-            // The actual acc is computed correctly by Python's big int:
-            // acc_after_add = n = 0x16f4620636968706172676f7470797243
-            // a0 = 0x72676f7470797243, a1 = 0x6f46206369687061, a2 = 0x1
-            //
-            // But in my u128 decomposition:
-            // t0 = n0 = 0x72676f7470797243, carry0 = 0
-            // t1 = n1 = 0x06f46206369687061... wait, n1 is 8 bytes LE from block[8..16].
-            // Let me check: block[8..16] = "ic Fo" (the last 8 bytes of the first 16-char
-            // chunk) That's [105, 99, 32, 70, 111, 0, 0, ...]  — no.
-            //
-            // The chunk is "Cryptographic F" (bytes 0-15):
-            // bytes: [67, 114, 121, 112, 116, 111, 103, 114, 97, 112, 104, 105, 99, 32, 70,
-            // 111] block[0..16] = these 16 bytes
-            // n0 = LE bytes 0-7: [67, 114, 121, 112, 116, 111, 103, 114] = "Cryptogr"
-            // n1 = LE bytes 8-15: [97, 112, 104, 105, 99, 32, 70, 111] = "aphic Fo"
+            // The two halves of the first chunk are `"Cryptogr"` and
+            // `"aphic Fo"` read little-endian, which is why `n1` looks like
+            // `0x06f462...` rather than the bytes in order.
             //
             // Actually, the LE interpretation means:
             // n0 = 0x72676f7470797243 (from bytes 0-7 reversed)
             // n1 = 0x6f46206369687061 (from bytes 8-15, but check the endianness!)
             //
-            // Wait, u64::from_le_bytes takes the bytes in little-endian order.
-            // So n1 = u64::from_le_bytes([97, 112, 104, 105, 99, 32, 70, 111])
+            // `u64::from_le_bytes` takes the bytes little-endian, so
+            // n1 = u64::from_le_bytes([97, 112, 104, 105, 99, 32, 70, 111])
             //      = 111*2^56 + 70*2^48 + 32*2^40 + 99*2^32 + 105*2^24 + 104*2^16 + 112*2^8
             // + 97      = 0x6f46206369687061
             //
-            // But the 0x01 at block[16] is the high bit of a 17-byte number.
-            // The 17-byte number is: n0 + n1*2^64 + 0x01*2^128 + 0*2^136...
-            // = n0 + n1*2^64 + 2^128
-            //
-            // So when we add this to acc, we need: a2 += 1 (for the 2^128 term)!
-            // MY CODE IS MISSING THIS!
-
-            // a2 should be incremented by 1 due to the 0x01 high byte!
-            a2 = a2.wrapping_add(1); // FIX: the 0x01 at byte 16 represents bit 128 = 2^128
+            // The 2^128 term the appended byte carries, in the third limb.
+            a2 = a2.wrapping_add(1);
 
             assert_eq!(a0, 0x72676f7470797243, "blk0 after add a0");
             assert_eq!(a1, 0x06f46206369687061, "blk0 after add a1");
@@ -4060,10 +4042,10 @@ mod tests {
     /// `cryptography`, and its first block is the single-block answer — which
     /// is what makes it the same test extended rather than a second opinion.
     ///
-    /// Measured, this is what the wrong direction costs: the first 32 bytes
-    /// decrypt correctly and everything after them is garbage, which reads as
-    /// "the cipher works" until something spans a block.  A LUKS2 keyslot area
-    /// spans 500 of them.
+    /// Measured, this is what the wrong direction costs: the first block
+    /// decrypts correctly and everything after it is garbage — 16 bytes agree
+    /// and the rest does not — which reads as "the cipher works" until
+    /// something spans a block.  A LUKS2 keyslot area spans 500 of them.
     #[test]
     fn aes_xts_known_vector_across_blocks() {
         let key: [u8; 64] = [

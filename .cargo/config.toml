@@ -6,8 +6,9 @@ rustflags = [
     "-C",
     "relocation-model=static",
     # NOTE: the kernel is identity-mapped at 0x200000 (see linker.ld) within the
-    # 1 GiB bootstrap identity map, so the default small code model fully covers
-    # all code/data.  The previous `-C code-model=large` was unnecessary and
+    # bootstrap identity map — 4 GiB, not 1: the 1 GiB figures elsewhere are
+    # `KERNEL_IDENTITY_MEMORY_END`, a different bound — so the default small
+    # code model fully covers all code/data.  The previous `-C code-model=large` was unnecessary and
     # broke release-bin builds: fat/thin LTO tries to merge the project's
     # code-model=large bitcode with the sysroot's default code-model bitcode
     # ("linking module flags 'Code Model': conflicting values").
