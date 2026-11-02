@@ -1,5 +1,6 @@
-//! src/abi/process.rs
+//! src/user/shared/abi/process.rs
 //!
+//! src/abi/process.rs
 //! Shared process ABI constants and records for spawn, wait, and termination
 //! flows.
 
@@ -16,6 +17,16 @@ pub const PROCESS_TERMINATION_KIND_EXCEPTION: usize = 2;
 /// Callers pass this value in `timeout_ticks` to request a blocking wait on
 /// bare-metal targets that support scheduler context switching.
 pub const WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS: usize = usize::MAX;
+/// The three descriptors every process starts with.
+///
+/// Part of the ABI rather than of the kernel's process module, because a
+/// program needs them to say which stream it is writing to and a program is
+/// not compiled against the kernel: these were `crate::kernel::process` once,
+/// which a payload could only name because it was a macro.
+pub const STDIN_FD: usize = 0;
+pub const STDOUT_FD: usize = 1;
+pub const STDERR_FD: usize = 2;
+
 pub const PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS: usize = 1 << 0;
 pub const PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT: usize = 1 << 1;
 pub const PROCESS_SPAWN_FLAG_OVERRIDE_WORKING_DIR: usize = 1 << 2;
@@ -87,6 +98,7 @@ pub struct ProcessTerminationRecord {
 }
 
 impl ProcessTerminationRecord {
+    #[inline]
     pub const fn none() -> Self {
         Self {
             kind: PROCESS_TERMINATION_KIND_NONE,
@@ -98,6 +110,7 @@ impl ProcessTerminationRecord {
         }
     }
 
+    #[inline]
     pub const fn exited(status: usize) -> Self {
         Self {
             kind: PROCESS_TERMINATION_KIND_EXIT,
@@ -109,6 +122,7 @@ impl ProcessTerminationRecord {
         }
     }
 
+    #[inline]
     pub const fn exception(vector: u8, error_code: u64, fault_address: Option<usize>) -> Self {
         Self {
             kind: PROCESS_TERMINATION_KIND_EXCEPTION,
@@ -146,6 +160,7 @@ pub struct ProcessSignalRecord {
 }
 
 impl ProcessSignalRecord {
+    #[inline]
     pub const fn new(signal: usize, sender_pid: usize, payload: usize) -> Self {
         Self {
             signal,
@@ -281,6 +296,7 @@ pub struct ProcessSpawnStringRef {
 }
 
 impl ProcessSpawnStringRef {
+    #[inline]
     pub const fn new(ptr: usize, len: usize) -> Self {
         Self { ptr, len }
     }
@@ -305,6 +321,7 @@ pub struct ProcessSpawnOptions {
 }
 
 impl ProcessSpawnOptions {
+    #[inline]
     pub const fn defaults() -> Self {
         Self {
             flags: 0,
@@ -317,6 +334,7 @@ impl ProcessSpawnOptions {
         }
     }
 
+    #[inline]
     pub const fn new(flags: usize, argv: usize, argc: usize, env: usize, envc: usize) -> Self {
         Self {
             flags,
@@ -329,25 +347,30 @@ impl ProcessSpawnOptions {
         }
     }
 
+    #[inline]
     pub const fn with_flags(mut self, flags: usize) -> Self {
         self.flags |= flags;
         self
     }
 
+    #[inline]
     pub const fn with_working_dir(mut self, working_dir: usize, working_dir_len: usize) -> Self {
         self.working_dir = working_dir;
         self.working_dir_len = working_dir_len;
         self
     }
 
+    #[inline]
     pub const fn override_argv(argv: usize, argc: usize) -> Self {
         Self::new(PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS, argv, argc, 0, 0)
     }
 
+    #[inline]
     pub const fn override_env(env: usize, envc: usize) -> Self {
         Self::new(PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT, 0, 0, env, envc)
     }
 
+    #[inline]
     pub const fn override_argv_env(argv: usize, argc: usize, env: usize, envc: usize) -> Self {
         Self::new(
             PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS | PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT,
@@ -358,16 +381,19 @@ impl ProcessSpawnOptions {
         )
     }
 
+    #[inline]
     pub const fn override_working_dir(working_dir: usize, working_dir_len: usize) -> Self {
         Self::defaults()
             .with_flags(PROCESS_SPAWN_FLAG_OVERRIDE_WORKING_DIR)
             .with_working_dir(working_dir, working_dir_len)
     }
 
+    #[inline]
     pub const fn inherit_working_dir() -> Self {
         Self::defaults().with_flags(PROCESS_SPAWN_FLAG_INHERIT_WORKING_DIR)
     }
 
+    #[inline]
     pub const fn inherit_stdio() -> Self {
         Self::defaults().with_flags(PROCESS_SPAWN_FLAG_INHERIT_STDIO)
     }
@@ -376,30 +402,37 @@ impl ProcessSpawnOptions {
         self.flags & flags == flags
     }
 
+    #[inline]
     pub const fn overrides_arguments(self) -> bool {
         self.has_flags(PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS)
     }
 
+    #[inline]
     pub const fn overrides_environment(self) -> bool {
         self.has_flags(PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT)
     }
 
+    #[inline]
     pub const fn overrides_working_dir(self) -> bool {
         self.has_flags(PROCESS_SPAWN_FLAG_OVERRIDE_WORKING_DIR)
     }
 
+    #[inline]
     pub const fn inherits_working_dir(self) -> bool {
         self.has_flags(PROCESS_SPAWN_FLAG_INHERIT_WORKING_DIR)
     }
 
+    #[inline]
     pub const fn inherits_stdin(self) -> bool {
         self.has_flags(PROCESS_SPAWN_FLAG_INHERIT_STDIN)
     }
 
+    #[inline]
     pub const fn inherits_stdout(self) -> bool {
         self.has_flags(PROCESS_SPAWN_FLAG_INHERIT_STDOUT)
     }
 
+    #[inline]
     pub const fn inherits_stderr(self) -> bool {
         self.has_flags(PROCESS_SPAWN_FLAG_INHERIT_STDERR)
     }
