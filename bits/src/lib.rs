@@ -14,11 +14,27 @@ pub mod crypto;
 pub mod elf;
 /// An internet address, which is arithmetic over bytes and nothing else.
 pub mod internet_ip;
+/// An internet protocol version 4 address, its header and its checksums.
+pub mod ipv4;
 /// The base path type and its normalisation.
 ///
 /// Named `path` here and re-exported as `fs::path` from the kernel, because a
 /// path is not a filesystem's — a program builds one before it has a volume.
 pub mod path;
+/// The point-to-point protocol's frame and control protocols.
+pub mod ppp;
+/// The stream control transmission protocol's chunks and association.
+pub mod sctp;
+/// A cell whose contents are only touched under a lock the caller owns.
+///
+/// The kernel's `Sync` impls use it to say "these fields are not aliased"
+/// without `unsafe` at every use site.
+pub mod sync_unsafe_cell;
+/// Unicode normalisation, case folding and the code-page tables.
+///
+/// 4596 lines with no `crate::` reference in any of them — the one part of
+/// this tree that was already a crate looking for a place to be one.
+pub mod unicode;
 
 /// Result type used throughout the kernel.
 ///

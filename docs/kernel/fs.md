@@ -55,7 +55,7 @@ the current working directory first.  It rejects what the namespace does not
 speak: an embedded control character, a backslash, a `C:`-style drive prefix
 and the `//?/` device form.  No Unicode normalisation is applied — a filename
 is bytes the caller chose, and callers that want NFC/NFD equivalence opt in
-through `src/fs/unicode/`.
+through `bits/src/unicode/`.
 
 The facade wraps this with the working directory (`normalize_path_from`), and
 the per-call cwd is machine-wide: `current_working_dir` is one string, not one
@@ -216,7 +216,7 @@ and reads with.
 
 Names are validated per format when a node is created, and lookups can be
 case-insensitive: the zone decides (`StorageZone::case_sensitive` in
-`src/fs/layout.rs`), and `src/fs/unicode/` supplies the folding used by the
+`src/fs/layout.rs`), and `bits/src/unicode/` supplies the folding used by the
 formats that need it.  Symlinks are inline when the target fits in the inode's
 extent fields (`MAX_INLINE_SYMLINK_LEN`) and resolution is bounded by
 `MAX_SYMLINK_DEPTH`.

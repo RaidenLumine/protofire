@@ -205,7 +205,7 @@ writing one, be able to state:
 
 Put that argument in a `// SAFETY:` comment on the `impl`, and keep the type's
 mutable surface `pub(crate)` or narrower. The `SyncUnsafeCell` wrapper
-([`src/util/sync_unsafe_cell.rs`](../../src/util/sync_unsafe_cell.rs)) and the
+([`bits/src/sync_unsafe_cell.rs`](../../bits/src/sync_unsafe_cell.rs)) and the
 per-CPU data in [`src/kernel/percpu.rs`](../../src/kernel/percpu.rs) are the
 existing, reviewed shapes for this — extend them rather than adding a new way to
 share mutable statics.

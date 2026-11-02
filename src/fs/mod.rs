@@ -52,7 +52,9 @@ pub mod system_image;
 #[cfg(any(test, feature = "demo-disk"))]
 pub(crate) mod test_support;
 pub mod tmpfs;
-pub mod unicode;
+/// Unicode tables, from : they are data and arithmetic over
+/// it, with no  reference in any of the 4596 lines.
+pub use protofire_bits::unicode;
 pub mod vfs;
 /// Where a running machine writes, and why each place is the right one.
 pub mod write_locations;

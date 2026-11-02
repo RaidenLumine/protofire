@@ -9,7 +9,7 @@ pub mod icmp;
 pub mod icmpv6;
 pub mod igmp;
 pub use protofire_bits::internet_ip as ip;
-pub mod ipv4;
+pub use protofire_bits::ipv4;
 pub mod ipv6;
 pub mod mld;
 pub mod nat;
