@@ -1,4 +1,4 @@
-//! src/user/shared/commands/mod.rs
+//! shared/src/commands/mod.rs
 //!
 //! ring3-common/src/commands/mod.rs
 //! Shell builtin command implementations shared between kernel and ring3.

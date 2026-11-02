@@ -1,4 +1,4 @@
-//! src/user/shared/abi/process.rs
+//! shared/src/abi/process.rs
 //!
 //! src/abi/process.rs
 //! Shared process ABI constants and records for spawn, wait, and termination

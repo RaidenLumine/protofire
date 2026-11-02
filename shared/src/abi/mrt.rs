@@ -1,4 +1,4 @@
-//! src/user/shared/abi/mrt.rs
+//! shared/src/abi/mrt.rs
 //!
 //! src/abi/mrt.rs
 //! Shared ABI definitions for multicast routing (MRT) control — VIF and

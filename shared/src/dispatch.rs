@@ -1,4 +1,4 @@
-//! src/user/shared/dispatch.rs
+//! shared/src/dispatch.rs
 //!
 //! ring3-common/src/dispatch.rs
 //! Shared command dispatch table.

@@ -1,4 +1,4 @@
-//! src/user/shared/expand.rs
+//! shared/src/expand.rs
 //!
 //! Environment variable expansion and shell utility functions.
 //!

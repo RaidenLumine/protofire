@@ -1,4 +1,4 @@
-//! src/user/shared/commands/process.rs
+//! shared/src/commands/process.rs
 //!
 //! Process and signal commands: ps, kill, true, false.
 //!

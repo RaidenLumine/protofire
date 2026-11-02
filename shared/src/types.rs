@@ -1,4 +1,4 @@
-//! src/user/shared/types.rs
+//! shared/src/types.rs
 //!
 //! Shared shell types used by both kernel and ring3 environments.
 

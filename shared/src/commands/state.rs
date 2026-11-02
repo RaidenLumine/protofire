@@ -1,4 +1,4 @@
-//! src/user/shared/commands/state.rs
+//! shared/src/commands/state.rs
 //!
 //! Shell state management commands (export, alias, history, shift, read,
 //! source).

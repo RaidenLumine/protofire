@@ -1,4 +1,4 @@
-//! src/user/shared/abi/gpu.rs
+//! shared/src/abi/gpu.rs
 //!
 //! src/abi/gpu.rs
 //! Shared ABI definitions for the VIRGL 3D userspace interface — syscalls

@@ -1,4 +1,4 @@
-//! src/user/shared/history.rs
+//! shared/src/history.rs
 //!
 //! Command history utilities.
 //!

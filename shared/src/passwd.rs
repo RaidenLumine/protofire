@@ -1,4 +1,4 @@
-//! src/user/shared/passwd.rs
+//! shared/src/passwd.rs
 //!
 //! `/etc/passwd` parsing helpers shared by the kernel shell and ring3 tools.
 //!

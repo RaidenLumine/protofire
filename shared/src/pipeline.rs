@@ -1,4 +1,4 @@
-//! src/user/shared/pipeline.rs
+//! shared/src/pipeline.rs
 //!
 //! ring3-common/pipeline.rs
 //! Conditional chaining (`&&` / `||`), pipeline splitting, and redirect

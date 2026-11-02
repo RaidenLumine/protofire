@@ -1,4 +1,4 @@
-//! src/user/shared/signal.rs
+//! shared/src/signal.rs
 //!
 //! High-level signal API for ring3 user-space programs.
 //!

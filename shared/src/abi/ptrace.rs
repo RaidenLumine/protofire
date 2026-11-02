@@ -1,4 +1,4 @@
-//! src/user/shared/abi/ptrace.rs
+//! shared/src/abi/ptrace.rs
 //!
 //! src/abi/ptrace.rs
 //! Ptrace ABI: request codes, event codes, the event record, and the

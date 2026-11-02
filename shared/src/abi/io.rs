@@ -1,4 +1,4 @@
-//! src/user/shared/abi/io.rs
+//! shared/src/abi/io.rs
 //!
 //! src/abi/io.rs
 //! Shared I/O ABI constants for open, seek, and descriptor-oriented syscalls.

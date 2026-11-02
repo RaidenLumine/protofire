@@ -1,4 +1,4 @@
-//! src/user/shared/abi/virgl.rs
+//! shared/src/abi/virgl.rs
 //!
 //! src/abi/virgl.rs
 //! Minimal VIRGL command-stream framing used by the demo 3D renderer.

@@ -1,4 +1,4 @@
-//! src/user/shared/abi/ipsec.rs
+//! shared/src/abi/ipsec.rs
 //!
 //! src/abi/ipsec.rs
 //! Shared ABI definitions for IPsec Security Policy Database (SPD) and

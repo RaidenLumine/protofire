@@ -1,4 +1,4 @@
-//! src/user/shared/commands/system.rs
+//! shared/src/commands/system.rs
 //!
 //! System information and utility commands (help, echo, clear, sysinfo, top,
 //! dmesg, uname, uptime, sleep, test).

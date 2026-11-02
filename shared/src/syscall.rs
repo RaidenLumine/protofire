@@ -1,4 +1,4 @@
-//! src/user/shared/syscall.rs
+//! shared/src/syscall.rs
 //!
 //! Syscall abstraction bridge between ring0 (kernel) and ring3 (user-space).
 //!

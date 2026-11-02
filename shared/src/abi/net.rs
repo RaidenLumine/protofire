@@ -1,4 +1,4 @@
-//! src/user/shared/abi/net.rs
+//! shared/src/abi/net.rs
 //!
 //! src/abi/net.rs
 //! Network ABI status records and flag constants shared with user space.

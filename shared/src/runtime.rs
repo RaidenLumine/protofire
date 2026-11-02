@@ -1,4 +1,4 @@
-//! src/user/shared/runtime.rs
+//! shared/src/runtime.rs
 //!
 //! Ring-3 runtime syscall bridge (raw status-word to isize translation).
 

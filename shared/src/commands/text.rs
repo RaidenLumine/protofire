@@ -1,4 +1,4 @@
-//! src/user/shared/commands/text.rs
+//! shared/src/commands/text.rs
 //!
 //! Text processing and editing commands (grep, find, head, tail, wc, sort,
 //! uniq, diff, hexdump, edit).

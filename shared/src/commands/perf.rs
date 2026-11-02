@@ -1,4 +1,4 @@
-//! src/user/shared/commands/perf.rs
+//! shared/src/commands/perf.rs
 //!
 //! Performance profiling commands (perf stat, perf sched).
 

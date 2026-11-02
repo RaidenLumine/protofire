@@ -1,4 +1,4 @@
-//! src/user/shared/config.rs
+//! shared/src/config.rs
 //!
 //! Minimal TOML-subset parser for configuration files on both sides of the
 //! syscall boundary.

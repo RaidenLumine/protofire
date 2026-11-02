@@ -1,4 +1,4 @@
-//! src/user/shared/jobs.rs
+//! shared/src/jobs.rs
 //!
 //! Shared job control types and formatting for shell builtins.
 //!

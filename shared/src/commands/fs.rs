@@ -1,4 +1,4 @@
-//! src/user/shared/commands/fs.rs
+//! shared/src/commands/fs.rs
 //!
 //! Filesystem commands: pwd, cd, ls, cat, mkdir, rm, touch, cp, mv.
 //!

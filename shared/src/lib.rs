@@ -1,3 +1,5 @@
+//! shared/src/lib.rs
+//!
 //! Shared shell/user runtime logic for ring0 (kernel) and ring3 (user-space).
 //!
 //! This module provides platform-independent shell utilities and ABI record

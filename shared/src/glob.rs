@@ -1,4 +1,4 @@
-//! src/user/shared/glob.rs
+//! shared/src/glob.rs
 //!
 //! ring3-common/glob.rs
 //! Glob pattern matching (`*`, `?`, `[...]` character classes).

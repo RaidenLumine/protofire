@@ -1,4 +1,4 @@
-//! src/user/shared/abi/prctl.rs
+//! shared/src/abi/prctl.rs
 //!
 //! src/abi/prctl.rs
 //! The operation codes `prctl` (#130) accepts, and the name limit that goes

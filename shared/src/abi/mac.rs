@@ -1,4 +1,4 @@
-//! src/user/shared/abi/mac.rs
+//! shared/src/abi/mac.rs
 //!
 //! src/abi/mac.rs
 //! Shared ABI definitions for the MAC (mandatory access control) type-

@@ -1,4 +1,4 @@
-//! src/user/shared/control_flow.rs
+//! shared/src/control_flow.rs
 //!
 //! Shell control flow: `if`/`for`/`while` parsing and execution.
 //!

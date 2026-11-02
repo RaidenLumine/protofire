@@ -1,4 +1,4 @@
-//! src/user/shared/abi/diagnostic.rs
+//! shared/src/abi/diagnostic.rs
 //!
 //! src/abi/diagnostic.rs
 //! ABI diagnostic records shared between kernel and user-space.

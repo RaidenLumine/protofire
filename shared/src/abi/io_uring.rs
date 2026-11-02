@@ -1,4 +1,4 @@
-//! src/user/shared/abi/io_uring.rs
+//! shared/src/abi/io_uring.rs
 //!
 //! src/abi/io_uring.rs
 //! Shared ABI types for the io_uring asynchronous I/O subsystem.

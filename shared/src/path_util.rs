@@ -1,4 +1,4 @@
-//! src/user/shared/path_util.rs
+//! shared/src/path_util.rs
 //!
 //! Path resolution and normalization utilities.
 
