@@ -8,7 +8,7 @@ pub mod fragments;
 pub mod icmp;
 pub mod icmpv6;
 pub mod igmp;
-pub mod ip;
+pub use protofire_bits::internet_ip as ip;
 pub mod ipv4;
 pub mod ipv6;
 pub mod mld;

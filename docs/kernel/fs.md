@@ -48,7 +48,7 @@ access is the descriptor's own question, answered by
 
 ## Paths
 
-`normalize_path` in `src/fs/path.rs` is the one place a path becomes
+`normalize_path` in `bits/src/path.rs` is the one place a path becomes
 canonical.  It produces an absolute path with no `.`, no `..`, no empty
 components and no redundant slashes; a relative argument is resolved against
 the current working directory first.  It rejects what the namespace does not
@@ -521,7 +521,7 @@ volume on a memory device instead.
 | `src/fs/mod.rs` | The `FileSystem` facade, the global singleton, the mount snapshot |
 | `src/fs/vfs/filesystem.rs`, `src/fs/vfs/vnode.rs` | The `FileSystem`/`VNode` traits, `ReadOnlyFileSystem`, `StaticFileSystem` |
 | `src/fs/vfs/types.rs` | `NodeKind`, `Metadata`, `SecurityDescriptor`, `VolumeCheckReport` |
-| `src/fs/path.rs` | Path normalisation |
+| `bits/src/path.rs` | Path normalisation |
 | `src/fs/filesystem/` | Boot layout, mount and resolve, open, I/O, rename, overlay, security, profiler |
 | `src/fs/simplefs/` | SimpleFs: superblock, tables, transactions, recovery, staging, xattrs |
 | `src/fs/layout.rs` | Zones, mount flags and the fixed fallback disk ranges |

@@ -18,9 +18,15 @@ pub const MAX_CPUS: usize = MAX_APS + 1;
 pub mod audit;
 pub mod block;
 pub mod boot_report;
-pub mod compression;
+pub use protofire_bits::compression;
 pub mod console;
-pub mod crypto;
+/// The kernel's cryptography, from `protofire-bits`.
+///
+/// It computes over bytes and needs nothing from this kernel but the error
+/// type, so it lives in the base crate where a filesystem can reach it
+/// without naming `kernel`.  The re-export keeps every `kernel::crypto::…`
+/// path in the tree unchanged.
+pub use protofire_bits::crypto;
 pub mod device;
 pub mod handle_rights;
 // Only the bare-metal polling threads emit heartbeats.

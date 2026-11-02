@@ -58,7 +58,7 @@ the improvement, and reading the table is how it answers.
   zone is missing (`Ok(None)`, so the fallback is what runs).
 - `src/fs/system_image.rs`: the A/B system pair at slots 0 and 3, chosen by
   index, with the build marker deciding between them.
-- `src/kernel/crypto.rs`: `crc32`, the standard reflected CRC-32 — which is the
+- `bits/src/crypto.rs`: `crc32`, the standard reflected CRC-32 — which is the
   checksum both GPT checksums are.
 - `src/main.rs`: the host `mkimage` command, which writes the demo disk's MBR
   table; `scripts/check-x8664-usb-disk.sh` boots that image over USB and

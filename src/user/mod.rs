@@ -11,7 +11,7 @@
 // `protofire::user::demo::*` with the `demo-disk` feature enabled.
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
 pub mod demo;
-pub mod elf;
+pub use protofire_bits::elf;
 pub mod exception;
 pub mod program;
 pub mod shared;

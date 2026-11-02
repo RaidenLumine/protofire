@@ -8,12 +8,12 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::bits::crypto::crc32c;
 use crate::fs::block::BlockDevice;
 use crate::fs::block::MemoryBlockDevice;
 use crate::fs::btrfs::BtrfsVolume;
 use crate::fs::vfs::FileSystem as VfsFileSystem;
 use crate::fs::vfs::NodeKind;
-use crate::kernel::crypto::crc32c;
 use crate::Error;
 
 use super::types::KEY_DIR_ITEM;

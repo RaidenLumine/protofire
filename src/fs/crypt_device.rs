@@ -7,8 +7,8 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 
-use crate::kernel::crypto::aes_xts_decrypt;
-use crate::kernel::crypto::aes_xts_encrypt;
+use crate::bits::crypto::aes_xts_decrypt;
+use crate::bits::crypto::aes_xts_encrypt;
 use crate::Error;
 use crate::Result;
 

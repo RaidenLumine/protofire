@@ -251,7 +251,8 @@ while read -r doc line cite; do
 
     base="${cite##*/}"
     if [ "${cite#src/}" != "$cite" ] || [ "${cite#tests/}" != "$cite" ] \
-        || [ "${cite#shared/}" != "$cite" ] || [ "${cite#payloads/}" != "$cite" ]; then
+        || [ "${cite#shared/}" != "$cite" ] || [ "${cite#payloads/}" != "$cite" ] \
+        || [ "${cite#bits/}" != "$cite" ] || [ "${cite#tools/}" != "$cite" ]; then
         [ -e "$cite" ] || printf '%s:%s: no such path `%s`\n' \
             "$doc" "$line" "$cite" >> "$work/stale"
     else

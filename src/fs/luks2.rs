@@ -12,12 +12,12 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::bits::crypto::aes_xts_decrypt;
+use crate::bits::crypto::pbkdf2_hmac_sha256;
+use crate::bits::crypto::sha256;
 use crate::fs::block::BlockDevice;
 use crate::fs::block::BLOCK_SIZE;
 use crate::fs::crypt_device::EncryptedBlockDevice;
-use crate::kernel::crypto::aes_xts_decrypt;
-use crate::kernel::crypto::pbkdf2_hmac_sha256;
-use crate::kernel::crypto::sha256;
 use crate::Error;
 use crate::Result;
 
