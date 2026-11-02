@@ -1,7 +1,7 @@
 # Syscall ABI Specification
 
 > **Status:** normative. Changes to this document require maintainer review.
-> **Applies to:** `src/abi/`, `src/syscall/`, `src/user/shared/`,
+> **Applies to:** `src/abi/`, `src/syscall/`, `shared/src/`,
 > `tests/syscall/`.
 
 The syscall ABI is the compatibility boundary of Protofire. Ring-3 programs are
@@ -35,7 +35,7 @@ carries the short version; where the two disagree, this document wins.
 
 ## 2. The number manifest
 
-[`src/user/shared/abi/syscall.rs`](../../src/user/shared/abi/syscall.rs) is the
+[`shared/src/abi/syscall.rs`](../../shared/src/abi/syscall.rs) is the
 single source of truth. It defines:
 
 | Item | Meaning |
@@ -52,7 +52,7 @@ Consumers, none of which may re-declare a number:
 - [`src/syscall/table.rs`](../../src/syscall/table.rs) — the
   `SyscallNumber` enum, `SYSCALL_REGISTRY`, and `PUBLIC_SYSCALL_COUNT`
   (derived as the highest assigned number plus one).
-- [`src/user/shared/syscall.rs`](../../src/user/shared/syscall.rs) — the typed
+- [`shared/src/syscall.rs`](../../shared/src/syscall.rs) — the typed
   ring-3 wrappers.
 - [`src/syscall/memory/user.rs`](../../src/syscall/memory/user.rs)
   — `SYSCALL_POINTER_SPECS`, indexed by number.
@@ -109,7 +109,7 @@ slot is `None`.
 
 ## 4. Versioning
 
-Bump the ABI version in [`src/user/shared/abi/syscall.rs`](../../src/user/shared/abi/syscall.rs)
+Bump the ABI version in [`shared/src/abi/syscall.rs`](../../shared/src/abi/syscall.rs)
 as part of the same change that alters the ABI:
 
 | Change | Bump |
@@ -134,7 +134,7 @@ Work through this list in order. Every item is part of the change, not a
 follow-up.
 
 1. **Assign the number.** Add `pub const SYS_YOUR_CALL: usize = <next>;` to
-   [`src/user/shared/abi/syscall.rs`](../../src/user/shared/abi/syscall.rs),
+   [`shared/src/abi/syscall.rs`](../../shared/src/abi/syscall.rs),
    raise `SYSCALL_COUNT`, and add the name to `syscall_name`. Add its stability
    automatically — do not special-case it.
 2. **Mirror it in the kernel enum.** Add the variant to `SyscallNumber` in
@@ -150,7 +150,7 @@ follow-up.
 5. **Register the handler** in `SYSCALL_REGISTRY`
    ([`src/syscall/table.rs`](../../src/syscall/table.rs)).
 6. **Add the typed wrapper** in
-   [`src/user/shared/syscall.rs`](../../src/user/shared/syscall.rs) so ring-3
+   [`shared/src/syscall.rs`](../../shared/src/syscall.rs) so ring-3
    callers never build raw register arguments.
 7. **Bump the ABI version** if the change is not purely additive (§4).
 8. **Document it** in
@@ -267,7 +267,7 @@ depend on them:
 
 ## 8. Userspace wrappers
 
-[`src/user/shared/syscall.rs`](../../src/user/shared/syscall.rs) exposes the ABI
+[`shared/src/syscall.rs`](../../shared/src/syscall.rs) exposes the ABI
 to ring-3 code in three layers, in this order in the file:
 
 1. **Number re-exports** — the `SYS_*` constants, taken from the manifest.
@@ -294,7 +294,7 @@ A syscall change is not complete without all three, to the extent they apply:
 
 | Layer | Location | What it pins |
 |-------|----------|--------------|
-| Manifest | `src/user/shared/abi/syscall.rs` (`mod tests`) | Number, name, stability, version constants |
+| Manifest | `shared/src/abi/syscall.rs` (`mod tests`) | Number, name, stability, version constants |
 | Handler | `mod tests` in the handler's module | Argument validation, error cases, boundary conditions |
 | Integration | [`tests/syscall/`](../../tests/syscall/) | End-to-end behaviour through the table |
 | Fuzz | [`tests/syscall/fuzz.rs`](../../tests/syscall/fuzz.rs) | Malformed/random argument handling (add cases for new pointer layouts) |
@@ -309,7 +309,7 @@ the rejecting side, including ranges that straddle the user/kernel boundary.
 
 The ABI records themselves are checked the same way, by a census rather than by
 a test: `make check-abi-mirror` requires every file in `src/abi/` to be declared
-by its module, every record to have a mirror in `src/user/shared/abi/` with an
+by its module, every record to have a mirror in `shared/src/abi/` with an
 origin line in its header, and the two bodies to be identical below that
 header — with a recorded reason in `scripts/abi-mirror-baseline.txt` for the
 handful of pairs that are deliberately not mirrors.  The copy exists because

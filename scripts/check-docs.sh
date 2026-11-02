@@ -250,7 +250,8 @@ while read -r doc line cite; do
     esac
 
     base="${cite##*/}"
-    if [ "${cite#src/}" != "$cite" ] || [ "${cite#tests/}" != "$cite" ]; then
+    if [ "${cite#src/}" != "$cite" ] || [ "${cite#tests/}" != "$cite" ] \
+        || [ "${cite#shared/}" != "$cite" ] || [ "${cite#payloads/}" != "$cite" ]; then
         [ -e "$cite" ] || printf '%s:%s: no such path `%s`\n' \
             "$doc" "$line" "$cite" >> "$work/stale"
     else

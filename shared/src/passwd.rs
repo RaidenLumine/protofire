@@ -11,8 +11,8 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::user::shared::abi::io::OPEN_FLAG_READ;
-use crate::user::shared::syscall;
+use crate::abi::io::OPEN_FLAG_READ;
+use crate::syscall;
 
 /// Path to the persisted user database.
 pub const PASSWD_PATH: &str = "/data/etc/passwd";

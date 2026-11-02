@@ -9,14 +9,14 @@ use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::user::shared::abi::diagnostic;
-use crate::user::shared::abi::fs::FileStat;
-use crate::user::shared::abi::fs::FILE_KIND_DIRECTORY;
-use crate::user::shared::abi::fs::FILE_KIND_FILE;
-use crate::user::shared::abi::fs::FILE_STAT_SIZE;
-use crate::user::shared::path_util::resolve_path;
-use crate::user::shared::syscall;
-use crate::user::shared::types::CmdResult;
+use crate::abi::diagnostic;
+use crate::abi::fs::FileStat;
+use crate::abi::fs::FILE_KIND_DIRECTORY;
+use crate::abi::fs::FILE_KIND_FILE;
+use crate::abi::fs::FILE_STAT_SIZE;
+use crate::path_util::resolve_path;
+use crate::syscall;
+use crate::types::CmdResult;
 
 // constants for the `test` command
 const KERNEL_VER: &str = env!("CARGO_PKG_VERSION");
@@ -251,7 +251,7 @@ pub fn cmd_sysinfo() -> CmdResult {
     out.push_str("─── System ───\n");
     out.push_str(&format!("OS:      Protofire {}\n", KERNEL_VER));
     out.push_str("Arch:    ");
-    out.push_str(crate::user::shared::abi::runtime::TARGET_ARCH);
+    out.push_str(crate::abi::runtime::TARGET_ARCH);
     out.push('\n');
 
     // Query scheduler info via SystemInfo syscall.
@@ -600,7 +600,7 @@ fn level_to_log_prefix(level: &str) -> &str {
 pub fn cmd_uname(argv: &[String]) -> CmdResult {
     let all = argv.len() > 1 && argv[1] == "-a";
 
-    let arch = crate::user::shared::abi::runtime::TARGET_ARCH;
+    let arch = crate::abi::runtime::TARGET_ARCH;
 
     let output = if all {
         format!("Protofire {KERNEL_VER} {arch} kernel\n")

@@ -1,0 +1,26 @@
+# File: shared/Cargo.toml
+# Purpose: The ABI and shell logic kernel and userspace both compile against.
+#
+# This was a module of the kernel (`src/user/shared/`) until the payloads
+# needed their own compilation unit: a payload is copied out of the kernel
+# image and run in ring 3, so it must not be stack-protected, and the only
+# boundary rustc respects for that is a crate.  The payloads depend on this
+# crate directly, and the kernel re-exports it from `src/user/shared/mod.rs`
+# so that every path in the kernel is unchanged.
+
+[package]
+name = "protofire-shared"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "protofire_shared"
+crate-type = ["rlib"]
+
+# The tests want a harness, which is 's.  The library itself stays
+#  — this only says what a test build links.
+[dev-dependencies]

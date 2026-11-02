@@ -1156,7 +1156,7 @@ mod tests {
     fn the_riscv64_payload_hard_codes_the_instruction_pointer_offset() {
         let source = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/src/user/demo/demo_program_riscv64_payload.S"
+            "/../src/user/demo/demo_program_riscv64_payload.S"
         ));
         let marker = ".equ EXC_FRAME_INSTRUCTION_POINTER,";
         let line = source

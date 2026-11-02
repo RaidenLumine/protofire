@@ -17,8 +17,8 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::user::shared::syscall;
-use crate::user::shared::types::CmdResult;
+use crate::syscall;
+use crate::types::CmdResult;
 
 // ── Wire-format constants (match kernel/fuse/mod.rs) ──────────────────────
 

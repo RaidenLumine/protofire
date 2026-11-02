@@ -920,7 +920,7 @@ disk-backed swap, compression, and defragmentation.
   The reference count is tested on the host for both architectures, including
   that `Clone` takes a reference — dropping that one line turns a test red.
 
-  `Fork` (#62) now has a caller: `sys_fork` in `src/user/shared/syscall.rs` and
+  `Fork` (#62) now has a caller: `sys_fork` in `shared/src/syscall.rs` and
   a `fork` builtin in the shell payload, so it can be run from a console
   rather than only reasoned about.  Running it found four defects the host
   tests could not, and all four are fixed:
@@ -1152,7 +1152,7 @@ multicast routing, and raw sockets.
 
 The network ranges are in the `SyscallNumber` enum. Not
 every network syscall has a typed wrapper in the shared user library
-(`src/user/shared/`); a program that needs an unwrapped one calls the raw entry
+(`shared/src/`); a program that needs an unwrapped one calls the raw entry
 point.
 
 **Strengths:** a native (non-lwIP) TCP/IP stack that carries a boot's
@@ -1484,7 +1484,7 @@ control that are unusual in a hobby kernel.
 | Syscall table | Numbered slots; the public count is derived from the highest enum discriminant, not written down in this document | The experimental range is not frozen, so it carries no cross-major stability guarantee |
 | Dispatch engine | Context-aware dispatch with action return | — |
 | User memory validation | `validate_user_mapping()` and `copy_user_bytes()`, driven by the central pointer-spec table | — |
-| Shared wrappers (`src/user/shared/syscall.rs`) | Typed wrappers plus raw entry points | Not every syscall has a typed wrapper |
+| Shared wrappers (`shared/src/syscall.rs`) | Typed wrappers plus raw entry points | Not every syscall has a typed wrapper |
 | ABI types | Wire-format records with compile-time layout assertions | — |
 | Per-category handler files | fs, network, process, diagnostic, tls, filter, io_uring, ptrace, and the rest | — |
 | Syscall profiling | None: `dispatch_with_action` runs seccomp, the handler and the audit hooks with no per-syscall tally | There is no syscall-profiling feature in `Cargo.toml` and no counter in the dispatch path |
@@ -1521,7 +1521,7 @@ user-memory validation.
 - **Organized by category**: handler files are separated by concern (fs,
   network, process, tls, filter, io_uring, ptrace, etc.), and the dispatch table
   has room for expansion (`MAX_SYSCALLS = 256`).
-- **Single source of truth**: `src/user/shared/` provides the ABI's one
+- **Single source of truth**: `shared/src/` provides the ABI's one
   canonical manifest — both kernel and userspace compile against the same
   constant definitions; the `UserSyscall` type lets kernel-internal callers
   (demo workers) exercise the same path.
@@ -1538,7 +1538,7 @@ user-memory validation.
   gpu_transfer_to_host_3d/from_host_3d, gpu_submit_3d, gpu_set_scanout,
   gpu_device_info.
 - **Stable, versioned ABI**: all syscall numbers live in
-  `src/user/shared/abi/syscall.rs`; the ABI is versioned via
+  `shared/src/abi/syscall.rs`; the ABI is versioned via
   `SYSCALL_ABI_VERSION_MAJOR`/`SYSCALL_ABI_VERSION_MINOR`, reported at runtime
   through `RuntimeAbiInfo`; numbering is append-only — never renumber, never
   reuse a slot; syscalls are classified Stable or Experimental with a frozen
@@ -1596,21 +1596,21 @@ What each target still lacks:
   machine has no IMSIC, where a claim is refused and the driver polls.
 - **All three**: verified under QEMU only; no bare-metal bring-up yet.
 
-### Shared User Runtime (`src/user/shared/`)
+### Shared User Runtime (`shared/src/`)
 
 | Module | Now | Missing |
 |--------|-----|---------|
 | `syscall.rs` | Typed syscall wrappers plus raw entry points | Not every syscall has a wrapper |
 | `dispatch.rs` | Command-name to builtin dispatch | — |
 | `commands/` | The shell's builtin implementations | Builtins are shell commands, not a libc; a standalone program links this module to reuse them |
-| `signal.rs` | Signal API: `u32` mask, wait/poll/send, handler installation | No siginfo record; `SA_SIGINFO` is not accepted |
-| `passwd.rs` | `/data/etc/passwd` parsing | No group file to parse |
-| `jobs.rs` | Job tracking for the shell | Jobs live in userspace, so they die with the shell |
+| `shared/src/signal.rs` | Signal API: `u32` mask, wait/poll/send, handler installation | No siginfo record; `SA_SIGINFO` is not accepted |
+| `shared/src/passwd.rs` | `/data/etc/passwd` parsing | No group file to parse |
+| `shared/src/jobs.rs` | Job tracking for the shell | Jobs live in userspace, so they die with the shell |
 | `abi/` | ABI record types, mirrored from `src/abi/` | — |
-| `runtime.rs` | Architecture syscall bridge, brk allocator, argument parsing | Behind the `runtime` feature; the kernel build uses its own bridge instead |
+| `shared/src/runtime.rs` | Architecture syscall bridge, brk allocator, argument parsing | Behind the `runtime` feature; the kernel build uses its own bridge instead |
 
 The ABI records are the one thing here that exists twice: `src/abi/` holds them,
-and `src/user/shared/abi/` mirrors them, the mirror carrying
+and `shared/src/abi/` mirrors them, the mirror carrying
 `//! src/abi/<name>.rs` in its header to record where each file came from.
 `make check-abi-mirror` keeps the two in step: every record has to be declared
 by `src/abi/mod.rs` (a file the compiler never reads is not code), every mirror
@@ -1675,7 +1675,7 @@ layouts asserted at compile time, a frozen range below a boundary — is
 | Item | State | Where |
 |------|-------|-------|
 | The number table is frozen | **done** | `tests/syscall/abi_golden.rs`: a snapshot of every number→name row. A change in the frozen range fails outright; a change in the experimental range fails unless the ABI minor version moves with it. Before this, swapping two stable syscalls left every test green. The one change that range *does* permit is additive optional behaviour, and it has taken one: `lseek`'s `SEEK_DATA` and `SEEK_HOLE` are two values a call that predates the boundary newly accepts (minor 5, [RFC 0017](rfcs/0017-ask-a-file-where-its-holes-are.md)), so a program that never passes them sees exactly what it saw before. |
-| Userspace can learn which ABI it is on | **done** | the `abi_info` syscall returns `syscall_abi_major`, `syscall_abi_minor` and `syscall_count` alongside the record's own `major`/`minor`/`record_size` (`src/user/shared/abi/runtime.rs`) |
+| Userspace can learn which ABI it is on | **done** | the `abi_info` syscall returns `syscall_abi_major`, `syscall_abi_minor` and `syscall_count` alongside the record's own `major`/`minor`/`record_size` (`shared/src/abi/runtime.rs`) |
 | A program that was not rebuilt | **done, partially** | `src/user/demo/fixtures/` holds frozen payloads. `make check-abi-frozen-payload{,-aarch64,-riscv64}` build with `abi_frozen_payload`, so the demo disk carries *those* bytes instead of the freshly compiled ones, boots them, and requires the same user output the normal smokes do — plus a boot line naming the source, so a gate cannot pass while quietly testing a new payload. The x86_64 boot carries two: it runs the frozen launcher, and the launcher starts the frozen child. AArch64 and RISC-V have one each because their demo disks ship one payload program between them. Each freeze is a deliberate act; the remaining demo programs are not frozen. |
 
 ### Build & Development
@@ -1684,7 +1684,7 @@ The build system, the optional features and the release profile belong to the
 root [README.md](../README.md) and `Cargo.toml`; what this document has to
 say is what the tree *is*, not how it is built:
 
-- **The userspace runtime lives inside the kernel crate** (`src/user/shared/`,
+- **The userspace runtime lives inside the kernel crate** (`shared/src/`,
   `src/user/demo/`), so a syscall wrapper, a shell builtin and an ABI record
   are compiled on both sides of the boundary rather than re-implemented per
   side.

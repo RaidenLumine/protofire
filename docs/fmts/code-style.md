@@ -246,7 +246,7 @@ module, like syscall handlers.
   a registry table. Syscall handlers are `pub(super)` for exactly this reason:
   they are callable through `SYSCALL_REGISTRY` and nowhere else.
 - **`pub`** — reserved for the ABI (`src/abi/`), types genuinely shared between
-  the kernel and ring-3 code (`src/user/shared/`), and the small set of kernel
+  the kernel and ring-3 code (`shared/src/`), and the small set of kernel
   entry points. A `pub` item in `src/kernel/` should be defensible as a
   deliberate surface, not a habit.
 

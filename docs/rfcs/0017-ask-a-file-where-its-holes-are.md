@@ -53,7 +53,7 @@ wired and never executed.
   reads `min(length, initialized_size)` bytes with the reason in its comment:
   what lies past the initialized size was never written, and the format says
   it reads as zeros.
-- `src/abi/fs.rs` and `src/user/shared/abi/fs.rs`: the same file twice, held in
+- `src/abi/fs.rs` and `shared/src/abi/fs.rs`: the same file twice, held in
   step by `check-abi-mirror`, which is where a value a *program* has to pass
   belongs.
 - `docs/fmts/syscall-abi.md`: `0..=120` is frozen and additive *optional*

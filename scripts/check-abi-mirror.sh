@@ -23,10 +23,12 @@
 #      the only place the two are allowed to differ, and it has to record where
 #      the file came from (`//! src/abi/<name>.rs`).
 #   4. the vendored tree and the payload modules reach the ABI through the
-#      shared copy.  `src/user/shared/` is the tree that has to be liftable out
-#      of this crate and the payload modules are the code that is copied into
-#      ring 3; `crate::abi::` is not something either can take with it, and 141
-#      sites used to name it.
+#      shared copy.  `shared/` is a crate of its own — the payloads depend on it
+#      directly, because they are copied into ring 3 and must not be
+#      stack-protected, which needs a compilation-unit boundary — and
+#      `crate::abi::` is not something they can take with them; 141 sites used
+#      to name it.  The kernel re-exports the crate as `user::shared`, so the
+#      ABI still has one name wherever it is read.
 #
 # A pair that is meant to differ is listed in `scripts/abi-mirror-baseline.txt`
 # with its reason, and a stale row — one whose difference is gone — fails too,
@@ -41,7 +43,7 @@ cd "$(dirname "$0")/.."
 
 BASELINE="${BASELINE:-scripts/abi-mirror-baseline.txt}"
 KERNEL_DIR="src/abi"
-SHARED_DIR="src/user/shared/abi"
+SHARED_DIR="shared/src/abi"
 
 if [ ! -f "$BASELINE" ]; then
     printf 'ABI mirror baseline not found: %s\n' "$BASELINE" >&2
@@ -187,17 +189,29 @@ done
 # section, so they are derived from that file rather than listed here: a
 # payload added tomorrow is covered by this check the day it is declared.
 payload_files="$(awk '/^payload_or_stub!\(/ { sub(/.*, /, ""); sub(/\);.*/, ""); print "src/user/demo/" $0 ".rs" }' src/user/demo/mod.rs)"
-standalone_files="$(find src/user/shared -name '*.rs' | sort)"
+standalone_files="$(find shared/src -name '*.rs' | sort)"
 for file in $standalone_files $payload_files; do
     if [ ! -f "$file" ]; then
         fail "abi: $file is named here but does not exist"
         continue
     fi
-    if grep -q 'crate::abi::' "$file"; then
-        fail "abi: $file names crate::abi::"
-        fail "  the vendored tree and the payloads reach the ABI through"
-        fail "  crate::user::shared::abi::, not the kernel's copy"
-    fi
+    # `crate::abi::` means different things on the two sides of the move, and
+    # the rule has to say which.  In the shared tree it is the *right* path:
+    # `protofire-shared` has an `abi` module of its own, so `crate::abi::fs`
+    # is its own record and not the kernel's.  In a payload module — which is
+    # still compiled inside the kernel crate — it is the wrong one, and it is
+    # the name 141 sites used to carry before the payloads were pointed at the
+    # shared copy.
+    case "$file" in
+        shared/src/*) ;;
+        *)
+            if grep -q 'crate::abi::' "$file"; then
+                fail "abi: $file names crate::abi::"
+                fail "  a payload reaches the ABI through the shared crate,"
+                fail "  not the kernel's copy"
+            fi
+            ;;
+    esac
 done
 
 if [ "$failed" -ne 0 ]; then

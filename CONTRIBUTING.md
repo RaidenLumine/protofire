@@ -332,7 +332,7 @@ same way.
 The syscall ABI is **the** compatibility boundary of this kernel. Follow these
 rules strictly:
 
-1. **Numbering lives in one place only:** `src/user/shared/abi/syscall.rs`.
+1. **Numbering lives in one place only:** `shared/src/abi/syscall.rs`.
    The kernel's `SyscallNumber` enum and every userspace wrapper compile against
    the same manifest — numbering cannot drift.
 2. **Append-only.** Never renumber, never reuse a freed slot, never insert in
@@ -345,7 +345,7 @@ rules strictly:
    the appropriate `src/syscall/` category.
 6. **Validate user pointers** through the central `SYSCALL_POINTER_SPECS`
    table — never dereference user addresses without validation.
-7. **Add typed wrapper(s)** in `src/user/shared/syscall.rs`.
+7. **Add typed wrapper(s)** in `shared/src/syscall.rs`.
 8. **Update the docs:** `docs/kernel/syscalls.md`.
 9. **Add tests:** unit tests for the handler and, where user-visible,
    integration coverage in `tests/syscall/`.

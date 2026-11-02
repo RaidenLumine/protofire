@@ -257,7 +257,7 @@ fn park_on_polled_descriptors(process: &crate::kernel::process::Process, fds: &[
             let Ok(handle) = process.fd_entry(fd) else {
                 continue;
             };
-            let Some(wait) = handle.tcp_write_wait(&stack) else {
+            let Some(wait) = handle.tcp_write_wait(stack) else {
                 continue;
             };
             // One park, then return: the caller's loop re-probes, so a second

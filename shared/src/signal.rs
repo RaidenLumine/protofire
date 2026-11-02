@@ -23,8 +23,8 @@
 //! # Typical usage
 //!
 //! ```ignore
-//! use crate::user::shared::signal;
-//! use crate::user::shared::syscall::{SIGTERM, SIGINT, SIGCHLD};
+//! use crate::signal;
+//! use crate::syscall::{SIGTERM, SIGINT, SIGCHLD};
 //!
 //! // Simple blocking wait in an event loop
 //! loop {
@@ -37,19 +37,19 @@
 //! }
 //! ```
 
-use crate::user::shared::abi::process::ProcessSignalRecord;
-use crate::user::shared::syscall;
+use crate::abi::process::ProcessSignalRecord;
+use crate::syscall;
 
 // Re-export POSIX signal constants so callers can `use signal::SIGTERM` etc.
-pub use crate::user::shared::syscall::SIGCHLD;
-pub use crate::user::shared::syscall::SIGCONT;
-pub use crate::user::shared::syscall::SIGHUP;
-pub use crate::user::shared::syscall::SIGINT;
-pub use crate::user::shared::syscall::SIGKILL;
-pub use crate::user::shared::syscall::SIGQUIT;
-pub use crate::user::shared::syscall::SIGSTOP;
-pub use crate::user::shared::syscall::SIGTERM;
-pub use crate::user::shared::syscall::SIGTSTP;
+pub use crate::syscall::SIGCHLD;
+pub use crate::syscall::SIGCONT;
+pub use crate::syscall::SIGHUP;
+pub use crate::syscall::SIGINT;
+pub use crate::syscall::SIGKILL;
+pub use crate::syscall::SIGQUIT;
+pub use crate::syscall::SIGSTOP;
+pub use crate::syscall::SIGTERM;
+pub use crate::syscall::SIGTSTP;
 
 /// Sentinel value for "block indefinitely" passed to `wait_signal`.
 pub const WAIT_FOREVER: u64 = u64::MAX;
@@ -175,7 +175,7 @@ pub fn signal_dispatch_loop(handlers: &[(usize, SignalHandler)]) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::user::shared::abi::process::ProcessSignalRecord;
+    use crate::abi::process::ProcessSignalRecord;
     use alloc::vec;
 
     #[test]

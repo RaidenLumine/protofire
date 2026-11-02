@@ -12,18 +12,18 @@
 //! # Syscall numbers
 //!
 //! The canonical syscall-number definitions live in
-//! `crate::user::shared::abi::syscall` (single source of truth, shared with the
+//! `crate::abi::syscall` (single source of truth, shared with the
 //! kernel's `SyscallNumber` enum). They are re-exported below so existing
 //! `SYS_*` references keep resolving.
 
 // ── Syscall numbers ─────────────────────────────────────────────────────
 //
 // Canonical syscall-number definitions live in
-// `crate::user::shared::abi::syscall` (the single source of truth shared with
+// `crate::abi::syscall` (the single source of truth shared with
 // the kernel).  Re-exported here so existing bare `SYS_*` references keep
 // resolving.
 
-pub use crate::user::shared::abi::syscall::*;
+pub use crate::abi::syscall::*;
 
 // ── Raw syscall entry points ─────────────────────────────────────────────
 //
@@ -67,6 +67,56 @@ unsafe extern "Rust" {
         a4: usize,
         a5: usize,
     ) -> isize;
+}
+
+// A test build of this crate links no bridge: the kernel's
+// `user::program::shell::syscall_bridge` defines these symbols and a payload's
+// runtime defines its own, and neither is a dependency of this crate.  Without
+// a definition here the harness fails at link time on every one of them.
+//
+// They answer `-1`, the "refused" status, because what the tests in this crate
+// check is argument packing and error decoding — not what the kernel does with
+// the call.  A wrapper that reaches the bridge and gets `-1` is exercising the
+// same decode path a refusal from the kernel would take.
+#[cfg(test)]
+mod syscall_bridge_stubs {
+    #[no_mangle]
+    extern "Rust" fn __shell_syscall0(_n: usize) -> isize {
+        -1
+    }
+    #[no_mangle]
+    extern "Rust" fn __shell_syscall1(_n: usize, _a0: usize) -> isize {
+        -1
+    }
+    #[no_mangle]
+    extern "Rust" fn __shell_syscall2(_n: usize, _a0: usize, _a1: usize) -> isize {
+        -1
+    }
+    #[no_mangle]
+    extern "Rust" fn __shell_syscall3(_n: usize, _a0: usize, _a1: usize, _a2: usize) -> isize {
+        -1
+    }
+    #[no_mangle]
+    extern "Rust" fn __shell_syscall4(
+        _n: usize,
+        _a0: usize,
+        _a1: usize,
+        _a2: usize,
+        _a3: usize,
+    ) -> isize {
+        -1
+    }
+    #[no_mangle]
+    extern "Rust" fn __shell_syscall5(
+        _n: usize,
+        _a0: usize,
+        _a1: usize,
+        _a2: usize,
+        _a3: usize,
+        _a4: usize,
+    ) -> isize {
+        -1
+    }
 }
 
 // NOTE: the former crate shipped `#[cfg(test)] #[no_mangle]` stubs for the
@@ -1706,11 +1756,11 @@ pub fn sys_dccp_close(fd: usize, flags: usize) -> Result<usize, isize> {
 // ── IPsec SPD/SAD (#164-168) ─────────────────────────────────────────────
 
 /// Add an IPsec security-policy entry.  Returns the policy id.
-pub fn sys_ipsec_add_sp(sp: &crate::user::shared::abi::ipsec::IpsecSpDef) -> Result<usize, isize> {
+pub fn sys_ipsec_add_sp(sp: &crate::abi::ipsec::IpsecSpDef) -> Result<usize, isize> {
     let rc = __shell_syscall3(
         SYS_IPSEC_ADD_SP,
         sp as *const _ as usize,
-        core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecSpDef>(),
+        core::mem::size_of::<crate::abi::ipsec::IpsecSpDef>(),
         0,
     );
     decode(rc)
@@ -1723,11 +1773,11 @@ pub fn sys_ipsec_del_sp(sp_id: u64) -> Result<usize, isize> {
 }
 
 /// Add an IPsec security association.  Returns the SA id.
-pub fn sys_ipsec_add_sa(sa: &crate::user::shared::abi::ipsec::IpsecSaDef) -> Result<usize, isize> {
+pub fn sys_ipsec_add_sa(sa: &crate::abi::ipsec::IpsecSaDef) -> Result<usize, isize> {
     let rc = __shell_syscall3(
         SYS_IPSEC_ADD_SA,
         sa as *const _ as usize,
-        core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecSaDef>(),
+        core::mem::size_of::<crate::abi::ipsec::IpsecSaDef>(),
         0,
     );
     decode(rc)
@@ -1740,13 +1790,11 @@ pub fn sys_ipsec_del_sa(spi: u32) -> Result<usize, isize> {
 }
 
 /// Read IPsec statistics into `stats`.
-pub fn sys_ipsec_get_stats(
-    stats: &mut crate::user::shared::abi::ipsec::IpsecStats,
-) -> Result<usize, isize> {
+pub fn sys_ipsec_get_stats(stats: &mut crate::abi::ipsec::IpsecStats) -> Result<usize, isize> {
     let rc = __shell_syscall3(
         SYS_IPSEC_GET_STATS,
         stats as *mut _ as usize,
-        core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecStats>(),
+        core::mem::size_of::<crate::abi::ipsec::IpsecStats>(),
         0,
     );
     decode(rc)
@@ -1767,11 +1815,11 @@ pub fn sys_mrt_done() -> Result<usize, isize> {
 }
 
 /// Add a multicast virtual interface.  Returns the VIF index.
-pub fn sys_mrt_add_vif(vif: &crate::user::shared::abi::mrt::MrtVifDef) -> Result<usize, isize> {
+pub fn sys_mrt_add_vif(vif: &crate::abi::mrt::MrtVifDef) -> Result<usize, isize> {
     let rc = __shell_syscall3(
         SYS_MRT_ADD_VIF,
         vif as *const _ as usize,
-        core::mem::size_of::<crate::user::shared::abi::mrt::MrtVifDef>(),
+        core::mem::size_of::<crate::abi::mrt::MrtVifDef>(),
         0,
     );
     decode(rc)
@@ -1784,11 +1832,11 @@ pub fn sys_mrt_del_vif(vif_index: u32) -> Result<usize, isize> {
 }
 
 /// Add a multicast forwarding-cache entry.
-pub fn sys_mrt_add_mfc(mfc: &crate::user::shared::abi::mrt::MrtMfcDef) -> Result<usize, isize> {
+pub fn sys_mrt_add_mfc(mfc: &crate::abi::mrt::MrtMfcDef) -> Result<usize, isize> {
     let rc = __shell_syscall3(
         SYS_MRT_ADD_MFC,
         mfc as *const _ as usize,
-        core::mem::size_of::<crate::user::shared::abi::mrt::MrtMfcDef>(),
+        core::mem::size_of::<crate::abi::mrt::MrtMfcDef>(),
         0,
     );
     decode(rc)
@@ -1823,11 +1871,11 @@ pub fn sys_mac_set_mode(enabled: u32, default_deny: u32, flags: u32) -> Result<u
 }
 
 /// Add a MAC allow rule.
-pub fn sys_mac_add_rule(rule: &crate::user::shared::abi::mac::MacRule) -> Result<usize, isize> {
+pub fn sys_mac_add_rule(rule: &crate::abi::mac::MacRule) -> Result<usize, isize> {
     let rc = __shell_syscall3(
         SYS_MAC_ADD_RULE,
         rule as *const _ as usize,
-        core::mem::size_of::<crate::user::shared::abi::mac::MacRule>(),
+        core::mem::size_of::<crate::abi::mac::MacRule>(),
         0,
     );
     decode(rc)
@@ -1846,13 +1894,11 @@ pub fn sys_mac_set_path_type(path: &str, mac_type: u32, flags: u32) -> Result<us
 }
 
 /// Read the MAC policy status into `status`.
-pub fn sys_mac_get_status(
-    status: &mut crate::user::shared::abi::mac::MacStatus,
-) -> Result<usize, isize> {
+pub fn sys_mac_get_status(status: &mut crate::abi::mac::MacStatus) -> Result<usize, isize> {
     let rc = __shell_syscall3(
         SYS_MAC_GET_STATUS,
         status as *mut _ as usize,
-        core::mem::size_of::<crate::user::shared::abi::mac::MacStatus>(),
+        core::mem::size_of::<crate::abi::mac::MacStatus>(),
         0,
     );
     decode(rc)
@@ -1861,7 +1907,7 @@ pub fn sys_mac_get_status(
 // ── fcntl descriptor control (#179) ────────────────────────────────────────
 
 /// Generic descriptor control.  `cmd` is one of the `F_*` constants from
-/// `crate::user::shared::abi::fs`.  Returns the command's result value.
+/// `crate::abi::fs`.  Returns the command's result value.
 pub fn sys_fcntl(fd: usize, cmd: usize, arg: usize) -> Result<usize, isize> {
     let rc = __shell_syscall3(SYS_FCNTL, fd, cmd, arg);
     decode(rc)
@@ -1869,12 +1915,12 @@ pub fn sys_fcntl(fd: usize, cmd: usize, arg: usize) -> Result<usize, isize> {
 
 /// Convenience: query the pipe buffer capacity of `fd`.
 pub fn sys_fcntl_get_pipe_sz(fd: usize) -> Result<usize, isize> {
-    sys_fcntl(fd, crate::user::shared::abi::fs::F_GETPIPE_SZ, 0)
+    sys_fcntl(fd, crate::abi::fs::F_GETPIPE_SZ, 0)
 }
 
 /// Convenience: resize the pipe buffer of `fd` to (at least) `size` bytes.
 pub fn sys_fcntl_set_pipe_sz(fd: usize, size: usize) -> Result<usize, isize> {
-    sys_fcntl(fd, crate::user::shared::abi::fs::F_SETPIPE_SZ, size)
+    sys_fcntl(fd, crate::abi::fs::F_SETPIPE_SZ, size)
 }
 
 // ── Global filesystem sync (#180) ──────────────────────────────────────────
@@ -1889,31 +1935,25 @@ pub fn sys_sync() -> Result<usize, isize> {
 
 /// Create a VIRGL rendering context.  Returns the context id.
 pub fn sys_gpu_ctx_create(ctx_id: u32) -> Result<usize, isize> {
-    let rc = __shell_syscall1(
-        crate::user::shared::abi::gpu::SYS_GPU_CTX_CREATE,
-        ctx_id as usize,
-    );
+    let rc = __shell_syscall1(crate::abi::gpu::SYS_GPU_CTX_CREATE, ctx_id as usize);
     decode(rc)
 }
 
 /// Destroy a VIRGL rendering context.
 pub fn sys_gpu_ctx_destroy(ctx_id: u32) -> Result<usize, isize> {
-    let rc = __shell_syscall1(
-        crate::user::shared::abi::gpu::SYS_GPU_CTX_DESTROY,
-        ctx_id as usize,
-    );
+    let rc = __shell_syscall1(crate::abi::gpu::SYS_GPU_CTX_DESTROY, ctx_id as usize);
     decode(rc)
 }
 
 /// Create a 3D resource with kernel-managed DMA backing.  `desc` is a
-/// `crate::user::shared::abi::gpu::GpuResCreate3dDesc`.  Returns the resource
+/// `crate::abi::gpu::GpuResCreate3dDesc`.  Returns the resource
 /// id.
 pub fn sys_gpu_res_create_3d(
-    desc_ptr: *const crate::user::shared::abi::gpu::GpuResCreate3dDesc,
+    desc_ptr: *const crate::abi::gpu::GpuResCreate3dDesc,
     desc_len: usize,
 ) -> Result<usize, isize> {
     let rc = __shell_syscall2(
-        crate::user::shared::abi::gpu::SYS_GPU_RES_CREATE_3D,
+        crate::abi::gpu::SYS_GPU_RES_CREATE_3D,
         desc_ptr as usize,
         desc_len,
     );
@@ -1922,24 +1962,21 @@ pub fn sys_gpu_res_create_3d(
 
 /// Destroy a 3D resource and release its backing.
 pub fn sys_gpu_res_unref(resource_id: u32) -> Result<usize, isize> {
-    let rc = __shell_syscall1(
-        crate::user::shared::abi::gpu::SYS_GPU_RES_UNREF,
-        resource_id as usize,
-    );
+    let rc = __shell_syscall1(crate::abi::gpu::SYS_GPU_RES_UNREF, resource_id as usize);
     decode(rc)
 }
 
 /// Copy user data into a resource's backing and upload it to the host.
-/// `desc` is a `crate::user::shared::abi::gpu::GpuTransfer3dDesc`; `data` holds
+/// `desc` is a `crate::abi::gpu::GpuTransfer3dDesc`; `data` holds
 /// the bytes.
 pub fn sys_gpu_transfer_to_host_3d(
-    desc_ptr: *const crate::user::shared::abi::gpu::GpuTransfer3dDesc,
+    desc_ptr: *const crate::abi::gpu::GpuTransfer3dDesc,
     desc_len: usize,
     data_ptr: *const u8,
     data_len: usize,
 ) -> Result<usize, isize> {
     let rc = __shell_syscall4(
-        crate::user::shared::abi::gpu::SYS_GPU_TRANSFER_TO_HOST_3D,
+        crate::abi::gpu::SYS_GPU_TRANSFER_TO_HOST_3D,
         desc_ptr as usize,
         desc_len,
         data_ptr as usize,
@@ -1950,13 +1987,13 @@ pub fn sys_gpu_transfer_to_host_3d(
 
 /// Transfer a resource region back from the host into a user buffer.
 pub fn sys_gpu_transfer_from_host_3d(
-    desc_ptr: *const crate::user::shared::abi::gpu::GpuTransfer3dDesc,
+    desc_ptr: *const crate::abi::gpu::GpuTransfer3dDesc,
     desc_len: usize,
     data_ptr: *mut u8,
     data_len: usize,
 ) -> Result<usize, isize> {
     let rc = __shell_syscall4(
-        crate::user::shared::abi::gpu::SYS_GPU_TRANSFER_FROM_HOST_3D,
+        crate::abi::gpu::SYS_GPU_TRANSFER_FROM_HOST_3D,
         desc_ptr as usize,
         desc_len,
         data_ptr as usize,
@@ -1968,7 +2005,7 @@ pub fn sys_gpu_transfer_from_host_3d(
 /// Submit a VIRGL command stream to a context for rendering.
 pub fn sys_gpu_submit_3d(ctx_id: u32, cmd_ptr: *const u8, cmd_len: usize) -> Result<usize, isize> {
     let rc = __shell_syscall3(
-        crate::user::shared::abi::gpu::SYS_GPU_SUBMIT_3D,
+        crate::abi::gpu::SYS_GPU_SUBMIT_3D,
         ctx_id as usize,
         cmd_ptr as usize,
         cmd_len,
@@ -1979,7 +2016,7 @@ pub fn sys_gpu_submit_3d(ctx_id: u32, cmd_ptr: *const u8, cmd_len: usize) -> Res
 /// Present a resource on the display.
 pub fn sys_gpu_set_scanout(resource_id: u32, width: u32, height: u32) -> Result<usize, isize> {
     let rc = __shell_syscall3(
-        crate::user::shared::abi::gpu::SYS_GPU_SET_SCANOUT,
+        crate::abi::gpu::SYS_GPU_SET_SCANOUT,
         resource_id as usize,
         width as usize,
         height as usize,
@@ -1988,13 +2025,13 @@ pub fn sys_gpu_set_scanout(resource_id: u32, width: u32, height: u32) -> Result<
 }
 
 /// Report GPU presence and capabilities into a
-/// `crate::user::shared::abi::gpu::GpuDeviceInfo`.
+/// `crate::abi::gpu::GpuDeviceInfo`.
 pub fn sys_gpu_device_info(
-    info_ptr: *mut crate::user::shared::abi::gpu::GpuDeviceInfo,
+    info_ptr: *mut crate::abi::gpu::GpuDeviceInfo,
     info_len: usize,
 ) -> Result<usize, isize> {
     let rc = __shell_syscall2(
-        crate::user::shared::abi::gpu::SYS_GPU_DEVICE_INFO,
+        crate::abi::gpu::SYS_GPU_DEVICE_INFO,
         info_ptr as usize,
         info_len,
     );

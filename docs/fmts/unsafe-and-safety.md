@@ -36,7 +36,7 @@ little else:
 | Category | Examples | Where |
 |----------|----------|-------|
 | **MMIO and port I/O** | `read_volatile` / `write_volatile` on a device BAR, `in`/`out` instructions | `src/drivers/`, `src/arch/*/` |
-| **Inline assembly** | Context switch, trap entry/exit, `stac`/`clac`, cache and TLB maintenance | `src/arch/*/`, `src/user/shared/` |
+| **Inline assembly** | Context switch, trap entry/exit, `stac`/`clac`, cache and TLB maintenance | `src/arch/*/`, `shared/src/` |
 | **Raw pointer structures** | Page-table walks, the frame bitmap, linked free lists, per-CPU areas | `src/memory/`, `src/kernel/percpu.rs` |
 | **Global singleton slots** | The `install_global_unchecked` pattern (see [code-style.md §8](code-style.md#8-globals-the-install-pattern)) | Throughout |
 

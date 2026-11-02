@@ -11,11 +11,11 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::user::shared::abi::io::OPEN_FLAG_READ;
-use crate::user::shared::expand::expand_env_vars;
-use crate::user::shared::path_util::resolve_path;
-use crate::user::shared::syscall;
-use crate::user::shared::types::CmdResult;
+use crate::abi::io::OPEN_FLAG_READ;
+use crate::expand::expand_env_vars;
+use crate::path_util::resolve_path;
+use crate::syscall;
+use crate::types::CmdResult;
 
 const CAT_BUF_SIZE: usize = 4096;
 

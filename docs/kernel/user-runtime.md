@@ -1,6 +1,6 @@
 # The Shared User Runtime
 
-`src/user/shared/` is the code that both sides of the syscall boundary
+`shared/src/` is the code that both sides of the syscall boundary
 compile: the kernel's built-in shell runs it in ring 0, and a program built
 from the same sources runs it in ring 3.  It holds three things — the ABI
 record types, the syscall wrappers, and the shell library that the built-in
@@ -15,7 +15,7 @@ kernel, and what else lives in the shared tree.
 ## The records, and the mirror that keeps two copies one
 
 An ABI record exists twice on purpose.  `src/abi/` is the kernel's copy and
-`src/user/shared/abi/` is the vendored one a user program can take with it;
+`shared/src/abi/` is the vendored one a user program can take with it;
 a copy is only as good as the check that compares them, so
 `scripts/check-abi-mirror.sh` holds three rules:
 
@@ -31,25 +31,25 @@ a copy is only as good as the check that compares them, so
 
 The records themselves are `#[repr(C)]` with explicit field order, and the
 one place a layout constant matters states it as `offset_of!` rather than as
-a number (`src/user/shared/abi/exception.rs`).  Sizes are pinned by test:
+a number (`shared/src/abi/exception.rs`).  Sizes are pinned by test:
 `documented_record_sizes_match_the_records` in `src/abi/fs.rs` asserts the
 wire sizes of the file and process records against the types.
 
 The syscall numbers have their own single source: `SYSCALL_COUNT` and the
-`SYS_*` constants in `src/user/shared/abi/syscall.rs`, which both the
+`SYS_*` constants in `shared/src/abi/syscall.rs`, which both the
 kernel's `SyscallNumber` enum and the wrappers resolve through.  The frozen
 range is pinned by `tests/syscall/abi_golden.rs`.
 
 ## How a wrapper reaches the kernel
 
-`src/user/shared/syscall.rs` declares seven entry points,
+`shared/src/syscall.rs` declares seven entry points,
 `__shell_syscall0` through `__shell_syscall6`, as `extern "Rust"`.  Each
 environment supplies them:
 
 | Environment | Who defines them |
 |---|---|
 | Kernel and host tests | `src/user/program/shell/syscall_bridge.rs`, wrapping `SyscallContext` and `syscall::dispatch` |
-| Ring-3 program | `src/user/shared/runtime.rs`, which is where the standalone bridge is meant to live |
+| Ring-3 program | `shared/src/runtime.rs`, which is where the standalone bridge is meant to live |
 
 The declarations are `safe` deliberately: a syscall is an erring operation,
 not an unchecked memory access.  The kernel validates every address before
@@ -95,7 +95,7 @@ what lets one implementation serve a kernel thread and a program.
 ## Signals from the user side
 
 The kernel's signal model is cooperative: a pending signal waits in the
-process queue until the program asks for it.  `src/user/shared/signal.rs`
+process queue until the program asks for it.  `shared/src/signal.rs`
 is that asking, in two shapes:
 
 - **Wait** — `wait_signal(timeout)` and `wait_signal_forever()` return the
@@ -117,7 +117,7 @@ shared library only ever consumes a record.
 - **No allocator.** The tree does not ship one for ring 3 — an earlier
   document named a `BrkAllocator`, and no such type is in the tree — so a
   freestanding program brings its own.
-- **No standalone bridge, then.** `src/user/shared/runtime.rs` contains its
+- **No standalone bridge, then.** `shared/src/runtime.rs` contains its
   module documentation and no code: the kernel build uses
   `syscall_bridge.rs` (it is compiled when the `runtime` feature is off),
   and the ring-3 build that would need the other one is not built in this
@@ -131,14 +131,14 @@ shared library only ever consumes a record.
 
 | File | What it holds |
 |------|---------------|
-| `src/user/shared/abi/syscall.rs` | The syscall numbers and the status encoding |
-| `src/user/shared/abi/fs.rs`, `process.rs`, `io.rs`, `exception.rs` | The record families |
+| `shared/src/abi/syscall.rs` | The syscall numbers and the status encoding |
+| `shared/src/abi/fs.rs`, `process.rs`, `io.rs`, `exception.rs` | The record families |
 | `src/abi/mod.rs`, `scripts/abi-mirror-baseline.txt` | The kernel-side records and the mirror's exceptions |
-| `src/user/shared/syscall.rs` | The entry points and the typed wrappers |
+| `shared/src/syscall.rs` | The entry points and the typed wrappers |
 | `src/user/program/shell/syscall_bridge.rs` | The kernel-side bridge |
-| `src/user/shared/runtime.rs` | The ring-3 bridge's placeholder |
-| `src/user/shared/signal.rs` | The cooperative wait/mask API |
-| `src/user/shared/commands/`, `dispatch.rs`, `pipeline.rs` | The shell library |
+| `shared/src/runtime.rs` | The ring-3 bridge's placeholder |
+| `shared/src/signal.rs` | The cooperative wait/mask API |
+| `shared/src/commands/`, `dispatch.rs`, `pipeline.rs` | The shell library |
 | `scripts/check-abi-mirror.sh`, `tests/syscall/abi_golden.rs` | What keeps the two sides in step |
 
 ## See also

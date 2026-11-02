@@ -9,3 +9,10 @@ version = "0.1.0"
 [[package]]
 name = "protofire"
 version = "0.8.13"
+dependencies = [
+ "protofire-shared",
+]
+
+[[package]]
+name = "protofire-shared"
+version = "0.1.0"

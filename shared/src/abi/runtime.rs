@@ -4,7 +4,7 @@
 //! via the `abi_info` syscall (#39).
 //!
 //! Single source of truth: the kernel re-exports this module
-//! (`src/abi/runtime.rs` is `pub use crate::user::shared::abi::runtime::*;`),
+//! (`src/abi/runtime.rs` is `pub use crate::abi::runtime::*;`),
 //! so the record user space parses is byte-identical to what the kernel writes.
 //!
 //! # Versioning
@@ -14,8 +14,8 @@
 //!   version fields were added (major 1 → 2); this is the last pre-freeze
 //!   breaking layout change, and `record_size` lets older user space detect it.
 //! - `syscall_abi_major` / `syscall_abi_minor` carry the syscall-table ABI
-//!   version (`crate::user::shared::abi::syscall::SYSCALL_ABI_VERSION_*`),
-//!   which user space uses for runtime negotiation alongside `syscall_count`.
+//!   version (`crate::abi::syscall::SYSCALL_ABI_VERSION_*`), which user space
+//!   uses for runtime negotiation alongside `syscall_count`.
 
 use core::mem::offset_of;
 use core::mem::size_of;
@@ -30,10 +30,26 @@ use core::mem::size_of;
 /// a ring-3 program means by "uname".
 /// The name of the machine this binary was built for.
 ///
-/// The build's answer, stated once ([`crate::arch::TARGET_ARCH`]) and read
-/// here so a program that asks what it is running on gets the same name
-/// wherever it asks.
-pub const TARGET_ARCH: &str = crate::arch::TARGET_ARCH;
+/// The build's answer, stated once and read here so a program that asks what
+/// it is running on gets the same name wherever it asks.
+///
+/// Spelled out with `cfg` rather than re-exported from the kernel: this crate
+/// is what ring 3 is compiled against, so it cannot reach the kernel's
+/// `arch` module — that is the whole point of it being a crate.  The kernel's
+/// own copy says the same thing the same way, and
+/// `check-abi-mirror` refuses the two disagreeing.
+#[cfg(target_arch = "aarch64")]
+pub const TARGET_ARCH: &str = "aarch64";
+#[cfg(target_arch = "riscv64")]
+pub const TARGET_ARCH: &str = "riscv64";
+#[cfg(target_arch = "x86_64")]
+pub const TARGET_ARCH: &str = "x86_64";
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64"
+)))]
+pub const TARGET_ARCH: &str = "unknown";
 
 pub const RUNTIME_ABI_MAGIC: u32 = 0x4241_4958;
 pub const RUNTIME_ABI_MAJOR: u32 = 2;
@@ -73,10 +89,10 @@ pub struct RuntimeAbiInfo {
     pub feature_flags: u64,
     pub syscall_count: u32,
     /// Syscall-table ABI major version (see
-    /// `crate::user::shared::abi::syscall`).
+    /// `crate::abi::syscall`).
     pub syscall_abi_major: u32,
     /// Syscall-table ABI minor version (see
-    /// `crate::user::shared::abi::syscall`).
+    /// `crate::abi::syscall`).
     pub syscall_abi_minor: u32,
     pub record_size: u32,
 }

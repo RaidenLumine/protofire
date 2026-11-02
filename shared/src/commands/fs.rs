@@ -10,20 +10,20 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::user::shared::abi::fs::DirectoryEntryRecord;
-use crate::user::shared::abi::fs::FileStat;
-use crate::user::shared::abi::fs::MountInfoRecord;
-use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
-use crate::user::shared::abi::fs::FILE_KIND_DEVICE;
-use crate::user::shared::abi::fs::FILE_KIND_DIRECTORY;
-use crate::user::shared::abi::fs::FILE_KIND_FILE;
-use crate::user::shared::abi::fs::FILE_KIND_SYMLINK;
-use crate::user::shared::abi::fs::FILE_STAT_SIZE;
-use crate::user::shared::abi::io::OPEN_FLAG_READ;
-use crate::user::shared::abi::io::OPEN_FLAG_WRITE_CREATE;
-use crate::user::shared::path_util::resolve_path;
-use crate::user::shared::syscall;
-use crate::user::shared::types::CmdResult;
+use crate::abi::fs::DirectoryEntryRecord;
+use crate::abi::fs::FileStat;
+use crate::abi::fs::MountInfoRecord;
+use crate::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
+use crate::abi::fs::FILE_KIND_DEVICE;
+use crate::abi::fs::FILE_KIND_DIRECTORY;
+use crate::abi::fs::FILE_KIND_FILE;
+use crate::abi::fs::FILE_KIND_SYMLINK;
+use crate::abi::fs::FILE_STAT_SIZE;
+use crate::abi::io::OPEN_FLAG_READ;
+use crate::abi::io::OPEN_FLAG_WRITE_CREATE;
+use crate::path_util::resolve_path;
+use crate::syscall;
+use crate::types::CmdResult;
 
 // ── Buffer size for file reads ─────────────────────────────────────────
 

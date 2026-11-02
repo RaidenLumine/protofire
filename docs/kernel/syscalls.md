@@ -31,7 +31,7 @@ pub struct SyscallContext {
 }
 ```
 
-`ARG_COUNT` is owned by `src/user/shared/abi/syscall.rs`, which both the kernel
+`ARG_COUNT` is owned by `shared/src/abi/syscall.rs`, which both the kernel
 and the shared user tree compile against.  Unused trailing arguments must be
 zero, and `validate_zeroed_args` enforces it before a handler runs: a call that
 passes a stray value in an argument the syscall does not take is refused rather
@@ -47,14 +47,14 @@ decodes them with `decode`, which treats a negative `isize` as the error and
 everything else as a value:
 
 ```rust
-// src/user/shared/syscall.rs
+// shared/src/syscall.rs
 fn decode(status: isize) -> Result<usize, isize> {
     if status < 0 { Err(status) } else { Ok(status as usize) }
 }
 ```
 
 The encoding is defined by `ERROR_STATUS_FLOOR` and `encode_error` in
-`src/user/shared/abi/syscall.rs`, so the kernel's error type and the user-side
+`shared/src/abi/syscall.rs`, so the kernel's error type and the user-side
 decoder are derived from one definition rather than two conventions.
 
 ## Numbering
@@ -67,7 +67,7 @@ a convention:
   change in the frozen range fails outright; an addition or renumbering in the
   experimental range fails unless the ABI minor moves with it.
 - `scripts/check-abi-mirror.sh` compares the kernel's ABI records with the
-  vendored copy under `src/user/shared/abi/`, so the two sides of the boundary
+  vendored copy under `shared/src/abi/`, so the two sides of the boundary
   cannot drift apart.
 
 This document does not repeat the table.  The enum is the table, and the golden
@@ -142,7 +142,7 @@ and the window is opened in exactly one module, which
 
 ## The ring-3 side
 
-`src/user/shared/syscall.rs` is the other end: it declares `extern` entry points
+`shared/src/syscall.rs` is the other end: it declares `extern` entry points
 (`__shell_syscall0` … `__shell_syscall6`) and builds the typed wrappers on top
 of them, so a program written against the shared tree has one function per
 syscall and no inline assembly of its own.
@@ -172,4 +172,4 @@ named it.
 
 - [syscall-abi.md](../fmts/syscall-abi.md) — the contract, the stability
   classes, and the procedure for adding a call
-- the user-runtime document, once `src/user/shared/` is written up
+- the user-runtime document, once `shared/src/` is written up

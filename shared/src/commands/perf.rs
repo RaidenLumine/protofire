@@ -5,9 +5,9 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::user::shared::abi::diagnostic;
-use crate::user::shared::syscall;
-use crate::user::shared::types::CmdResult;
+use crate::abi::diagnostic;
+use crate::syscall;
+use crate::types::CmdResult;
 
 // ─── perf ───────────────────────────────────────────────────────────────
 

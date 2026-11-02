@@ -4,7 +4,7 @@
 //! truth).
 //!
 //! Both the kernel's `SyscallNumber` enum and ring3 syscall wrappers resolve
-//! their numbers through this module (`crate::user::shared::abi::syscall`), so
+//! their numbers through this module (`crate::abi::syscall`), so
 //! the kernel and user space can never drift.  The table is frozen in [0,
 //! SYSCALL_COUNT).
 

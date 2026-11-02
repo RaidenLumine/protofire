@@ -16,5 +16,7 @@
 # re-export, and a copy nobody compares is how the kernel's side came to hold
 # three blocks of user-facing API that the user's side never got.
 
+virgl.rs      differs      # the kernel copy reaches the GPU record through `user::shared` (the re-export), the shared copy through its own `crate::abi` — one record, named from where each side stands
+exception.rs  differs      # one test reads the payload assembly, which stayed in the kernel tree: the shared copy climbs out of its own crate to reach it, and the kernel copy does not
 runtime.rs    differs      # the kernel copy re-exports the shared one; the shared file is the definition
 syscall.rs    differs      # two subjects under one name: the kernel file encodes status words, the shared one names syscalls

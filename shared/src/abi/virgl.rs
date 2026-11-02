@@ -204,8 +204,8 @@ pub fn build_demo_clear_draw() -> ([u32; VIRGL_CMD_BUFFER_WORDS], usize) {
 }
 
 /// Build the demo's render-target descriptor (a 640×480 2D RGBA texture).
-pub fn build_demo_render_target_desc() -> crate::user::shared::abi::gpu::GpuResCreate3dDesc {
-    crate::user::shared::abi::gpu::GpuResCreate3dDesc {
+pub fn build_demo_render_target_desc() -> crate::abi::gpu::GpuResCreate3dDesc {
+    crate::abi::gpu::GpuResCreate3dDesc {
         resource_id: VIRGL_DEMO_RESOURCE_ID,
         target: VIRGL_DEMO_RESOURCE_TARGET,
         format: VIRGL_DEMO_RESOURCE_FORMAT,
@@ -223,7 +223,7 @@ pub fn build_demo_render_target_desc() -> crate::user::shared::abi::gpu::GpuResC
 
 /// Serialise a `GpuResCreate3dDesc` into its ABI byte layout (12 × u32, LE).
 pub fn serialize_create_3d_desc(
-    desc: &crate::user::shared::abi::gpu::GpuResCreate3dDesc,
+    desc: &crate::abi::gpu::GpuResCreate3dDesc,
     out: &mut [u8],
 ) -> usize {
     let fields = [
@@ -310,12 +310,9 @@ mod tests {
         assert_eq!(desc.height, VIRGL_DEMO_HEIGHT);
         assert_eq!(desc.stride, VIRGL_DEMO_STRIDE);
 
-        let mut bytes = [0u8; crate::user::shared::abi::gpu::GPU_RES_CREATE_3D_DESC_SIZE];
+        let mut bytes = [0u8; crate::abi::gpu::GPU_RES_CREATE_3D_DESC_SIZE];
         let written = serialize_create_3d_desc(&desc, &mut bytes);
-        assert_eq!(
-            written,
-            crate::user::shared::abi::gpu::GPU_RES_CREATE_3D_DESC_SIZE
-        );
+        assert_eq!(written, crate::abi::gpu::GPU_RES_CREATE_3D_DESC_SIZE);
         // resource_id is the first u32.
         assert_eq!(
             u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
