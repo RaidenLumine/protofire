@@ -125,6 +125,18 @@ trap cleanup EXIT INT TERM
 image="$work/demo-disk.img"
 "$CARGO" run --offline --quiet -- mkimage "$image"
 
+# The geometry the log has to report, read from the image this run just wrote
+# rather than written here a second time.  It was a literal (3584 blocks) until
+# `/data` grew to carry a LUKS2 header and the gate went red against a kernel
+# that was right: a number the tree already owns, copied into a check, goes
+# stale the moment the tree moves and reads as a defect in the driver.
+image_blocks="$(($(wc -c <"$image") / 512))"
+if [ "$image_blocks" -eq 0 ]; then
+    printf 'nvme disk check (%s): the image is empty, which is a host problem\n' \
+        "$MACHINE" >&2
+    exit 1
+fi
+
 printf 'nvme disk check (%s): timeout %ss, qemu %s\n' "$MACHINE" "$TIMEOUT_SECONDS" "$QEMU"
 
 # No other disk is attached: the NVMe namespace *is* the boot disk, so the boot
@@ -191,8 +203,8 @@ boot() {
 assert_mounts() {
     require_log_line "[nvme  ] found NVMe controller "
     require_log_line "[nvme  ] initialising NVMe controller at BAR="
-    require_log_line "[nvme  ] NVMe ready: 3584 blocks × 512 bytes"
-    require_log_line "[driver] detected boot disk: nvme0 (3584 blocks)"
+    require_log_line "[nvme  ] NVMe ready: $image_blocks blocks × 512 bytes"
+    require_log_line "[driver] detected boot disk: nvme0 ($image_blocks blocks)"
     require_log_line "[fs    ] mounted MBR-partitioned SimpleFs volumes from ATA boot disk"
     if grep -F "[fs    ] failed to mount SimpleFs volumes from ATA boot disk" "$log" >/dev/null 2>&1; then
         fail "the volume on the NVMe namespace did not mount"
