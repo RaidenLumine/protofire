@@ -3,8 +3,10 @@
 //! EROFS on-disk structures and parsers.
 //! On-disk data structures for EROFS (Enhanced Read-Only File System).
 //!
-//! Reference: EROFS was developed by Huawei; the layout described here
-//! follows the upstream Linux implementation (≥ 4.19).
+//! EROFS is a read-only filesystem format published with its kernel driver's
+//! documentation; the layout described here is that on-disk format — the
+//! superblock's magic and offsets, the inode variants and the compression
+//! cluster headers — and every field is named where the format names it.
 //!
 //! All multi-byte fields are little-endian unless noted otherwise.
 

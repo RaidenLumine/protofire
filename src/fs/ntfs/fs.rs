@@ -678,10 +678,11 @@ pub fn parse_data_runs(buf: &[u8]) -> Vec<DataRun> {
             // A run with **no offset at all** is the sparse one: it names no
             // cluster, and — this is the part that is easy to get wrong and
             // was — it does not move the place the next run's delta is measured
-            // from.  The reference (Linux's `ntfs3`, whose decoder carries the
-            // same `prev_lcn`) leaves the carried LCN alone here; a reader that
-            // took the hole for a cluster puts every run after it at the wrong
-            // place.
+            // from.  The run list's base is the last *named* cluster, so a
+            // reader that took the hole for a cluster puts every run after it
+            // at the wrong place; the format's own wording is that an
+            // offset-less run is "sparse or compressed" and contributes no
+            // delta.
             let lcn = if off_bytes == 0 {
                 -1
             } else {

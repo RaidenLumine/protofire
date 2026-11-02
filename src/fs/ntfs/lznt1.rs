@@ -20,8 +20,14 @@
 //! unit it is in, so a pair that reaches before the unit's start is a stream
 //! that does not add up.
 //!
-//! The shape is Linux's `fs/ntfs3/lznt.c` (`decompress_chunk` and the table it
-//! indexes with); the code is this tree's.
+//! The format is Microsoft's [MS-XCA] specification's LZNT1 variant, and every
+//! constant below is a field the format defines: the unit header's twelve-bit
+//! length and its compression bit, the eight flag bits of a squeezed payload,
+//! and the distance/length split table.  What the specification does not say —
+//! and what this file states for itself — is that a pair may not reach before
+//! its unit's start, which is the check [`decompress_unit`] makes.
+//!
+//! [MS-XCA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-xca/
 
 use alloc::vec::Vec;
 
