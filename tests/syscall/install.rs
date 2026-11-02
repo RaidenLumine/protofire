@@ -24,8 +24,8 @@ use std::sync::Arc;
 
 use protofire::fs::block::MemoryBlockDevice;
 use protofire::fs::layout::StorageZone;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::FileSystem;
 use protofire::kernel::crypto::sha256_hex;
 use protofire::kernel::process::Scheduler;
@@ -115,11 +115,11 @@ fn fixture(apps_read_only: bool) -> &'static KernelMutex<FileSystem> {
             (StorageZone::Apps, "apps", "/apps", apps_read_only),
             (StorageZone::Data, "data", "/data", false),
         ] {
-            let image = SimpleFs::build_image_with_headroom(name, &[], 64, 128, 512)
+            let image = PyroFs::build_image_with_headroom(name, &[], 64, 128, 512)
                 .expect("build a writable zone");
             let device = MemoryBlockDevice::new(name, image, read_only);
-            let volume = SimpleFs::open(device, true).expect("open the zone");
-            fs_guard.register(name, Arc::new(SimpleFsVolume::new(volume)));
+            let volume = PyroFs::open(device, true).expect("open the zone");
+            fs_guard.register(name, Arc::new(PyroFsVolume::new(volume)));
             fs_guard
                 .mount(&format!("/dev/{name}"), path, name, zone.flags())
                 .expect("mount the zone");

@@ -1250,7 +1250,7 @@ pub fn sys_epoll_wait(epfd: usize, events: &mut [u8], timeout_ticks: u64) -> Res
 
 /// Mount a filesystem at the given target path.
 ///
-/// `fstype` is a filesystem driver name (e.g. "simplefs", "tmpfs", "ext4").
+/// `fstype` is a filesystem driver name (e.g. "pyrofs", "tmpfs", "ext4").
 /// `flags` is a bitmask of MOUNT_* flags (MOUNT_READ_ONLY = 1, etc.).
 pub fn sys_mount(target: &str, fstype: &str, flags: u32) -> Result<usize, isize> {
     let rc = __shell_syscall5(

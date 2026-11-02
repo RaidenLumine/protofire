@@ -87,20 +87,20 @@ name = "fat32"
 path = "tests/fat32.rs"
 
 [[test]]
-name = "simplefs"
-path = "tests/simplefs/validation.rs"
+name = "pyrofs"
+path = "tests/pyrofs/validation.rs"
 
 [[test]]
-name = "simplefs_fault_matrix"
-path = "tests/simplefs/fault_matrix.rs"
+name = "pyrofs_fault_matrix"
+path = "tests/pyrofs/fault_matrix.rs"
 
 [[test]]
-name = "simplefs_recovery"
-path = "tests/simplefs/recovery.rs"
+name = "pyrofs_recovery"
+path = "tests/pyrofs/recovery.rs"
 
 [[test]]
-name = "simplefs_property"
-path = "tests/simplefs/property.rs"
+name = "pyrofs_property"
+path = "tests/pyrofs/property.rs"
 
 [[test]]
 name = "memory_manager"
@@ -171,8 +171,8 @@ name = "parser_fuzz"
 path = "tests/parsers/fuzz.rs"
 
 [[test]]
-name = "simplefs_undo_property"
-path = "tests/simplefs/undo_property.rs"
+name = "pyrofs_undo_property"
+path = "tests/pyrofs/undo_property.rs"
 
 [[test]]
 name = "virgl_demo"

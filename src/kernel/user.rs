@@ -1304,7 +1304,7 @@ guest:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5:e3b0c44298fc1c149afbf4c8996fb92427ae41e46
         fs.init();
         init_user_database(&fs);
 
-        // The ownership is the invariant.  SimpleFs hands a new file its
+        // The ownership is the invariant.  PyroFs hands a new file its
         // parent's owner, and the data zone arrives with `/etc` owned by the
         // guest account — so a mode says nothing until the owner is right.
         for (path, mode) in [(PASSWD_PATH, 0o600), (SHADOW_PATH, 0o600)] {

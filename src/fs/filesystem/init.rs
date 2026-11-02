@@ -91,7 +91,7 @@ impl FileSystem {
         let fs_label = if rootfs_type == "ext4" {
             "ext4"
         } else {
-            "SimpleFs"
+            "PyroFs"
         };
         let mut boot_disk_error = None;
         let boot_layout = match boot_disk {
@@ -133,12 +133,12 @@ impl FileSystem {
                 {
                     match self.install_demo_memory_layout() {
                         Ok(()) => {
-                            println!("[fs    ] mounted in-memory demo SimpleFs volumes");
+                            println!("[fs    ] mounted in-memory demo PyroFs volumes");
                             StorageInitReport::BootDiskForeign
                         }
                         Err(error) => {
                             println!(
-                                "[fs    ] failed to mount in-memory demo SimpleFs volumes: {}",
+                                "[fs    ] failed to mount in-memory demo PyroFs volumes: {}",
                                 error.as_str()
                             );
                             StorageInitReport::Failed {
@@ -165,12 +165,12 @@ impl FileSystem {
                 {
                     match self.install_demo_memory_layout() {
                         Ok(()) => {
-                            println!("[fs    ] mounted in-memory demo SimpleFs volumes");
+                            println!("[fs    ] mounted in-memory demo PyroFs volumes");
                             StorageInitReport::MemoryDemo { boot_disk_error }
                         }
                         Err(error) => {
                             println!(
-                                "[fs    ] failed to mount in-memory demo SimpleFs volumes: {}",
+                                "[fs    ] failed to mount in-memory demo PyroFs volumes: {}",
                                 error.as_str()
                             );
                             StorageInitReport::Failed {

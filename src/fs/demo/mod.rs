@@ -2,7 +2,7 @@
 //!
 //! The demo volume: what it holds, and how each zone is packaged.
 //!
-//! The packaging is the same everywhere — a zone is a `SimpleFs` image sized
+//! The packaging is the same everywhere — a zone is a `PyroFs` image sized
 //! for a fixed partition range, and a failure degrades to a readable
 //! placeholder rather than to a disk the boot path cannot parse.  What differs
 //! is *content*: which payloads a target ships and what its manifests say.
@@ -12,8 +12,8 @@
 //!
 //! ═══════════════════════════════════════════════════════════════════════════
 //! LEGACY MODULE — prefer alternatives for new code:
-//!   - `SimpleFs::build_image` / `SimpleFs::build_image_with_headroom` for
-//!     constructing SimpleFs images directly.
+//!   - `PyroFs::build_image` / `PyroFs::build_image_with_headroom` for
+//!     constructing PyroFs images directly.
 //!
 //! This module is kept for:
 //!   1. `build_demo_memory_device()` → `fs.init()` boot path (path_helpers.rs)
@@ -35,8 +35,8 @@ use super::layout::SYSTEM_SLOT_B_DISK_RANGE;
 use super::partition::write_mbr_partitions;
 use super::partition::MbrPartitionEntry;
 use super::partition::MbrPartitionTable;
-use super::simplefs::ImageEntry;
-use super::simplefs::SimpleFs;
+use super::pyrofs::ImageEntry;
+use super::pyrofs::PyroFs;
 use crate::Result;
 
 // ── Per-architecture contents ──────────────────────────────────────────
@@ -174,7 +174,7 @@ fn build_fallback_zone_image(zone: StorageZone) -> Vec<u8> {
     // Keep the fixed partition mountable even after packaging failures. Only
     // fall back to a raw zero block when the emergency image itself cannot be
     // built.
-    match SimpleFs::build_image(zone.volume_label(), FALLBACK_ZONE_FILES) {
+    match PyroFs::build_image(zone.volume_label(), FALLBACK_ZONE_FILES) {
         Ok(image) => image,
         Err(error) => {
             crate::println!(
@@ -390,7 +390,7 @@ pub(crate) fn build_system_zone_from(init_elf: &[u8], generation: u64) -> Result
         path: "/rc.d/defaults.toml",
         data: declarations.as_bytes(),
     });
-    SimpleFs::build_image(StorageZone::System.volume_label(), &entries)
+    PyroFs::build_image(StorageZone::System.volume_label(), &entries)
 }
 
 /// The data zone: the shared files, plus the package the boot installs.
@@ -420,7 +420,7 @@ pub(crate) fn build_data_zone_from(zone: StorageZone, program: &[u8]) -> Result<
         data: program,
     });
 
-    SimpleFs::build_image_with_headroom(
+    PyroFs::build_image_with_headroom(
         zone.volume_label(),
         &entries,
         DATA_ZONE_EXTRA_INODES,
@@ -437,14 +437,14 @@ pub(crate) fn build_data_zone_from(zone: StorageZone, program: &[u8]) -> Result<
 mod tests {
     use super::*;
     use crate::fs::block::MemoryBlockDevice;
-    use crate::fs::simplefs::SimpleFsVolume;
+    use crate::fs::pyrofs::PyroFsVolume;
     use crate::fs::vfs::FileSystem as VfsFileSystem;
     use crate::kernel::service;
 
     /// Read a whole file out of a freshly built zone image.
     fn read_from_zone(image: Vec<u8>, path: &str) -> Vec<u8> {
         let device = MemoryBlockDevice::new("system", image, true);
-        let volume = SimpleFsVolume::new(SimpleFs::open(device, true).expect("open the zone"));
+        let volume = PyroFsVolume::new(PyroFs::open(device, true).expect("open the zone"));
         let node = volume.lookup(path).expect("the entry");
         let mut buffer = alloc::vec![0u8; node.size()];
         let read = node.read(0, &mut buffer).expect("read the entry");
@@ -486,8 +486,8 @@ mod tests {
                 data.block_count,
                 false,
             );
-        let volume = crate::fs::simplefs::SimpleFs::open(data_device, true).expect("open data");
-        let volume = crate::fs::simplefs::SimpleFsVolume::new(volume);
+        let volume = crate::fs::pyrofs::PyroFs::open(data_device, true).expect("open data");
+        let volume = crate::fs::pyrofs::PyroFsVolume::new(volume);
         use crate::fs::vfs::FileSystem as _;
         assert!(
             volume.lookup("/etc/.directory").is_ok(),
@@ -501,8 +501,8 @@ mod tests {
                 build_zone_image(StorageZone::Data),
                 false,
             );
-        let image_volume = crate::fs::simplefs::SimpleFsVolume::new(
-            crate::fs::simplefs::SimpleFs::open(image_device, true).expect("open image"),
+        let image_volume = crate::fs::pyrofs::PyroFsVolume::new(
+            crate::fs::pyrofs::PyroFs::open(image_device, true).expect("open image"),
         );
         assert!(
             image_volume.lookup("/etc/.directory").is_ok(),

@@ -45,7 +45,7 @@ fn install_test_fs() -> &'static KernelMutex<FileSystem> {
     // Each test gets a fresh FileSystem so that side effects (file creates,
     // writes, renames) do not leak across tests.  The previous instance is
     // intentionally leaked — calling init() on the same FileSystem a second
-    // time drops old SimpleFs volumes whose Drop flushes the block cache,
+    // time drops old PyroFs volumes whose Drop flushes the block cache,
     // which can deadlock when the device mutexes are held.
     let fs = Box::leak(Box::new(KernelMutex::new(FileSystem::new())));
     fs.lock().init();

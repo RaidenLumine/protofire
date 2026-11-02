@@ -33,7 +33,7 @@ use crate::Result;
 /// assume `&str` validity; they do not need to validate UTF-8 a second time.
 ///
 /// Disk data that is not valid UTF-8 must be handled gracefully (e.g. via
-/// [`String::from_utf8_lossy`] with a U+FFFD replacement, as SimpleFs and
+/// [`String::from_utf8_lossy`] with a U+FFFD replacement, as PyroFs and
 /// ext2 do).  See §3.11 of the code-quality review plan for details.
 pub trait FileSystem: Send + Sync {
     /// Return the human-readable name of this filesystem.
@@ -118,7 +118,7 @@ pub trait FileSystem: Send + Sync {
     /// Return a point-in-time snapshot of filesystem operation counters.
     ///
     /// The default implementation returns all zeros.  Filesystems that maintain
-    /// operation counters (e.g. `SimpleFsVolume`) override this.
+    /// operation counters (e.g. `PyroFsVolume`) override this.
     fn fs_profiler_snapshot(&self) -> FsProfilerSnapshot {
         FsProfilerSnapshot::default()
     }

@@ -20,7 +20,7 @@ use protofire::fs::fat32::FatVolume;
 use protofire::fs::iso9660::Iso9660Volume;
 use protofire::fs::ntfs::NtfsFs;
 use protofire::fs::partition::read_mbr_partitions;
-use protofire::fs::simplefs::SimpleFs;
+use protofire::fs::pyrofs::PyroFs;
 use protofire::fs::squashfs::SquashfsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::fs::xfs::XfsVolume;
@@ -44,7 +44,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = NtfsFs::new(device.clone());
     let _ = SquashfsVolume::open(device.clone());
     let _ = Iso9660Volume::open(device.clone());
-    let _ = SimpleFs::open(device.clone(), false);
+    let _ = PyroFs::open(device.clone(), false);
     let _ = XfsVolume::open(device);
 
     // And the same bytes on a device this driver would *write* to.  A writable

@@ -268,7 +268,7 @@ Design section names is not.
   either — honest about being a stand-in, and enough to make the mechanism
   executed and counted.  It is gone now: the mount overlaps the two superblock
   mirrors (`readable_superblock_candidates`,
-  `src/fs/simplefs/format_io.rs`), which are two independent one-block reads
+  `src/fs/pyrofs/format_io.rs`), which are two independent one-block reads
   the filesystem needs, so the read half has a caller that does work somebody
   wanted and the boot pays two frames fewer.
 - `make check-perf-baseline-disk` records `blk-read-high-water` at **2** — the

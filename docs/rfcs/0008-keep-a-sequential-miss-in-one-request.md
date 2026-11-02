@@ -37,7 +37,7 @@ supposed to be, and before writing it this RFC asks whether it pays.
   buffer, inserting all of them.
 - **The parameters.**  `PREFETCH_RUN_BLOCKS` is 4, and SimpleFS opens its
   cache with `BlockCache::with_read_ahead(device, 4)`
-  (`src/fs/simplefs/superblock.rs`), so one sequential miss is a five-block
+  (`src/fs/pyrofs/superblock.rs`), so one sequential miss is a five-block
   request.
 - **The measurement that turns this.**  The same file records what coalescing
   bought, measured on the demo boot: with the prefetch coalesced into one
@@ -145,9 +145,9 @@ that records the 36 % of a boot's device commands the coalescing buys).
 - **Does anything else read independently?**  A mount reads a superblock pair,
   an inode table and a dirent table that do not depend on each other, and the
   **mirror pair** is now overlapped: `readable_superblock_candidates`
-  (`src/fs/simplefs/format_io.rs`) submits both, so the read half has a caller
+  (`src/fs/pyrofs/format_io.rs`) submits both, so the read half has a caller
   that is not a probe.  The two *tables* are overlapped now as well, once the
   queued request learned to carry a run
-  ([RFC 0010](0010-carry-a-run-in-one-queued-request.md)): `SimpleFs::open`
+  ([RFC 0010](0010-carry-a-run-in-one-queued-request.md)): `PyroFs::open`
   submits both and waits for both.  What is still true here is the decision
   above — the *cache's* lookahead stays where it is.

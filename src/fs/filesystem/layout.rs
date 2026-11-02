@@ -19,8 +19,8 @@ use super::super::layout::StorageZone;
 use super::super::layout::DEFAULT_ZONES;
 use super::super::layout::{self};
 use super::super::partition::read_partitions;
-use super::super::simplefs::SimpleFs;
-use super::super::simplefs::SimpleFsVolume;
+use super::super::pyrofs::PyroFs;
+use super::super::pyrofs::PyroFsVolume;
 use super::super::vfs::NodeKind;
 use super::super::vfs::StaticFileSystem;
 use super::super::FileSystem;
@@ -93,7 +93,7 @@ impl FileSystem {
         let _ = self.mount(DEVFS_MOUNT_DEVICE, DEVFS_MOUNT_PATH, DEVFS_FS_NAME, 0);
     }
 
-    /// Mount a memory-backed writable SimpleFs volume at `/tmp`.
+    /// Mount a memory-backed writable PyroFs volume at `/tmp`.
     ///
     /// The volume is built from an empty image so every boot starts with a
     /// clean scratch space.  Runtime writes stay in the [`MemoryBlockDevice`]
@@ -102,7 +102,7 @@ impl FileSystem {
         // Build a fresh empty image.  Fall back to a minimal zero-filled
         // block if the image builder itself fails (should not happen with
         // an empty entry list, but degrade gracefully).
-        let temp_image = SimpleFs::build_image("simplefs:temp", &[])
+        let temp_image = PyroFs::build_image("pyrofs:temp", &[])
             .unwrap_or_else(|_| vec![0_u8; layout::DEMO_DISK_TEMP_BLOCKS as usize * BLOCK_SIZE]);
 
         let temp_device = crate::kernel::block::counting_device(MemoryBlockDevice::new(
@@ -110,10 +110,10 @@ impl FileSystem {
             temp_image,
             /* read_only */ false,
         ));
-        let temp_fs = SimpleFs::open(temp_device.clone(), /* case_sensitive */ true)?;
+        let temp_fs = PyroFs::open(temp_device.clone(), /* case_sensitive */ true)?;
 
         self.register_block_device(TEMP_MOUNT_DEVICE, temp_device);
-        self.register(TEMP_FS_NAME, Arc::new(SimpleFsVolume::new(temp_fs)));
+        self.register(TEMP_FS_NAME, Arc::new(PyroFsVolume::new(temp_fs)));
         let _ = self.mount(
             TEMP_MOUNT_DEVICE,
             TEMP_MOUNT_PATH,
@@ -284,15 +284,15 @@ impl FileSystem {
                 self.register(zone.fs_name(), Arc::new(vol));
             }
         } else {
-            // SimpleFs path (default).
+            // PyroFs path (default).
             let mut filesystems = Vec::with_capacity(zone_devices.len());
             for (zone, device) in &zone_devices {
-                let fs = SimpleFs::open(device.clone(), zone.case_sensitive())?;
+                let fs = PyroFs::open(device.clone(), zone.case_sensitive())?;
                 filesystems.push((*zone, device.clone(), fs));
             }
             for (zone, device, fs) in filesystems {
                 self.register_block_device(zone.device(), device);
-                self.register(zone.fs_name(), Arc::new(SimpleFsVolume::new(fs)));
+                self.register(zone.fs_name(), Arc::new(PyroFsVolume::new(fs)));
             }
         }
 
@@ -337,7 +337,7 @@ impl FileSystem {
             }
             // A zone with the header but no key is a boot disk that cannot be
             // used, and this refuses it rather than mounting ciphertext:
-            // handing a SimpleFs parser an AES-XTS stream produces a
+            // handing a PyroFs parser an AES-XTS stream produces a
             // corrupt-volume error three subsystems later, which names the
             // wrong problem.
             let encrypted = crate::fs::luks2::luks2_open(device.clone(), passphrase.as_bytes())?;
@@ -356,7 +356,7 @@ impl FileSystem {
 /// The one question that separates "this zone is encrypted" from "this zone is
 /// not", asked of the medium rather than of a configuration file: a disk is
 /// what it says it is, and a boot that trusted a label instead would try to
-/// merge stripes out of a SimpleFs superblock.  A read error answers "no" —
+/// merge stripes out of a PyroFs superblock.  A read error answers "no" —
 /// the caller then reads the zone as it lies and the filesystem's own parser
 /// reports whatever is actually wrong with it, which is a better error than
 /// this one could give.

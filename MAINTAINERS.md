@@ -34,7 +34,7 @@ process.
 ### File System
 
 *   **File paths**: `src/fs/`
-*   Raiden Lumine (<2557597107@qq.com>) - Owns: the VFS layer, SimpleFs, external filesystems (FAT32, Ext4, XFS, ...), block device interfaces.
+*   Raiden Lumine (<2557597107@qq.com>) - Owns: the VFS layer, PyroFs, external filesystems (FAT32, Ext4, XFS, ...), block device interfaces.
 
 ### Device Drivers
 

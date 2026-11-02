@@ -7,7 +7,7 @@
 
 The project's guiding principles put correctness before features and require
 that every milestone ends in tests. That is not a formality: a kernel has no
-runtime to catch what a test misses. A bug in the TLSF allocator, the SimpleFs
+runtime to catch what a test misses. A bug in the TLSF allocator, the PyroFs
 undo log, or a page-table walk does not produce a failed request — it produces a
 machine that stops.
 
@@ -44,8 +44,8 @@ live in binaries under `tests/`. Both kinds are expected for a new subsystem.
 
 ```toml
 [[test]]
-name = "simplefs_fault_matrix"
-path = "tests/simplefs/fault_matrix.rs"
+name = "pyrofs_fault_matrix"
+path = "tests/pyrofs/fault_matrix.rs"
 ```
 
 Cargo does **not** auto-discover test files in subdirectories of `tests/`. A new
@@ -104,12 +104,12 @@ Conventions:
 
 Integration tests exercise a subsystem through its public surface. They are
 grouped by area under `tests/`: `fs/`, `io/`, `memory/`, `net/`, `process/`,
-`syscall/`, `simplefs/`, `drivers/`, `gpu/`, `parsers/`.
+`syscall/`, `pyrofs/`, `drivers/`, `gpu/`, `parsers/`.
 
 ```rust
-//! tests/simplefs/fault_matrix.rs
+//! tests/pyrofs/fault_matrix.rs
 //!
-//! Exercise a block-level fault-injection matrix for writable SimpleFs recovery
+//! Exercise a block-level fault-injection matrix for writable PyroFs recovery
 //! behavior.
 
 mod support;
@@ -117,7 +117,7 @@ mod support;
 use std::sync::Arc;
 
 use protofire::fs::block::BlockDevice;
-use protofire::fs::simplefs::SimpleFs;
+use protofire::fs::pyrofs::PyroFs;
 use protofire::Error;
 use protofire::Result;
 ```
@@ -158,17 +158,17 @@ because it is the only gated module available.
 ## 5. Robustness testing: fault injection and property tests
 
 Behavioural tests check that the happy path works. For the storage stack, that
-is not where the bugs are. The `tests/simplefs/` suite is the model for the
+is not where the bugs are. The `tests/pyrofs/` suite is the model for the
 harder question, and new work in a transactional or recovery-bearing subsystem
 is expected to follow it:
 
 | Technique | File | What it does |
 |-----------|------|--------------|
-| **Validation** | `tests/simplefs/validation.rs` | On-disk format and consistency rules |
-| **Fault matrix** | `tests/simplefs/fault_matrix.rs` | Injects block-level faults across the write path and checks that recovery restores a consistent state; a V2 case per stage, plus V4's own crash points (the shadow xattr table and the two-phase superblock writes) |
-| **Recovery** | `tests/simplefs/recovery.rs` | Tears down mid-transaction and re-mounts |
-| **Property** | `tests/simplefs/property.rs` | Randomised operation sequences checked against invariants |
-| **Undo-log property** | `tests/simplefs/undo_property.rs` | Crash-point property tests for the undo log |
+| **Validation** | `tests/pyrofs/validation.rs` | On-disk format and consistency rules |
+| **Fault matrix** | `tests/pyrofs/fault_matrix.rs` | Injects block-level faults across the write path and checks that recovery restores a consistent state; a V2 case per stage, plus V4's own crash points (the shadow xattr table and the two-phase superblock writes) |
+| **Recovery** | `tests/pyrofs/recovery.rs` | Tears down mid-transaction and re-mounts |
+| **Property** | `tests/pyrofs/property.rs` | Randomised operation sequences checked against invariants |
+| **Undo-log property** | `tests/pyrofs/undo_property.rs` | Crash-point property tests for the undo log |
 
 Two properties of this style are worth copying:
 

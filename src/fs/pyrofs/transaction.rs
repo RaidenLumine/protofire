@@ -1,6 +1,6 @@
-//! src/fs/simplefs/transaction.rs
+//! src/fs/pyrofs/transaction.rs
 //!
-//! Undo-log based transaction support for SimpleFs metadata mutations.
+//! Undo-log based transaction support for PyroFs metadata mutations.
 
 use alloc::string::ToString;
 
@@ -16,11 +16,11 @@ use super::super::vfs::ROOT_OWNER_ID;
 
 use super::free_fns::*;
 use super::types::*;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 use super::UndoLog;
 
-impl SimpleFsState {
+impl PyroFsState {
     /// Clear the undo log at the start of a commit.  Saves the pre-transaction
     /// table lengths so the pending superblock written in Phase 1 describes the
     /// still-referenced active tables.
@@ -199,12 +199,12 @@ impl SimpleFsState {
 }
 
 /// Context for batched metadata mutations within a single atomic commit.
-/// Created by [`SimpleFs::transaction`]; all mutations are applied to the
+/// Created by [`PyroFs::transaction`]; all mutations are applied to the
 /// in-memory state and flushed to disk once when the transaction closure
 /// returns `Ok`.  Data-block writes are not supported inside transactions.
 pub struct TransactionContext<'a> {
-    pub(crate) state: &'a mut SimpleFsState,
-    pub(crate) fs: &'a SimpleFs,
+    pub(crate) state: &'a mut PyroFsState,
+    pub(crate) fs: &'a PyroFs,
 }
 
 impl TransactionContext<'_> {
@@ -442,4 +442,4 @@ impl TransactionContext<'_> {
     }
 }
 
-// ── SimpleFs core implementation ─────────────────────────────────────
+// ── PyroFs core implementation ─────────────────────────────────────

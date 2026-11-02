@@ -9,7 +9,7 @@ rather than inside it, so a disk driver can implement it without naming `fs`.
 
 Two questions decide most of what follows: what a running machine actually
 mounts, and what a write to a volume may leave behind if it is interrupted.
-The first is `src/fs/filesystem/layout.rs`'s answer; the second is SimpleFs's.
+The first is `src/fs/filesystem/layout.rs`'s answer; the second is PyroFs's.
 
 ## The facade and the two traits
 
@@ -102,10 +102,10 @@ that do not come from the boot disk.
 
 | Mount | Backend | Policy |
 |---|---|---|
-| `/system` | SimpleFs | read-only, case-sensitive |
-| `/apps` | SimpleFs | executable, writable by its owner — an install *is* a write |
-| `/data` | SimpleFs | user data, case-insensitive |
-| `/tmp` | SimpleFs on a `MemoryBlockDevice` | built empty every boot |
+| `/system` | PyroFs | read-only, case-sensitive |
+| `/apps` | PyroFs | executable, writable by its owner — an install *is* a write |
+| `/data` | PyroFs | user data, case-insensitive |
+| `/tmp` | PyroFs on a `MemoryBlockDevice` | built empty every boot |
 | `/system/dev` | `StaticFileSystem` over the device ledger | read-only |
 | `/system/logs` | `KernelLogFileSystem` (`src/kernel/kernel_log.rs`) | read-only |
 | `/dev` | `devfs::DevFs` | read-only |
@@ -170,9 +170,9 @@ filesystem lock while the data path — an open `FileHandle` — does not take i
 boot recovery, so that a decision about mount lifetime can be driven by a
 measurement.
 
-## SimpleFs
+## PyroFs
 
-SimpleFs (`src/fs/simplefs/`) is the format the kernel owns.  Everything about
+PyroFs (`src/fs/pyrofs/`) is the format the kernel owns.  Everything about
 it starts from three fixed decisions: a volume is a block range, metadata
 lives in two tables each of which has an active and a shadow copy, and the
 superblock has two mirrored copies (`PRIMARY_SUPERBLOCK_BLOCK` and
@@ -180,7 +180,7 @@ superblock has two mirrored copies (`PRIMARY_SUPERBLOCK_BLOCK` and
 
 ### The format versions
 
-`SimpleFsFormatVersion` (`src/fs/simplefs/types.rs`) names the three versions
+`PyroFsFormatVersion` (`src/fs/pyrofs/types.rs`) names the three versions
 and each one is a superset of the one before:
 
 - **V2** leaves the inode's security fields to the layout rules above and
@@ -189,8 +189,8 @@ and each one is a superset of the one before:
   `pending_commit` marker that makes the two-phase commit detectable.
 - **V4** adds a persistent xattr table and the per-inode data-reduction flags.
 
-The image builders matter here: `SimpleFs::build_image` and
-`build_image_with_headroom` (`src/fs/simplefs/image_staging.rs`) produce V2,
+The image builders matter here: `PyroFs::build_image` and
+`build_image_with_headroom` (`src/fs/pyrofs/image_staging.rs`) produce V2,
 and that is what the demo disk builder and the `/tmp` volume use, so a
 machine's zone volumes are V2 and their security descriptors are derived from
 the path.  `build_v4_image_with_headroom` and the V3/V4 mount paths exist and
@@ -198,7 +198,7 @@ are exercised by the test suites.
 
 ### The superblock and the tables
 
-The superblock is a fixed layout in `src/fs/simplefs/constants.rs`: the magic
+The superblock is a fixed layout in `src/fs/pyrofs/constants.rs`: the magic
 (`MAGIC`), the label (`SUPERBLOCK_LABEL_OFFSET`/`_LEN`), the inode and dirent
 table block counts, the active and shadow block of each table, the generation,
 the checksum, and — from V3 — the pending-commit word.  The mount path is
@@ -224,7 +224,7 @@ extent fields (`MAX_INLINE_SYMLINK_LEN`) and resolution is bounded by
 ### Transactions and the two-phase commit
 
 Every metadata mutation goes through `commit_metadata_update`
-(`src/fs/simplefs/file_io.rs`), which wraps a closure in an undo-log
+(`src/fs/pyrofs/file_io.rs`), which wraps a closure in an undo-log
 transaction.  `begin_undo` clears the log; each mutator saves the value it is
 about to overwrite (`save_inode_for_undo`, `save_dirent_for_undo`,
 `save_free_extents_for_undo`, …); a failure runs `rollback_undo`, which
@@ -232,7 +232,7 @@ restores the saved values in reverse order and truncates the vectors that a
 failed allocation grew.  On success `commit_undo` discards the log.
 
 The flush that ends a successful transaction is `flush_metadata`
-(`src/fs/simplefs/extent_repair.rs`) and has three phases:
+(`src/fs/pyrofs/extent_repair.rs`) and has three phases:
 
 1. **Mark** (V3+): write `pending_commit = target_generation` into both
    superblock mirrors, which still point at the current active tables.
@@ -274,8 +274,8 @@ describe the tables it still points at.
 
 ### Recovery
 
-`check_and_repair` (`src/fs/simplefs/extent_repair.rs`, through
-`SimpleFsVolume::check_and_repair`) is the other half.  It compares both
+`check_and_repair` (`src/fs/pyrofs/extent_repair.rs`, through
+`PyroFsVolume::check_and_repair`) is the other half.  It compares both
 superblock mirrors with the state in memory, counts checksum failures and
 non-zero pending marks, removes staging roots a crash left behind, zeroes the
 data blocks no inode references so stale content cannot be recovered, and
@@ -298,7 +298,7 @@ data blocks before the inode update so a failure orphans data rather than
 referencing blocks that are not on the device — recovery zeroes those.
 
 Two named operations sit above the transaction layer.  `StagingArea`
-(`src/fs/simplefs/image_staging.rs`) is a directory for content that is not
+(`src/fs/pyrofs/image_staging.rs`) is a directory for content that is not
 yet visible, registered as a staging root so recovery can remove orphans; its
 publish step is a rename.  `swap_paths` exchanges two paths in one commit
 through a generation-named temporary, which is what a version switch needs:
@@ -316,8 +316,8 @@ below's to count.
 
 ### The V4 data-reduction modules
 
-`src/fs/simplefs/compression.rs` encodes a file as a chunked stream and
-decodes a byte range from it, and `src/fs/simplefs/dedup.rs` implements
+`src/fs/pyrofs/compression.rs` encodes a file as a chunked stream and
+decodes a byte range from it, and `src/fs/pyrofs/dedup.rs` implements
 sharing of an extent between inodes with refcounts and copy-on-write
 unsharing.  In the write path today, nothing calls them:
 `maybe_dedup_inode` and `unshare_inode_extent` have no caller, and a
@@ -423,9 +423,9 @@ only asks the maintenance thread (`src/kernel/maintenance.rs`), which calls
 context.  The same module gives the whole machine `sync_global_all` and
 `sync_global_data` for the POSIX-shaped syncs.
 
-SimpleFs uses the write-through side for both data and metadata
-(`write_blocks_cached` in `src/fs/simplefs/superblock.rs`); the write-back
-entry point in SimpleFs is present but marked unused.  FAT32 is the only
+PyroFs uses the write-through side for both data and metadata
+(`write_blocks_cached` in `src/fs/pyrofs/superblock.rs`); the write-back
+entry point in PyroFs is present but marked unused.  FAT32 is the only
 backend that overrides `FileSystem::flush_aged` and it is not mounted, so the
 aged write-back pass a tick requests reaches the trait default and writes
 nothing on a machine as shipped.
@@ -499,7 +499,7 @@ is writable in place, which is the one stage of that format that changes no
 metadata ([RFC 0011](../rfcs/0011-make-iso9660-file-data-writable.md)).
 None of them is mounted by the boot path and nothing registers one at
 runtime: `install_zone_devices` has an ext4 branch behind `rootfs_type`, but
-`set_rootfs_type` has no caller, so a machine's zones are SimpleFs.  The
+`set_rootfs_type` has no caller, so a machine's zones are PyroFs.  The
 read-only views above and FUSE are the backends a boot or a syscall can
 actually reach; the rest are code and tests awaiting a mount.
 
@@ -511,7 +511,7 @@ zone's device whether it starts with the LUKS2 magic and, when the boot's
 filesystem parser sees the bytes.  A zone with no magic is read as it lies, so
 encrypting one zone of a disk is a shape a boot handles.  `tmpfs`
 (`src/fs/tmpfs/mod.rs`) is a complete in-memory filesystem with xattrs, hard
-links and rename, and it too has no mount in the tree — `/tmp` is a SimpleFs
+links and rename, and it too has no mount in the tree — `/tmp` is a PyroFs
 volume on a memory device instead.
 
 ## Where the code is
@@ -523,7 +523,7 @@ volume on a memory device instead.
 | `src/fs/vfs/types.rs` | `NodeKind`, `Metadata`, `SecurityDescriptor`, `VolumeCheckReport` |
 | `src/fs/path.rs` | Path normalisation |
 | `src/fs/filesystem/` | Boot layout, mount and resolve, open, I/O, rename, overlay, security, profiler |
-| `src/fs/simplefs/` | SimpleFs: superblock, tables, transactions, recovery, staging, xattrs |
+| `src/fs/pyrofs/` | PyroFs: superblock, tables, transactions, recovery, staging, xattrs |
 | `src/fs/layout.rs` | Zones, mount flags and the fixed fallback disk ranges |
 | `src/fs/partition.rs`, `src/fs/system_image.rs` | MBR and GPT parsing, the zone vocabulary in both tables' words, and the system A/B pair |
 | `src/kernel/block.rs`, `src/fs/block_cache.rs` | The block interface and the cache |

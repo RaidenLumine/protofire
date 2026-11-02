@@ -14,8 +14,8 @@ pub(crate) use crate::fs::demo::APPS_ZONE_EXTRA_DATA_BLOCKS;
 pub(crate) use crate::fs::demo::APPS_ZONE_EXTRA_DIRENTS;
 pub(crate) use crate::fs::demo::APPS_ZONE_EXTRA_INODES;
 pub(crate) use crate::fs::layout::StorageZone;
-pub(crate) use crate::fs::simplefs::ImageEntry;
-pub(crate) use crate::fs::simplefs::SimpleFs;
+pub(crate) use crate::fs::pyrofs::ImageEntry;
+pub(crate) use crate::fs::pyrofs::PyroFs;
 pub(crate) use crate::Result;
 pub(crate) use alloc::vec::Vec;
 

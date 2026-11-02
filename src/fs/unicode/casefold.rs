@@ -2,7 +2,7 @@
 //!
 //! Unicode case folding for case-insensitive filename comparison.
 //!
-//! FAT32 and SimpleFs support case-insensitive lookups under a configurable
+//! FAT32 and PyroFs support case-insensitive lookups under a configurable
 //! policy.  This module provides a `fold_char` mapping and the
 //! [`eq_unicode_insensitive`] comparison helper used by both filesystems.
 //!

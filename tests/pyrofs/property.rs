@@ -1,18 +1,18 @@
-//! tests/simplefs/property.rs
+//! tests/pyrofs/property.rs
 //!
-//! Property-based tests for SimpleFs — random action sequences verify that
+//! Property-based tests for PyroFs — random action sequences verify that
 //! the filesystem maintains expected invariants under arbitrary workloads.
 //!
 //! We use a simple deterministic PRNG (seeded per test) so failures are
 //! reproducible.  Each test generates a random sequence of filesystem actions,
-//! applies them to a fresh SimpleFs volume, and checks invariants after every
+//! applies them to a fresh PyroFs volume, and checks invariants after every
 //! action.
 
 use std::collections::BTreeMap;
 
 use protofire::fs::block::MemoryBlockDevice;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::fs::vfs::NodeKind;
 
@@ -157,7 +157,7 @@ fn generate_actions(seed: u64, count: usize) -> Vec<FsAction> {
 
 // ── Action executor ─────────────────────────────────────────────────────────
 
-fn execute_actions(volume: &SimpleFsVolume, actions: &[FsAction]) -> FsOracle {
+fn execute_actions(volume: &PyroFsVolume, actions: &[FsAction]) -> FsOracle {
     let mut oracle = FsOracle::new();
 
     for action in actions {
@@ -239,7 +239,7 @@ fn execute_actions(volume: &SimpleFsVolume, actions: &[FsAction]) -> FsOracle {
 
 // ── Invariant checks ────────────────────────────────────────────────────────
 
-fn verify_invariants(volume: &SimpleFsVolume) {
+fn verify_invariants(volume: &PyroFsVolume) {
     // Root must always exist and be a directory.
     let root = volume.stat("/").expect("root stat");
     assert_eq!(root.kind, NodeKind::Directory, "root is not a directory");
@@ -279,7 +279,7 @@ fn verify_invariants(volume: &SimpleFsVolume) {
 
 #[test]
 fn property_small_random_sequence_seed_1() {
-    let image = SimpleFs::build_image_with_headroom(
+    let image = PyroFs::build_image_with_headroom(
         "prop-small",
         &[],
         128,  // extra inodes
@@ -288,8 +288,8 @@ fn property_small_random_sequence_seed_1() {
     )
     .expect("build test image");
     let device = MemoryBlockDevice::new("prop-small-dev", image, false);
-    let fs = SimpleFs::open(device.clone(), true).expect("open SimpleFs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open PyroFs");
+    let volume = PyroFsVolume::new(fs);
 
     let actions = generate_actions(1, 200);
     execute_actions(&volume, &actions);
@@ -298,11 +298,11 @@ fn property_small_random_sequence_seed_1() {
 
 #[test]
 fn property_medium_random_sequence_seed_42() {
-    let image = SimpleFs::build_image_with_headroom("prop-med", &[], 256, 512, 2048)
+    let image = PyroFs::build_image_with_headroom("prop-med", &[], 256, 512, 2048)
         .expect("build test image");
     let device = MemoryBlockDevice::new("prop-med-dev", image, false);
-    let fs = SimpleFs::open(device.clone(), true).expect("open SimpleFs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open PyroFs");
+    let volume = PyroFsVolume::new(fs);
 
     let actions = generate_actions(42, 500);
     execute_actions(&volume, &actions);
@@ -311,13 +311,13 @@ fn property_medium_random_sequence_seed_42() {
 
 #[test]
 fn property_create_read_delete_cycle_seed_7() {
-    let image = SimpleFs::build_image_with_headroom("prop-cycle", &[], 32, 64, 256)
+    let image = PyroFs::build_image_with_headroom("prop-cycle", &[], 32, 64, 256)
         .expect("build test image");
     let device = MemoryBlockDevice::new("prop-cycle-dev", image, false);
 
     for cycle in 0u64..50 {
-        let fs = SimpleFs::open(device.clone(), true).expect("open SimpleFs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open PyroFs");
+        let volume = PyroFsVolume::new(fs);
 
         let path = "/cycle_test.bin";
         let payload: Vec<u8> = (0..64)
@@ -352,11 +352,11 @@ fn property_create_read_delete_cycle_seed_7() {
 #[test]
 fn property_rename_chains_preserve_content_seed_13() {
     let payload = b"rename chain payload v1.0!!".to_vec();
-    let image = SimpleFs::build_image_with_headroom("prop-rename", &[], 32, 64, 128)
+    let image = PyroFs::build_image_with_headroom("prop-rename", &[], 32, 64, 128)
         .expect("build test image");
     let device = MemoryBlockDevice::new("prop-rename-dev", image, false);
-    let fs = SimpleFs::open(device.clone(), true).expect("open SimpleFs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open PyroFs");
+    let volume = PyroFsVolume::new(fs);
 
     let start = "/chain_00.bin";
     let node = volume.create_file(start).expect("create start");
@@ -389,15 +389,15 @@ fn property_rename_chains_preserve_content_seed_13() {
 
 #[test]
 fn property_no_data_loss_after_reopen_seed_99() {
-    let image = SimpleFs::build_image_with_headroom("prop-reopen", &[], 64, 128, 512)
+    let image = PyroFs::build_image_with_headroom("prop-reopen", &[], 64, 128, 512)
         .expect("build test image");
     let device = MemoryBlockDevice::new("prop-reopen-dev", image, false);
 
     let mut expected: BTreeMap<String, Vec<u8>> = BTreeMap::new();
 
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open SimpleFs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open PyroFs");
+        let volume = PyroFsVolume::new(fs);
 
         for i in 0u64..20 {
             let path = format!("/reopen_{i:03}.dat");
@@ -414,8 +414,8 @@ fn property_no_data_loss_after_reopen_seed_99() {
     }
 
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("reopen SimpleFs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("reopen PyroFs");
+        let volume = PyroFsVolume::new(fs);
 
         for (path, content) in &expected {
             let node = volume
@@ -434,10 +434,10 @@ fn property_no_data_loss_after_reopen_seed_99() {
 
 #[test]
 fn property_empty_filesystem_is_consistent() {
-    let image = SimpleFs::build_image("prop-empty", &[]).expect("build empty image");
+    let image = PyroFs::build_image("prop-empty", &[]).expect("build empty image");
     let device = MemoryBlockDevice::new("prop-empty-dev", image, true);
-    let fs = SimpleFs::open(device.clone(), true).expect("open SimpleFs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open PyroFs");
+    let volume = PyroFsVolume::new(fs);
 
     let root = volume.stat("/").expect("root stat");
     assert_eq!(root.kind, NodeKind::Directory);

@@ -1,4 +1,4 @@
-//! src/fs/simplefs/dir_ops.rs
+//! src/fs/pyrofs/dir_ops.rs
 //!
 //! File/directory/symlink creation, deletion, rename, swap, and recursive
 //! removal.
@@ -23,10 +23,10 @@ use super::super::vfs::ROOT_OWNER_ID;
 use super::constants::*;
 use super::free_fns::*;
 use super::types::*;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 
-impl SimpleFs {
+impl PyroFs {
     pub(crate) fn create_file(&self, path: &str) -> Result<usize> {
         self.create_file_with_security(path, None)
     }
@@ -419,7 +419,7 @@ impl SimpleFs {
     /// Internal rename that operates on an already-locked state.
     pub(crate) fn rename_locked(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         old_path: &str,
         new_path: &str,
     ) -> Result<()> {
@@ -496,7 +496,7 @@ impl SimpleFs {
 
     pub(crate) fn remove_path_recursive_locked(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         path: &str,
     ) -> Result<()> {
         self.profiler.inc_deletes();

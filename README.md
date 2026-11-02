@@ -3,7 +3,7 @@
 This is a bare-metal `#![no_std]` monolithic kernel written in Rust, targeting
 x86_64, AArch64, and RISC-V 64. It provides a file-oriented userspace ABI with
 preemptive multi-threading, a native TCP/IP stack, a transactional in-memory
-filesystem (SimpleFs), NUMA-aware scheduling, virtio-gpu accelerated display,
+filesystem (PyroFs), NUMA-aware scheduling, virtio-gpu accelerated display,
 MSI/MSI-X interrupt support, heap block canaries that attribute an overrun to
 the allocation that caused it, and a shared `src/user/shared/` library for both
 kernel and userspace programs.
@@ -14,7 +14,7 @@ The parts a reader is least likely to expect from a kernel this size, and the
 shapes that explain most of the rest:
 
 - **The filesystem drivers** — FAT32, exFAT, ext4, F2FS, btrfs, XFS, NTFS,
-  ISO 9660, EROFS and SquashFS — beside SimpleFs, the native transactional
+  ISO 9660, EROFS and SquashFS — beside PyroFs, the native transactional
   filesystem, with journal replay for ext4/XFS/F2FS.
 - **A userspace runtime inside the kernel crate**: `src/user/shared/` is
   compiled on both sides of the syscall boundary, so a syscall wrapper, a
@@ -245,7 +245,7 @@ make clippy
 │   │   ├── demo/          # Demo ELF artifact builder (elf_builder)
 │   │   └── shared/        # Shared shell/user runtime logic (ABI types, syscall wrappers, builtins)
 │   └── util/              # Utility helpers (debug, formatting, crypto helpers)
-├── tests/                 # Host-side integration tests (fs, io, memory, net, process, simplefs, sync, syscall)
+├── tests/                 # Host-side integration tests (fs, io, memory, net, process, pyrofs, sync, syscall)
 ├── docs/                  # Architecture and subsystem documentation
 ├── Makefile               # Build, test, check, clippy, verification gates
 ├── Cargo.toml

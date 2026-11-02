@@ -2,10 +2,10 @@
 //!
 //! Filesystem operation counters, gated behind `cfg(feature = "fs_profiler")`.
 //! When the feature is disabled, every method is a no-op and `FsProfiler` is
-//! a zero-sized type so the field in `SimpleFs` costs zero bytes.
+//! a zero-sized type so the field in `PyroFs` costs zero bytes.
 //!
 //! Uses `AtomicU64` with `Relaxed` ordering to avoid lock contention with the
-//! filesystem's `state: Mutex<SimpleFsState>` on the hot path.
+//! filesystem's `state: Mutex<PyroFsState>` on the hot path.
 
 use core::fmt;
 #[cfg(feature = "fs_profiler")]

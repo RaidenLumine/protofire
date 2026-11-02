@@ -192,9 +192,9 @@ pub const SEEK_HOLE: usize = 4;
 
 // ── File flags (SetFileFlags / GetFileFlags) ─────────────────────────
 
-/// Per-file transparent compression (SimpleFs V4+).
+/// Per-file transparent compression (PyroFs V4+).
 pub const FILE_FLAG_COMPRESSED: u32 = 1 << 0;
-/// Per-file dedup-pool membership (informational; SimpleFs V4+).
+/// Per-file dedup-pool membership (informational; PyroFs V4+).
 pub const FILE_FLAG_DEDUPED: u32 = 1 << 1;
 /// All known file flags.
 pub const FILE_FLAG_KNOWN_MASK: u32 = FILE_FLAG_COMPRESSED | FILE_FLAG_DEDUPED;

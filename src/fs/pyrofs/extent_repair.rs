@@ -1,4 +1,4 @@
-//! src/fs/simplefs/extent_repair.rs
+//! src/fs/pyrofs/extent_repair.rs
 //!
 //! Free extent tracking, metadata flush, volume check & repair, orphan
 //! cleanup, and runtime validation.
@@ -20,11 +20,11 @@ use super::super::vfs::VolumeCheckReport;
 use super::constants::*;
 use super::free_fns::*;
 use super::types::*;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 
-impl SimpleFs {
-    pub(crate) fn rebuild_free_data_extents(&self, state: &mut SimpleFsState) {
+impl PyroFs {
+    pub(crate) fn rebuild_free_data_extents(&self, state: &mut PyroFsState) {
         state.save_free_extents_for_undo();
         state.free_data_extents.clear();
         let data_start = self.data_block_start;
@@ -60,7 +60,7 @@ impl SimpleFs {
 
     /// Rebuild the `dir_inode_indices` vector by scanning all inodes.
     /// Called once at mount time; thereafter maintained incrementally.
-    pub(crate) fn rebuild_dir_inode_indices(&self, state: &mut SimpleFsState) {
+    pub(crate) fn rebuild_dir_inode_indices(&self, state: &mut PyroFsState) {
         state.dir_inode_indices.clear();
         for (index, inode) in state.inodes.iter().enumerate() {
             if inode.kind == NodeKind::Directory && !inode.deleted {
@@ -76,7 +76,7 @@ impl SimpleFs {
     /// reference goes away (the hash map entry is purged at the same time).
     pub(crate) fn release_inode_extent(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         data_block: usize,
         block_count: usize,
         deduped: bool,
@@ -106,7 +106,7 @@ impl SimpleFs {
     /// Remove `[start, start+count)` from the free extent map.
     pub(crate) fn mark_extent_allocated(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         start: usize,
         count: usize,
     ) {
@@ -128,7 +128,7 @@ impl SimpleFs {
 
     /// Return `[start, start+count)` to the free extent map, merging with
     /// adjacent free extents.
-    pub(crate) fn mark_extent_free(&self, state: &mut SimpleFsState, start: usize, count: usize) {
+    pub(crate) fn mark_extent_free(&self, state: &mut PyroFsState, start: usize, count: usize) {
         if count == 0 {
             return;
         }
@@ -179,7 +179,7 @@ impl SimpleFs {
 
     pub(crate) fn find_free_data_block_span(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         required_blocks: usize,
         skip_inode: Option<usize>,
     ) -> Result<usize> {
@@ -255,7 +255,7 @@ impl SimpleFs {
     /// left behind by the publish is likewise a generation behind, which is
     /// what [`check_and_repair`] reports as one issue and clears with a single
     /// synchronising commit.
-    pub(crate) fn flush_metadata(&self, state: &mut SimpleFsState) -> Result<()> {
+    pub(crate) fn flush_metadata(&self, state: &mut PyroFsState) -> Result<()> {
         self.profiler.inc_metadata_flushes();
         let result = self.flush_metadata_inner(state);
         if result.is_err() {
@@ -268,7 +268,7 @@ impl SimpleFs {
         result
     }
 
-    fn flush_metadata_inner(&self, state: &mut SimpleFsState) -> Result<()> {
+    fn flush_metadata_inner(&self, state: &mut PyroFsState) -> Result<()> {
         let image = self.runtime_metadata_image(state);
         let next_generation = state
             .generation
@@ -473,7 +473,7 @@ impl SimpleFs {
     /// Count checksum failures without taking the state lock (caller holds
     /// the cloned state or already released the lock). Read errors are
     /// conservatively counted as failures.
-    pub(crate) fn count_checksum_failures_locked(&self, state: &SimpleFsState) -> usize {
+    pub(crate) fn count_checksum_failures_locked(&self, state: &PyroFsState) -> usize {
         let mut failures = 0_usize;
         for inode in &state.inodes {
             if inode.deleted || inode.kind != NodeKind::File || inode.size == 0 {
@@ -517,7 +517,7 @@ impl SimpleFs {
         count
     }
 
-    pub(crate) fn inspect_runtime_health(&self, state: &SimpleFsState) -> RuntimeHealthSnapshot {
+    pub(crate) fn inspect_runtime_health(&self, state: &PyroFsState) -> RuntimeHealthSnapshot {
         let expected = self.runtime_superblock_record(state);
         let metadata_image = self.runtime_metadata_image(state);
         RuntimeHealthSnapshot {
@@ -572,7 +572,7 @@ impl SimpleFs {
     /// Uses the snapshot to enumerate orphaned entries, then removes each
     /// one via [`remove_path_recursive`] which operates on the live state.
     /// Returns the total number of orphaned entries removed.
-    pub(crate) fn cleanup_staging_orphans_locked(&self, state: &SimpleFsState) -> usize {
+    pub(crate) fn cleanup_staging_orphans_locked(&self, state: &PyroFsState) -> usize {
         let mut cleaned = 0_usize;
         for root in &state.staging_roots {
             let staging_index = match self.lookup_index_locked(state, root) {
@@ -608,7 +608,7 @@ impl SimpleFs {
     /// blocks, then writes zeroes to each one.
     ///
     /// Returns the number of blocks that were zeroed.
-    pub(crate) fn cleanup_orphan_data_blocks_locked(&self, state: &SimpleFsState) -> usize {
+    pub(crate) fn cleanup_orphan_data_blocks_locked(&self, state: &PyroFsState) -> usize {
         let data_start = self.data_block_start;
         let total_blocks = self.device.block_count() as usize;
 
@@ -682,7 +682,7 @@ impl SimpleFs {
         self.device.device_health()
     }
 
-    pub(crate) fn runtime_superblock_record(&self, state: &SimpleFsState) -> SuperblockRecord {
+    pub(crate) fn runtime_superblock_record(&self, state: &PyroFsState) -> SuperblockRecord {
         SuperblockRecord {
             inode_count: state.inodes.len(),
             dirent_count: state.dir_entries.len(),
@@ -702,7 +702,7 @@ impl SimpleFs {
         }
     }
 
-    pub(crate) fn validate_runtime_state(&self, state: &SimpleFsState) -> Result<()> {
+    pub(crate) fn validate_runtime_state(&self, state: &PyroFsState) -> Result<()> {
         if state.inodes.len() > self.inode_capacity
             || state.dir_entries.len() > self.dirent_capacity
         {
@@ -786,10 +786,10 @@ impl SimpleFs {
         true
     }
 
-    pub(crate) fn runtime_metadata_image(&self, state: &SimpleFsState) -> RuntimeMetadataImage {
+    pub(crate) fn runtime_metadata_image(&self, state: &PyroFsState) -> RuntimeMetadataImage {
         let mut inode_table = vec![0_u8; self.inode_table_blocks * BLOCK_SIZE];
         write_runtime_inode_table(&mut inode_table, self.format_version, 0, &state.inodes)
-            .expect("simplefs runtime inode table geometry should stay valid");
+            .expect("pyrofs runtime inode table geometry should stay valid");
 
         let mut dirent_table = vec![0_u8; self.dirent_table_blocks * BLOCK_SIZE];
         write_runtime_dir_entry_table(
@@ -798,13 +798,13 @@ impl SimpleFs {
             0,
             &state.dir_entries,
         )
-        .expect("simplefs runtime dirent table geometry should stay valid");
+        .expect("pyrofs runtime dirent table geometry should stay valid");
 
         // V4+: serialize the xattr table into its shadow slot geometry.
         let xattr_table = if self.format_version.supports_persistent_xattrs() {
             let mut table = vec![0_u8; self.xattr_table_blocks * BLOCK_SIZE];
             write_runtime_xattr_table(&mut table, self.format_version, 0, &state.xattrs)
-                .expect("simplefs runtime xattr table geometry should stay valid");
+                .expect("pyrofs runtime xattr table geometry should stay valid");
             table
         } else {
             Vec::new()

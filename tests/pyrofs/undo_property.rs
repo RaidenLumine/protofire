@@ -1,6 +1,6 @@
-//! tests/simplefs/undo_property.rs
+//! tests/pyrofs/undo_property.rs
 //!
-//! Property tests for SimpleFs transaction rollback (the undo log).
+//! Property tests for PyroFs transaction rollback (the undo log).
 //!
 //! The first test drives rollback through a guaranteed-failing operation:
 //! each transaction closure performs a random batch of mutations and then
@@ -21,8 +21,8 @@ mod support;
 use std::sync::Arc;
 
 use protofire::fs::block::MemoryBlockDevice;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::Error;
 
@@ -53,14 +53,14 @@ impl Lcg {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-fn open_volume(device: Arc<MemoryBlockDevice>) -> (Arc<SimpleFs>, SimpleFsVolume) {
-    let fs = SimpleFs::open(device, true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs.clone());
+fn open_volume(device: Arc<MemoryBlockDevice>) -> (Arc<PyroFs>, PyroFsVolume) {
+    let fs = PyroFs::open(device, true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs.clone());
     (fs, volume)
 }
 
 /// Sorted names in the root directory — the primary logical-state fingerprint.
-fn root_listing(volume: &SimpleFsVolume) -> Vec<String> {
+fn root_listing(volume: &PyroFsVolume) -> Vec<String> {
     let mut names = Vec::new();
     let mut index = 0;
     while let Ok(entry) = volume.read_dir("/", index) {
@@ -71,7 +71,7 @@ fn root_listing(volume: &SimpleFsVolume) -> Vec<String> {
     names
 }
 
-fn seed_content(volume: &SimpleFsVolume) -> Vec<u8> {
+fn seed_content(volume: &PyroFsVolume) -> Vec<u8> {
     let node = volume.lookup("/seed.txt").expect("seed file present");
     support::read_all(&*node)
 }
@@ -189,7 +189,7 @@ fn random_device_faults_leave_the_volume_recoverable() {
 
         // The fault can fire on any write of the metadata flush, so the
         // transaction either commits cleanly or fails with DeviceError.
-        let fs = SimpleFs::open(failing, true).expect("open writable simplefs");
+        let fs = PyroFs::open(failing, true).expect("open writable pyrofs");
         let outcome: Result<(), protofire::Error> = fs.transaction(|ctx| {
             for name in &dir_names {
                 ctx.create_dir(name)?;
@@ -205,13 +205,13 @@ fn random_device_faults_leave_the_volume_recoverable() {
 
         // Reopen the raw device: the filesystem must recover to a consistent
         // state regardless of where the write was torn or dropped.
-        let reopened = SimpleFs::open(device, true).unwrap_or_else(|err| {
+        let reopened = PyroFs::open(device, true).unwrap_or_else(|err| {
             panic!(
                 "reopen after device fault: fault_write={fault_write} mode={mode:?} \
                  outcome={outcome:?}: {err:?}"
             )
         });
-        let volume = SimpleFsVolume::new(reopened);
+        let volume = PyroFsVolume::new(reopened);
         let (checked, failed) = volume.check_data_integrity();
         assert_eq!(
             failed, 0,

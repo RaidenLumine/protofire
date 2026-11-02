@@ -1,7 +1,7 @@
 //! src/fs/unicode/mod.rs
 //!
 //! Unicode conversion and normalisation helpers shared by the filesystem
-//! drivers (FAT32, exFAT, SimpleFs).
+//! drivers (FAT32, exFAT, PyroFs).
 //!
 //! Sub-modules:
 //!

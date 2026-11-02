@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # File: scripts/check-x8664-usb-disk.sh
-# Purpose: Boot the x86_64 kernel with a real SimpleFs image on a USB disk and
+# Purpose: Boot the x86_64 kernel with a real PyroFs image on a USB disk and
 #   require that the volume mounts, that its own programs load, and that the
 #   guest's writes reach the image on the host.
 #
@@ -25,8 +25,8 @@
 # What it asserts, and why each one:
 #   * the mass-storage device answered INQUIRY and was chosen as the boot disk
 #     — the transport works at all;
-#   * the boot reached `mounted MBR-partitioned SimpleFs volumes`, which is
-#     the read path over a partition table, several SimpleFs volumes and the
+#   * the boot reached `mounted MBR-partitioned PyroFs volumes`, which is
+#     the read path over a partition table, several PyroFs volumes and the
 #     directory walk that fills and refills the rings;
 #   * a program was loaded from `/apps` on that volume, which is a read the
 #     mount alone does not prove;
@@ -205,8 +205,8 @@ require_log_line "[driver] detected boot disk: usb-msd"
 # slots, the volume superblocks and the directory walk.  The failure this
 # check exists for prints the other line instead.
 require_log_line "[fs    ] system: slot b active (build 2)"
-require_log_line "[fs    ] mounted MBR-partitioned SimpleFs volumes from ATA boot disk"
-require_log_absent_line "[fs    ] failed to mount SimpleFs volumes from ATA boot disk"
+require_log_line "[fs    ] mounted MBR-partitioned PyroFs volumes from ATA boot disk"
+require_log_absent_line "[fs    ] failed to mount PyroFs volumes from ATA boot disk"
 
 # A program read out of the volume: the mount alone would hold if the driver
 # read only the first few blocks.
@@ -281,8 +281,8 @@ log="$gpt_log"
 
 require_log_line "[driver] detected boot disk: usb-msd"
 require_log_line "[fs    ] system: slot b active (build 2)"
-require_log_line "[fs    ] mounted GPT-partitioned SimpleFs volumes from ATA boot disk"
-require_log_absent_line "[fs    ] failed to mount SimpleFs volumes from ATA boot disk"
+require_log_line "[fs    ] mounted GPT-partitioned PyroFs volumes from ATA boot disk"
+require_log_absent_line "[fs    ] failed to mount PyroFs volumes from ATA boot disk"
 require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
 
 printf 'x86_64 USB disk check (GPT) passed: the same zones in the other table,\n'

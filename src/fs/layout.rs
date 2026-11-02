@@ -62,7 +62,7 @@ pub const DEMO_MBR_DATA_PARTITION_TYPE: u8 = 0xa3;
 ///
 /// A type GUID is how a GPT partition says what it is, and these are this
 /// kernel's own rather than a distribution's: the volumes behind them are
-/// SimpleFs volumes no installer knows, and borrowing a familiar GUID would
+/// PyroFs volumes no installer knows, and borrowing a familiar GUID would
 /// claim a meaning the type does not have.  They are the GPT half of the
 /// vocabulary above — where an MBR disk says `0xa1`, a GPT disk says this
 /// ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
@@ -97,17 +97,17 @@ impl StorageZone {
 
     pub const fn fs_name(self) -> &'static str {
         match self {
-            Self::System => "simplefs-system",
-            Self::Apps => "simplefs-apps",
-            Self::Data => "simplefs-data",
+            Self::System => "pyrofs-system",
+            Self::Apps => "pyrofs-apps",
+            Self::Data => "pyrofs-data",
         }
     }
 
     pub const fn volume_label(self) -> &'static str {
         match self {
-            Self::System => "simplefs:system",
-            Self::Apps => "simplefs:apps",
-            Self::Data => "simplefs:data",
+            Self::System => "pyrofs:system",
+            Self::Apps => "pyrofs:apps",
+            Self::Data => "pyrofs:data",
         }
     }
 

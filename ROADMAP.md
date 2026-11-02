@@ -390,7 +390,7 @@ The authoritative picture of what exists today is
   interface (#181–189) to scanout.
 - **Fuzzing & robustness.** The cargo-fuzz-style targets for the ELF loader,
   filesystem image parsers, network packet parsers, and the LUKS2 header are
-  there; the SimpleFs crash matrix now enumerates V4's own crash points as
+  there; the PyroFs crash matrix now enumerates V4's own crash points as
   well — the shadow xattr table, which V2 has no equivalent of, and the two
   superblock *phases* a V3+ commit adds around it.  What is left is a case for
   V3 itself (its sequence is V4's without the xattr table) and a searching

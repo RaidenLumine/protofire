@@ -1,4 +1,4 @@
-//! src/fs/simplefs/superblock.rs
+//! src/fs/pyrofs/superblock.rs
 //!
 //! Superblock parsing, mount, label, block I/O caching helpers.
 
@@ -24,21 +24,21 @@ use super::super::vfs::SecurityDescriptorMutationSupport;
 use super::constants::*;
 use super::free_fns::*;
 use super::types::*;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 use super::UndoLog;
 
-impl SimpleFs {
+impl PyroFs {
     /// Mount a SimpleFS image from `device`, exposing the read/write API used
     /// by the host integration-test suite (and the unified filesystem layer).
     pub fn open(device: Arc<dyn BlockDevice>, case_sensitive: bool) -> Result<Arc<Self>> {
-        Self::open_with_runtime_policy(device, case_sensitive, SimpleFsRuntimeMountPolicy::Public)
+        Self::open_with_runtime_policy(device, case_sensitive, PyroFsRuntimeMountPolicy::Public)
     }
 
     pub(crate) fn open_with_runtime_policy(
         device: Arc<dyn BlockDevice>,
         case_sensitive: bool,
-        mount_policy: SimpleFsRuntimeMountPolicy,
+        mount_policy: PyroFsRuntimeMountPolicy,
     ) -> Result<Arc<Self>> {
         let (label, parsed_superblock, inodes, dir_entries) =
             load_current_runtime_state(&*device, case_sensitive, mount_policy)?;
@@ -113,7 +113,7 @@ impl SimpleFs {
             format_version: parsed_superblock.format_version,
             device,
             cache,
-            state: Mutex::new(SimpleFsState {
+            state: Mutex::new(PyroFsState {
                 inodes,
                 dir_entries,
                 active_inode_table_block: parsed_superblock.record.active_inode_table_block,
@@ -342,7 +342,7 @@ impl SimpleFs {
 /// XATTR_STATUS_DELETED`.
 pub(crate) fn read_xattr_records(
     device: &dyn BlockDevice,
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     table_block: usize,
     capacity: usize,
 ) -> Result<Vec<XattrRecord>> {

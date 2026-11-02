@@ -1,4 +1,4 @@
-//! src/fs/simplefs/file_io.rs
+//! src/fs/pyrofs/file_io.rs
 //!
 //! File read/write, truncation, zero-range, and capacity management.
 
@@ -13,10 +13,10 @@ use super::super::vfs::NodeKind;
 use super::free_fns::*;
 use super::transaction::TransactionContext;
 use super::types::*;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 
-impl SimpleFs {
+impl PyroFs {
     pub(crate) fn read_file(
         &self,
         inode_index: usize,
@@ -393,7 +393,7 @@ impl SimpleFs {
 
     pub(crate) fn commit_metadata_update<T, F>(&self, mutate: F) -> Result<T>
     where
-        F: FnOnce(&mut SimpleFsState) -> Result<T>,
+        F: FnOnce(&mut PyroFsState) -> Result<T>,
     {
         let mut state = self.state.lock();
         state.begin_undo();

@@ -1,6 +1,6 @@
-//! src/fs/simplefs/vfs.rs
+//! src/fs/pyrofs/vfs.rs
 //!
-//! VFS integration: SimpleFsVolume wrapper, VfsFileSystem trait implementation,
+//! VFS integration: PyroFsVolume wrapper, VfsFileSystem trait implementation,
 //! and SimpleVNode implementation.
 
 use alloc::sync::Arc;
@@ -21,17 +21,17 @@ use super::super::vfs::VolumeCheckReport;
 use super::super::vfs::XattrEntry;
 use crate::fs::filesystem::profiler::FsProfilerSnapshot;
 
-use super::SimpleFs;
-use super::SimpleFsVolume;
+use super::PyroFs;
+use super::PyroFsVolume;
 use super::SimpleVNode;
 
-impl SimpleFsVolume {
-    pub fn new(inner: Arc<SimpleFs>) -> Self {
+impl PyroFsVolume {
+    pub fn new(inner: Arc<PyroFs>) -> Self {
         Self { inner }
     }
 }
 
-impl VfsFileSystem for SimpleFsVolume {
+impl VfsFileSystem for PyroFsVolume {
     fn name(&self) -> &str {
         self.inner.label.as_str()
     }
@@ -115,7 +115,7 @@ impl VfsFileSystem for SimpleFsVolume {
     /// The persistent write-back path is driven by the maintenance thread
     /// (`kernel::maintenance` → `fs::sync_global_caches_aged`) so that dirty
     /// data reaches the device without waiting for an explicit `sync`.  Until
-    /// this method existed the VFS default answered `0` here and SimpleFs was
+    /// this method existed the VFS default answered `0` here and PyroFs was
     /// the filesystem that never took part in it — only fat32 implemented the
     /// call — so its data reached the device through an explicit sync,
     /// pressure, or eviction and nothing else.
@@ -131,7 +131,7 @@ impl VfsFileSystem for SimpleFsVolume {
         self.lookup(path)?.get_xattr(name)
     }
 }
-impl SimpleFsVolume {
+impl PyroFsVolume {
     /// Return the number of data blocks that are not referenced by any live
     /// inode. This is a diagnostic helper; results may include blocks that
     /// were never allocated on V2 images.

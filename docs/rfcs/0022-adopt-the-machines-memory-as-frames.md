@@ -208,7 +208,7 @@ checklist rather than its evidence.**  In the order they would have to hold:
   device programmed with `phys_addr_of`'s answer — NVMe's `set_prp1` or
   virtio's descriptor — reading it back.  The harness exists:
   `make check-x8664-nvme`, `make check-aarch64-nvme` and
-  `make check-riscv64-nvme` boot a SimpleFs image on an NVMe namespace
+  `make check-riscv64-nvme` boot a PyroFs image on an NVMe namespace
   (`scripts/check-nvme-disk.sh`), and the virtio block and net drivers have
   runtime checks of their own.
 - **The measurement that is owed**: how much *practical* memory the change

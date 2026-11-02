@@ -1,15 +1,15 @@
-//! tests/simplefs/support/mod.rs
+//! tests/pyrofs/support/mod.rs
 //!
-//! Shared helpers for the SimpleFs integration-test suites.
+//! Shared helpers for the PyroFs integration-test suites.
 
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use protofire::fs::block::BlockDevice;
 use protofire::fs::block::MemoryBlockDevice;
-use protofire::fs::simplefs::ImageEntry;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::ImageEntry;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::fs::vfs::VNode;
 use protofire::Error;
@@ -38,7 +38,7 @@ pub fn build_seed_image(
     extra_dir_entries: usize,
     extra_data_blocks: usize,
 ) -> Vec<u8> {
-    SimpleFs::build_image_with_headroom(
+    PyroFs::build_image_with_headroom(
         label,
         &[ImageEntry {
             path: "/seed.txt",
@@ -48,7 +48,7 @@ pub fn build_seed_image(
         extra_dir_entries,
         extra_data_blocks,
     )
-    .expect("build writable simplefs image")
+    .expect("build writable pyrofs image")
 }
 
 /// V4 seed image (persistent xattr table) — needed by suites that exercise
@@ -61,7 +61,7 @@ pub fn build_v4_seed_image(
     extra_xattrs: usize,
     extra_data_blocks: usize,
 ) -> Vec<u8> {
-    SimpleFs::build_v4_image_with_headroom(
+    PyroFs::build_v4_image_with_headroom(
         label,
         &[ImageEntry {
             path: "/seed.txt",
@@ -72,7 +72,7 @@ pub fn build_v4_seed_image(
         extra_xattrs,
         extra_data_blocks,
     )
-    .expect("build writable v4 simplefs image")
+    .expect("build writable v4 pyrofs image")
 }
 
 #[allow(dead_code)]
@@ -89,8 +89,8 @@ pub fn build_stable_anchor_device(
         false,
     );
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume
             .create_dir("/stable")
             .expect("create stable directory");
@@ -133,8 +133,8 @@ pub fn build_v4_stable_anchor_device(
         false,
     );
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable v4 simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable v4 pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume
             .create_dir("/stable")
             .expect("create stable directory");
@@ -161,7 +161,7 @@ pub enum FaultMode {
 
 /// A block device that fails exactly one device write (the `fault_write`-th
 /// since construction), either before writing or after tearing it.  This is
-/// the shared crash-injection primitive for the SimpleFs test suites,
+/// the shared crash-injection primitive for the PyroFs test suites,
 /// mirroring the private devices in recovery.rs / fault_matrix.rs so the
 /// undo-log property suite can drive the same crash points.
 #[allow(dead_code)]

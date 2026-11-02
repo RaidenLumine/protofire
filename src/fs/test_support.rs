@@ -2,7 +2,7 @@
 //!
 //! Test-support helpers for host-side tests.
 //!
-//! The former SimpleFs zone-image builders (`build_test_zone_image` and
+//! The former PyroFs zone-image builders (`build_test_zone_image` and
 //! `build_minimal_test_zone_image`) had no callers in any build and were
-//! removed.  Code that needs a SimpleFs image should call
-//! `SimpleFs::build_image` directly.
+//! removed.  Code that needs a PyroFs image should call
+//! `PyroFs::build_image` directly.

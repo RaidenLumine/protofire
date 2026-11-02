@@ -40,7 +40,7 @@ mod tests {
     use alloc::vec::Vec;
 
     // ── Deterministic PRNG for property tests ───────────────────────────────
-    // Same LCG family as tests/simplefs/property.rs and tests/parsers/fuzz.rs,
+    // Same LCG family as tests/pyrofs/property.rs and tests/parsers/fuzz.rs,
     // kept local because the queue helpers behind `pub(crate)` are only
     // reachable from in-crate unit tests.
 

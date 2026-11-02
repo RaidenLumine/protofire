@@ -31,8 +31,8 @@ use super::block::BlockSliceDevice;
 use super::block::MemoryBlockDevice;
 use super::block::BLOCK_SIZE;
 use super::partition::read_partitions;
-use super::simplefs::SimpleFs;
-use super::simplefs::SimpleFsVolume;
+use super::pyrofs::PyroFs;
+use super::pyrofs::PyroFsVolume;
 use super::vfs::FileSystem as VfsFileSystem;
 
 /// Where a build marker lives inside a system volume.
@@ -165,8 +165,8 @@ pub fn select_system_slot(slots: &[SystemSlot]) -> Option<&SystemSlot> {
 /// a candidate: the boot has to be able to tell "this slot is bad" from "this
 /// slot is older", and this is that distinction.
 pub fn read_build(device: &Arc<dyn BlockDevice>) -> Option<SystemBuild> {
-    let volume = SimpleFs::open(device.clone(), true).ok()?;
-    let volume = SimpleFsVolume::new(volume);
+    let volume = PyroFs::open(device.clone(), true).ok()?;
+    let volume = PyroFsVolume::new(volume);
     let node = volume.lookup(SYSTEM_BUILD_MARKER_PATH).ok()?;
 
     let mut buffer = alloc::vec![0_u8; 256];
@@ -227,7 +227,7 @@ pub fn withdraw_active_build(disk: &Arc<dyn BlockDevice>) -> Result<SystemBuild>
     let active = select_system_slot(&slots).ok_or(Error::NotFound)?;
     let build = active.build.ok_or(Error::NotFound)?;
 
-    let volume = SimpleFsVolume::new(SimpleFs::open(active.device.clone(), true)?);
+    let volume = PyroFsVolume::new(PyroFs::open(active.device.clone(), true)?);
     volume.remove_path(SYSTEM_BUILD_MARKER_PATH)?;
 
     Ok(build)
@@ -242,7 +242,7 @@ fn read_image_build(image: &[u8]) -> Result<SystemBuild> {
 /// The blocks `image` gives the build marker, as `(first_block, block_count)`.
 fn image_file_extent(image: &[u8]) -> Result<(usize, usize)> {
     let device: Arc<dyn BlockDevice> = MemoryBlockDevice::new("system-image", image.to_vec(), true);
-    let volume = SimpleFs::open(device, true)?;
+    let volume = PyroFs::open(device, true)?;
     let (start, count) = volume.file_extent(SYSTEM_BUILD_MARKER_PATH)?;
     Ok((start as usize, count as usize))
 }
@@ -315,7 +315,7 @@ mod tests {
     use crate::fs::partition::write_mbr_partitions;
     use crate::fs::partition::MbrPartitionEntry;
     use crate::fs::partition::MbrPartitionTable;
-    use crate::fs::simplefs::ImageEntry;
+    use crate::fs::pyrofs::ImageEntry;
     use alloc::vec;
 
     const ZONE_BLOCKS: u64 = 256;
@@ -348,7 +348,7 @@ mod tests {
             });
         }
 
-        SimpleFs::build_image_with_headroom("simplefs:system", &entries, 16, 32, 64)
+        PyroFs::build_image_with_headroom("pyrofs:system", &entries, 16, 32, 64)
             .expect("build a system volume")
     }
 
@@ -372,8 +372,8 @@ mod tests {
         partitions[2] = Some(MbrPartitionEntry::new(false, 0xa3, DATA_START, DATA_BLOCKS));
         write_mbr_partitions(&mut bytes[..BLOCK_SIZE], &partitions).expect("write the MBR");
 
-        let data = SimpleFs::build_image_with_headroom(
-            "simplefs:data",
+        let data = PyroFs::build_image_with_headroom(
+            "pyrofs:data",
             &[ImageEntry {
                 path: "/users/guest/note.txt",
                 data: b"runtime state lives here\n",
@@ -397,7 +397,7 @@ mod tests {
     }
 
     /// The data zone of a test disk, as a volume.
-    fn data_volume(disk: &Arc<dyn BlockDevice>) -> SimpleFsVolume {
+    fn data_volume(disk: &Arc<dyn BlockDevice>) -> PyroFsVolume {
         let table = read_partitions(disk.as_ref())
             .expect("read the table")
             .expect("a table");
@@ -414,11 +414,11 @@ mod tests {
             data.block_count,
             false,
         );
-        SimpleFsVolume::new(SimpleFs::open(device, true).expect("open the data zone"))
+        PyroFsVolume::new(PyroFs::open(device, true).expect("open the data zone"))
     }
 
     /// Read a whole file through a volume.
-    fn read_file(volume: &SimpleFsVolume, path: &str) -> String {
+    fn read_file(volume: &PyroFsVolume, path: &str) -> String {
         let node = volume.lookup(path).expect("lookup");
         let mut buffer = alloc::vec![0_u8; 256];
         let count = node.read(0, &mut buffer).expect("read");

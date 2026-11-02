@@ -50,10 +50,10 @@
 1 src/fs/filesystem/types.rs
 5 src/fs/ntfs/fs.rs
 1 src/fs/ntfs/mod.rs
-2 src/fs/simplefs/mod.rs
-1 src/fs/simplefs/superblock.rs
-1 src/fs/simplefs/transaction.rs
-1 src/fs/simplefs/types.rs
+2 src/fs/pyrofs/mod.rs
+1 src/fs/pyrofs/superblock.rs
+1 src/fs/pyrofs/transaction.rs
+1 src/fs/pyrofs/types.rs
 2 src/fs/unicode/normalize_tables.rs
 3 src/fs/xfs/btree.rs
 4 src/fs/xfs/journal.rs
@@ -81,4 +81,4 @@
 3 src/user/program/install.rs
 1 src/user/program/loader/mod.rs
 93 src/user/syscall/payload.rs
-7 tests/simplefs/support/mod.rs
+7 tests/pyrofs/support/mod.rs

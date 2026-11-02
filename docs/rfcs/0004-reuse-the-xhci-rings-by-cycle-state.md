@@ -35,10 +35,10 @@ it stops completing transfers"; and the USB mass-storage row, "a disk cannot
 be *mounted* over USB".  A boot reproduces it: with the demo image the host
 `mkimage` writes attached over `usb-storage`, the boot reaches
 
-    [fs    ] failed to mount SimpleFs volumes from ATA boot disk: invalid argument
+    [fs    ] failed to mount PyroFs volumes from ATA boot disk: invalid argument
 
 and falls back to the in-memory volumes, while the *same image* over
-`virtio-blk` reaches `mounted MBR-partitioned SimpleFs volumes from ATA boot
+`virtio-blk` reaches `mounted MBR-partitioned PyroFs volumes from ATA boot
 disk`.  That is what makes the difference the driver's and not the image's:
 the mount is a longer read than the single-sector probe the gate already
 does, and it is long enough to wrap the rings.
@@ -226,11 +226,11 @@ behaviour.
 
 - `make check-x8664-usb-disk` (`scripts/check-x8664-usb-disk.sh`) is the one
   that exercises the reuse: it builds the kernel, has the host write a real
-  SimpleFs image with `cargo run -- mkimage`, hashes it, boots with that image
+  PyroFs image with `cargo run -- mkimage`, hashes it, boots with that image
   as the only disk behind `usb-storage`, and asserts (a) the mass-storage
   device answers INQUIRY and is chosen as the boot disk, (b) the boot reaches
-  `mounted MBR-partitioned SimpleFs volumes from ATA boot disk` and not
-  `failed to mount SimpleFs volumes from ATA boot disk`, (c) a program is
+  `mounted MBR-partitioned PyroFs volumes from ATA boot disk` and not
+  `failed to mount PyroFs volumes from ATA boot disk`, (c) a program is
   loaded from `/apps` on that volume, (d) the shell *writes* a marker into the
   volume through `open`/`write` and `cat` reads it back, and (e) the host finds
   those bytes in the image afterwards — a write the gate drove, through the

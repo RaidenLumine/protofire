@@ -1,6 +1,6 @@
-//! tests/simplefs/fault_matrix.rs
+//! tests/pyrofs/fault_matrix.rs
 //!
-//! Exercise a block-level fault-injection matrix for writable SimpleFs recovery
+//! Exercise a block-level fault-injection matrix for writable PyroFs recovery
 //! behavior.
 //!
 //! A plan fires on the `match_number`-th write that falls in its target.  A
@@ -20,8 +20,8 @@ use std::sync::Mutex;
 use protofire::fs::block::BlockDevice;
 use protofire::fs::block::MemoryBlockDevice;
 use protofire::fs::block::BLOCK_SIZE;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::Error;
 use protofire::Result;
@@ -32,7 +32,7 @@ use support::build_v4_stable_anchor_device;
 use support::read_all;
 use support::read_u32_le;
 
-const MAGIC: &[u8; 8] = b"ADAFS1\0\0";
+const MAGIC: &[u8; 8] = b"PYROFS1\0";
 const VERSION: u32 = 2;
 const V4_VERSION: u32 = 4;
 const PRIMARY_SUPERBLOCK_BLOCK: u64 = 0;
@@ -70,7 +70,7 @@ struct FaultPlan {
 }
 
 #[derive(Clone, Copy)]
-struct SimpleFsLayout {
+struct PyroFsLayout {
     active_inode_table_block: u64,
     active_dirent_table_block: u64,
     shadow_inode_table_block: u64,
@@ -228,18 +228,18 @@ impl BlockDevice for FaultInjectingBlockDevice {
 }
 
 fn build_stable_device() -> Arc<MemoryBlockDevice> {
-    build_stable_anchor_device("simplefs-fault-matrix", "fault-matrix-simplefs", 64, 96, 32)
+    build_stable_anchor_device("pyrofs-fault-matrix", "fault-matrix-pyrofs", 64, 96, 32)
 }
 
 fn build_packed_directory_device() -> Arc<MemoryBlockDevice> {
     let device = MemoryBlockDevice::new(
-        "simplefs-fault-matrix",
-        build_seed_image("fault-matrix-simplefs", 96, 128, 64),
+        "pyrofs-fault-matrix",
+        build_seed_image("fault-matrix-pyrofs", 96, 128, 64),
         false,
     );
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/bulk").expect("create bulk directory");
 
         for index in 0..40 {
@@ -259,8 +259,8 @@ fn build_packed_directory_device() -> Arc<MemoryBlockDevice> {
 fn build_cross_directory_rename_device() -> Arc<MemoryBlockDevice> {
     let device = build_stable_device();
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/left").expect("create left");
         volume.create_dir("/right").expect("create right");
         let file = volume
@@ -278,8 +278,8 @@ fn build_cross_directory_rename_device() -> Arc<MemoryBlockDevice> {
 fn build_publish_then_retire_device() -> Arc<MemoryBlockDevice> {
     let device = build_stable_device();
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/staging").expect("create staging");
         volume.create_dir("/archive").expect("create archive");
         volume.create_dir("/history").expect("create history");
@@ -302,8 +302,8 @@ fn apply_warmup_commits(device: &Arc<MemoryBlockDevice>, count: usize) -> Vec<St
         return Vec::new();
     }
 
-    let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs);
     let mut paths = Vec::with_capacity(count);
 
     for index in 0..count {
@@ -317,7 +317,7 @@ fn apply_warmup_commits(device: &Arc<MemoryBlockDevice>, count: usize) -> Vec<St
     paths
 }
 
-fn collect_dir_names(volume: &SimpleFsVolume, path: &str) -> Vec<String> {
+fn collect_dir_names(volume: &PyroFsVolume, path: &str) -> Vec<String> {
     let mut entries = Vec::new();
     let mut index = 0;
     while let Ok(entry) = volume.read_dir(path, index) {
@@ -340,7 +340,7 @@ fn superblock_checksum(block: &[u8]) -> u32 {
     hash
 }
 
-fn read_superblock_layout(device: &dyn BlockDevice, block: u64) -> Result<SimpleFsLayout> {
+fn read_superblock_layout(device: &dyn BlockDevice, block: u64) -> Result<PyroFsLayout> {
     read_superblock_layout_versioned(device, block, VERSION)
 }
 
@@ -353,7 +353,7 @@ fn read_superblock_layout_versioned(
     device: &dyn BlockDevice,
     block: u64,
     version: u32,
-) -> Result<SimpleFsLayout> {
+) -> Result<PyroFsLayout> {
     let mut buffer = [0_u8; BLOCK_SIZE];
     device.read_blocks(block, &mut buffer)?;
 
@@ -369,7 +369,7 @@ fn read_superblock_layout_versioned(
         return Err(Error::InvalidArgument);
     }
 
-    Ok(SimpleFsLayout {
+    Ok(PyroFsLayout {
         active_inode_table_block: read_u32_le(&buffer, SUPERBLOCK_ACTIVE_INODE_TABLE_OFFSET) as u64,
         active_dirent_table_block: read_u32_le(&buffer, SUPERBLOCK_ACTIVE_DIRENT_TABLE_OFFSET)
             as u64,
@@ -387,7 +387,7 @@ fn read_superblock_layout_versioned(
 
 /// The newest readable **V4** superblock, the way [`load_current_layout`] reads
 /// the newest V2 one.
-fn load_v4_layout(device: &dyn BlockDevice) -> Result<SimpleFsLayout> {
+fn load_v4_layout(device: &dyn BlockDevice) -> Result<PyroFsLayout> {
     let primary = read_superblock_layout_versioned(device, PRIMARY_SUPERBLOCK_BLOCK, V4_VERSION);
     let secondary =
         read_superblock_layout_versioned(device, SECONDARY_SUPERBLOCK_BLOCK, V4_VERSION);
@@ -406,7 +406,7 @@ fn load_v4_layout(device: &dyn BlockDevice) -> Result<SimpleFsLayout> {
     }
 }
 
-fn load_current_layout(device: &dyn BlockDevice) -> Result<SimpleFsLayout> {
+fn load_current_layout(device: &dyn BlockDevice) -> Result<PyroFsLayout> {
     let primary = read_superblock_layout(device, PRIMARY_SUPERBLOCK_BLOCK);
     let secondary = read_superblock_layout(device, SECONDARY_SUPERBLOCK_BLOCK);
 
@@ -426,7 +426,7 @@ fn load_current_layout(device: &dyn BlockDevice) -> Result<SimpleFsLayout> {
 
 fn fault_target_for_case(
     stage: MatrixStage,
-    layout: SimpleFsLayout,
+    layout: PyroFsLayout,
     device_blocks: u64,
 ) -> FaultTarget {
     match stage {
@@ -458,8 +458,8 @@ fn fault_target_for_case(
 
 fn assert_slot_rotation(
     case: MatrixCase,
-    initial_layout: SimpleFsLayout,
-    current_layout: SimpleFsLayout,
+    initial_layout: PyroFsLayout,
+    current_layout: PyroFsLayout,
 ) {
     match case.stage {
         MatrixStage::ShadowInodeTable => {
@@ -496,7 +496,7 @@ fn assert_slot_rotation(
 }
 
 fn assert_stable_state(
-    volume: &SimpleFsVolume,
+    volume: &PyroFsVolume,
     warmup_paths: &[String],
     missing_path: &str,
     note: &str,
@@ -520,7 +520,7 @@ fn assert_stable_state(
 }
 
 fn assert_packed_directory_remove_not_committed(
-    volume: &SimpleFsVolume,
+    volume: &PyroFsVolume,
     warmup_paths: &[String],
     note: &str,
 ) {
@@ -552,7 +552,7 @@ fn assert_packed_directory_remove_not_committed(
 }
 
 fn assert_cross_directory_rename_not_committed(
-    volume: &SimpleFsVolume,
+    volume: &PyroFsVolume,
     warmup_paths: &[String],
     note: &str,
 ) {
@@ -581,7 +581,7 @@ fn assert_cross_directory_rename_not_committed(
 }
 
 fn assert_cross_directory_rename_committed(
-    volume: &SimpleFsVolume,
+    volume: &PyroFsVolume,
     warmup_paths: &[String],
     note: &str,
 ) {
@@ -611,7 +611,7 @@ fn assert_cross_directory_rename_committed(
 
 /// Stage a file, write it, and publish it by rename — the commits before the
 /// retired payload is removed.
-fn publish_staged_payload(volume: &SimpleFsVolume) {
+fn publish_staged_payload(volume: &PyroFsVolume) {
     let file = volume
         .create_file("/staging/current.bin")
         .expect("create staged payload");
@@ -625,13 +625,13 @@ fn publish_staged_payload(volume: &SimpleFsVolume) {
         .expect("publish staged payload");
 }
 
-fn execute_publish_then_retire_sequence(volume: &SimpleFsVolume) -> Result<()> {
+fn execute_publish_then_retire_sequence(volume: &PyroFsVolume) -> Result<()> {
     publish_staged_payload(volume);
     volume.remove_path("/archive/retired.bin")
 }
 
 fn assert_publish_then_retire_pre_remove_state(
-    volume: &SimpleFsVolume,
+    volume: &PyroFsVolume,
     warmup_paths: &[String],
     note: &str,
 ) {
@@ -677,7 +677,7 @@ fn assert_publish_then_retire_pre_remove_state(
 }
 
 fn assert_publish_then_retire_committed_state(
-    volume: &SimpleFsVolume,
+    volume: &PyroFsVolume,
     warmup_paths: &[String],
     note: &str,
 ) {
@@ -723,7 +723,7 @@ fn assert_publish_then_retire_committed_state(
 }
 
 #[test]
-fn simplefs_metadata_and_secondary_superblock_fault_matrix_preserves_last_stable_state() {
+fn pyrofs_metadata_and_secondary_superblock_fault_matrix_preserves_last_stable_state() {
     let cases = [
         MatrixCase {
             name: "shadow-inode-before-write-shadow-slot",
@@ -780,8 +780,8 @@ fn simplefs_metadata_and_secondary_superblock_fault_matrix_preserves_last_stable
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+        let volume = PyroFsVolume::new(fs);
         let pending_path = format!("/pending-matrix-{index:02}");
         assert_eq!(
             volume.create_dir(&pending_path),
@@ -791,14 +791,14 @@ fn simplefs_metadata_and_secondary_superblock_fault_matrix_preserves_last_stable
         );
         assert_stable_state(&volume, &warmup_paths, &pending_path, case.name);
 
-        let reopened = SimpleFs::open(device, true).expect("reopen stable simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen stable pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         assert_stable_state(&volume, &warmup_paths, &pending_path, case.name);
     }
 }
 
 #[test]
-fn simplefs_packed_directory_remove_fault_matrix_preserves_last_stable_state() {
+fn pyrofs_packed_directory_remove_fault_matrix_preserves_last_stable_state() {
     let cases = [
         MatrixCase {
             name: "packed-remove-shadow-inode-before-write",
@@ -836,8 +836,8 @@ fn simplefs_packed_directory_remove_fault_matrix_preserves_last_stable_state() {
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing packed-dir simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing packed-dir pyrofs");
+        let volume = PyroFsVolume::new(fs);
         assert_eq!(
             volume.remove_path("/bulk/item07.txt"),
             Err(Error::DeviceError),
@@ -846,14 +846,14 @@ fn simplefs_packed_directory_remove_fault_matrix_preserves_last_stable_state() {
         );
         assert_packed_directory_remove_not_committed(&volume, &warmup_paths, case.name);
 
-        let reopened = SimpleFs::open(device, true).expect("reopen stable packed-dir simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen stable packed-dir pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         assert_packed_directory_remove_not_committed(&volume, &warmup_paths, case.name);
     }
 }
 
 #[test]
-fn simplefs_cross_directory_rename_metadata_fault_matrix_preserves_last_stable_state() {
+fn pyrofs_cross_directory_rename_metadata_fault_matrix_preserves_last_stable_state() {
     let cases = [
         MatrixCase {
             name: "cross-rename-shadow-inode-before-write",
@@ -891,8 +891,8 @@ fn simplefs_cross_directory_rename_metadata_fault_matrix_preserves_last_stable_s
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing cross-rename simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing cross-rename pyrofs");
+        let volume = PyroFsVolume::new(fs);
         assert_eq!(
             volume.rename("/left/payload.bin", "/right/final.bin"),
             Err(Error::DeviceError),
@@ -901,14 +901,14 @@ fn simplefs_cross_directory_rename_metadata_fault_matrix_preserves_last_stable_s
         );
         assert_cross_directory_rename_not_committed(&volume, &warmup_paths, case.name);
 
-        let reopened = SimpleFs::open(device, true).expect("reopen stable cross-rename simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen stable cross-rename pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         assert_cross_directory_rename_not_committed(&volume, &warmup_paths, case.name);
     }
 }
 
 #[test]
-fn simplefs_cross_directory_rename_primary_superblock_fault_matrix_keeps_committed_state() {
+fn pyrofs_cross_directory_rename_primary_superblock_fault_matrix_keeps_committed_state() {
     let cases = [
         MatrixCase {
             name: "cross-rename-primary-superblock-before-write",
@@ -937,8 +937,8 @@ fn simplefs_cross_directory_rename_primary_superblock_fault_matrix_keeps_committ
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing cross-rename simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing cross-rename pyrofs");
+        let volume = PyroFsVolume::new(fs);
         assert_eq!(
             volume.rename("/left/payload.bin", "/right/final.bin"),
             Err(Error::DeviceError),
@@ -947,15 +947,14 @@ fn simplefs_cross_directory_rename_primary_superblock_fault_matrix_keeps_committ
         );
         assert_cross_directory_rename_not_committed(&volume, &warmup_paths, case.name);
 
-        let reopened =
-            SimpleFs::open(device, true).expect("reopen committed cross-rename simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen committed cross-rename pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         assert_cross_directory_rename_committed(&volume, &warmup_paths, case.name);
     }
 }
 
 #[test]
-fn simplefs_publish_then_retire_metadata_fault_matrix_preserves_pre_remove_state() {
+fn pyrofs_publish_then_retire_metadata_fault_matrix_preserves_pre_remove_state() {
     let cases = [
         MatrixCase {
             name: "publish-retire-shadow-inode-before-write",
@@ -986,9 +985,8 @@ fn simplefs_publish_then_retire_metadata_fault_matrix_preserves_pre_remove_state
         // slot that commit is about to write, so the plan does not depend on
         // how many blocks the earlier commits happened to put out.
         let failing = FaultInjectingBlockDevice::new_sequence(device.clone(), Vec::new());
-        let fs =
-            SimpleFs::open(failing.clone(), true).expect("open failing publish-retire simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing.clone(), true).expect("open failing publish-retire pyrofs");
+        let volume = PyroFsVolume::new(fs);
         publish_staged_payload(&volume);
 
         let layout = load_current_layout(&*device).expect("read layout before the remove");
@@ -1005,14 +1003,14 @@ fn simplefs_publish_then_retire_metadata_fault_matrix_preserves_pre_remove_state
         );
         assert_publish_then_retire_pre_remove_state(&volume, &warmup_paths, case.name);
 
-        let reopened = SimpleFs::open(device, true).expect("reopen stable publish-retire simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen stable publish-retire pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         assert_publish_then_retire_pre_remove_state(&volume, &warmup_paths, case.name);
     }
 }
 
 #[test]
-fn simplefs_publish_then_retire_primary_superblock_fault_matrix_commits_across_reopen() {
+fn pyrofs_publish_then_retire_primary_superblock_fault_matrix_commits_across_reopen() {
     let cases = [
         MatrixCase {
             name: "publish-retire-primary-superblock-before-write",
@@ -1043,8 +1041,8 @@ fn simplefs_publish_then_retire_primary_superblock_fault_matrix_commits_across_r
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing publish-retire simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing publish-retire pyrofs");
+        let volume = PyroFsVolume::new(fs);
         assert_eq!(
             execute_publish_then_retire_sequence(&volume),
             Err(Error::DeviceError),
@@ -1053,15 +1051,14 @@ fn simplefs_publish_then_retire_primary_superblock_fault_matrix_commits_across_r
         );
         assert_publish_then_retire_pre_remove_state(&volume, &warmup_paths, case.name);
 
-        let reopened =
-            SimpleFs::open(device, true).expect("reopen committed publish-retire simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen committed publish-retire pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         assert_publish_then_retire_committed_state(&volume, &warmup_paths, case.name);
     }
 }
 
 #[test]
-fn simplefs_primary_superblock_fault_matrix_keeps_committed_secondary_state() {
+fn pyrofs_primary_superblock_fault_matrix_keeps_committed_secondary_state() {
     let cases = [
         MatrixCase {
             name: "primary-superblock-before-write",
@@ -1090,8 +1087,8 @@ fn simplefs_primary_superblock_fault_matrix_keeps_committed_secondary_state() {
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+        let volume = PyroFsVolume::new(fs);
         let committed_path = format!("/committed-matrix-{index:02}");
         assert_eq!(
             volume.create_dir(&committed_path),
@@ -1100,8 +1097,8 @@ fn simplefs_primary_superblock_fault_matrix_keeps_committed_secondary_state() {
             case.name
         );
 
-        let reopened = SimpleFs::open(device, true).expect("reopen mirrored simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen mirrored pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         let anchor = volume
             .lookup("/stable/anchor.txt")
             .expect("lookup stable anchor");
@@ -1118,7 +1115,7 @@ fn simplefs_primary_superblock_fault_matrix_keeps_committed_secondary_state() {
 }
 
 #[test]
-fn simplefs_data_region_fault_matrix_preserves_visible_file_contents() {
+fn pyrofs_data_region_fault_matrix_preserves_visible_file_contents() {
     let cases = [
         MatrixCase {
             name: "data-region-before-write",
@@ -1147,8 +1144,8 @@ fn simplefs_data_region_fault_matrix_preserves_visible_file_contents() {
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+        let volume = PyroFsVolume::new(fs);
         let anchor = volume
             .lookup("/stable/anchor.txt")
             .expect("lookup stable anchor");
@@ -1171,8 +1168,8 @@ fn simplefs_data_region_fault_matrix_preserves_visible_file_contents() {
             );
         }
 
-        let reopened = SimpleFs::open(device, true).expect("reopen stable simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen stable pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         let anchor = volume
             .lookup("/stable/anchor.txt")
             .expect("lookup stable anchor after reopen");
@@ -1188,7 +1185,7 @@ fn simplefs_data_region_fault_matrix_preserves_visible_file_contents() {
 }
 
 #[test]
-fn simplefs_metadata_fault_sequence_survives_repeated_shadow_slot_failures() {
+fn pyrofs_metadata_fault_sequence_survives_repeated_shadow_slot_failures() {
     let device = build_stable_device();
     let layout = load_current_layout(&*device).expect("read current layout");
     let failing = FaultInjectingBlockDevice::new_sequence(
@@ -1215,8 +1212,8 @@ fn simplefs_metadata_fault_sequence_survives_repeated_shadow_slot_failures() {
         ],
     );
 
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
     let pending_path = "/pending-sequence";
 
     assert_eq!(
@@ -1238,13 +1235,13 @@ fn simplefs_metadata_fault_sequence_survives_repeated_shadow_slot_failures() {
         .expect("third attempt should succeed after planned failures");
     assert!(volume.lookup(pending_path).is_ok());
 
-    let reopened = SimpleFs::open(device, true).expect("reopen stable simplefs");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen stable pyrofs");
+    let volume = PyroFsVolume::new(reopened);
     assert!(volume.lookup(pending_path).is_ok());
 }
 
 #[test]
-fn simplefs_fault_sequence_recovers_across_data_then_publish_failures() {
+fn pyrofs_fault_sequence_recovers_across_data_then_publish_failures() {
     let device = build_stable_device();
     let layout = load_current_layout(&*device).expect("read current layout");
     let failing = FaultInjectingBlockDevice::new_sequence(
@@ -1271,8 +1268,8 @@ fn simplefs_fault_sequence_recovers_across_data_then_publish_failures() {
         ],
     );
 
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     let anchor = volume
         .lookup("/stable/anchor.txt")
@@ -1304,8 +1301,8 @@ fn simplefs_fault_sequence_recovers_across_data_then_publish_failures() {
         "mutated-state".len()
     );
 
-    let reopened = SimpleFs::open(device, true).expect("reopen stable simplefs");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen stable pyrofs");
+    let volume = PyroFsVolume::new(reopened);
     let anchor = volume
         .lookup("/stable/anchor.txt")
         .expect("lookup mutated anchor after reopen");
@@ -1330,7 +1327,7 @@ fn simplefs_fault_sequence_recovers_across_data_then_publish_failures() {
 /// returned an error.  The set-xattr is visible after reopening there, and
 /// that is what the case asserts.
 #[test]
-fn simplefs_v4_xattr_fault_matrix_preserves_last_stable_state() {
+fn pyrofs_v4_xattr_fault_matrix_preserves_last_stable_state() {
     // `(name, stage, fault write number within the target, mode, committed)`.
     const CASES: &[(&str, MatrixStage, usize, FaultMode, bool)] = &[
         (
@@ -1378,8 +1375,8 @@ fn simplefs_v4_xattr_fault_matrix_preserves_last_stable_state() {
             build_v4_stable_anchor_device("v4-fault-matrix", "v4-matrix", 256, 512, 64, 1024);
         let layout = load_v4_layout(&*device).expect("read v4 layout");
         let anchor_bytes = {
-            let fs = SimpleFs::open(device.clone(), true).expect("open stable v4 simplefs");
-            let volume = SimpleFsVolume::new(fs);
+            let fs = PyroFs::open(device.clone(), true).expect("open stable v4 pyrofs");
+            let volume = PyroFsVolume::new(fs);
             assert!(
                 volume
                     .get_xattr("/stable/anchor.txt", XATTR_NAME)
@@ -1401,7 +1398,7 @@ fn simplefs_v4_xattr_fault_matrix_preserves_last_stable_state() {
             },
         );
 
-        let fs = SimpleFs::open(failing, true).expect("open failing v4 simplefs");
+        let fs = PyroFs::open(failing, true).expect("open failing v4 pyrofs");
         let result =
             fs.transaction(|ctx| ctx.set_xattr("/stable/anchor.txt", XATTR_NAME, XATTR_VALUE));
         assert_eq!(
@@ -1412,7 +1409,7 @@ fn simplefs_v4_xattr_fault_matrix_preserves_last_stable_state() {
 
         // The in-memory volume never saw the commit's state swap, so it
         // reports the pre-commit xattr state whichever mirror the disk holds.
-        let volume = SimpleFsVolume::new(fs);
+        let volume = PyroFsVolume::new(fs);
         assert!(
             volume
                 .get_xattr("/stable/anchor.txt", XATTR_NAME)
@@ -1423,8 +1420,8 @@ fn simplefs_v4_xattr_fault_matrix_preserves_last_stable_state() {
 
         // On disk, the answer depends on how far the commit got: the two
         // mirror writes are what decide whether it is durable.
-        let reopened = SimpleFs::open(device, true).expect("reopen v4 simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen v4 pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         let anchor = volume
             .lookup("/stable/anchor.txt")
             .expect("lookup anchor after reopen");

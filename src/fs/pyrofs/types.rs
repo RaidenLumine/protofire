@@ -1,4 +1,4 @@
-//! src/fs/simplefs/types.rs
+//! src/fs/pyrofs/types.rs
 //!
 //! Pure type definitions — format version, on-disk structures, builder types,
 //! and runtime health metadata.
@@ -19,7 +19,7 @@ use super::super::block::BLOCK_SIZE;
 use super::constants::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum SimpleFsFormatVersion {
+pub(crate) enum PyroFsFormatVersion {
     V2,
     V3PersistentSecurityDescriptors,
     /// V4 builds on V3 (persistent security descriptors + two-phase commit)
@@ -29,14 +29,14 @@ pub(crate) enum SimpleFsFormatVersion {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SimpleFsRuntimeMountPolicy {
+pub enum PyroFsRuntimeMountPolicy {
     Public,
 }
 
-impl SimpleFsRuntimeMountPolicy {
+impl PyroFsRuntimeMountPolicy {
     pub(crate) const fn supports_format(
         self,
-        format_version: SimpleFsFormatVersion,
+        format_version: PyroFsFormatVersion,
         device_read_only: bool,
     ) -> bool {
         match self {
@@ -65,7 +65,7 @@ impl OnDiskPersistentSecurityDescriptor {
     }
 }
 
-impl SimpleFsFormatVersion {
+impl PyroFsFormatVersion {
     pub(crate) const fn on_disk_value(self) -> u32 {
         match self {
             Self::V2 => 2,
@@ -115,7 +115,7 @@ impl SimpleFsFormatVersion {
     pub(crate) fn ensure_runtime_mount_supported(
         self,
         device_read_only: bool,
-        mount_policy: SimpleFsRuntimeMountPolicy,
+        mount_policy: PyroFsRuntimeMountPolicy,
     ) -> Result<()> {
         if mount_policy.supports_format(self, device_read_only) {
             Ok(())
@@ -340,7 +340,7 @@ impl SimpleFsFormatVersion {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ParsedSuperblock {
-    pub(crate) format_version: SimpleFsFormatVersion,
+    pub(crate) format_version: PyroFsFormatVersion,
     pub(crate) record: SuperblockRecord,
 }
 

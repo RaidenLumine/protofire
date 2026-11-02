@@ -1,4 +1,4 @@
-//! src/fs/simplefs/xattr.rs
+//! src/fs/pyrofs/xattr.rs
 //!
 //! Persistent extended-attribute (xattr) table operations for V4 volumes.
 //!
@@ -17,12 +17,12 @@ use crate::Result;
 
 use super::constants::*;
 use super::types::*;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 
-impl SimpleFs {
+impl PyroFs {
     /// Index of the live xattr record for `(inode_index, name)`, if any.
-    fn find_live_xattr(state: &SimpleFsState, inode_index: usize, name: &[u8]) -> Option<usize> {
+    fn find_live_xattr(state: &PyroFsState, inode_index: usize, name: &[u8]) -> Option<usize> {
         state.xattrs.iter().position(|record| {
             record.status == XATTR_STATUS_LIVE
                 && record.inode_index as usize == inode_index
@@ -35,7 +35,7 @@ impl SimpleFs {
     /// existing live record in place.  Runs inside a metadata transaction.
     pub(crate) fn set_xattr_for_inode(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         inode_index: usize,
         name: &[u8],
         value: &[u8],
@@ -97,7 +97,7 @@ impl SimpleFs {
     /// Return the value of an xattr, or `None` when it is not present.
     pub(crate) fn get_xattr_for_inode(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         inode_index: usize,
         name: &[u8],
     ) -> Result<Option<Vec<u8>>> {
@@ -113,7 +113,7 @@ impl SimpleFs {
     /// attribute does not exist.
     pub(crate) fn remove_xattr_for_inode(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         inode_index: usize,
         name: &[u8],
     ) -> Result<()> {
@@ -133,7 +133,7 @@ impl SimpleFs {
     /// List all live xattrs attached to an inode.
     pub(crate) fn list_xattrs_for_inode(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         inode_index: usize,
     ) -> Vec<XattrEntry> {
         state
@@ -152,7 +152,7 @@ impl SimpleFs {
     }
 
     /// Mark every xattr attached to `inode_index` deleted (inode removal).
-    pub(crate) fn mark_inode_xattrs_deleted(&self, state: &mut SimpleFsState, inode_index: usize) {
+    pub(crate) fn mark_inode_xattrs_deleted(&self, state: &mut PyroFsState, inode_index: usize) {
         let indices: Vec<usize> = state
             .xattrs
             .iter()
@@ -185,11 +185,11 @@ impl SimpleFs {
 /// there rather than answering `Ok` for something it cannot keep — the read
 /// side still answers, because a record parsed from a V4 volume may carry the
 /// bits even when this driver cannot set them.
-impl SimpleFs {
+impl PyroFs {
     /// The flags a node's inode carries, as `FILE_FLAG_*`.
     pub(crate) fn file_flags_for_inode(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         inode_index: usize,
     ) -> Result<u32> {
         let inode = state
@@ -213,7 +213,7 @@ impl SimpleFs {
     /// call worked.
     pub(crate) fn set_file_flags_for_inode(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         inode_index: usize,
         set: u32,
         clear: u32,

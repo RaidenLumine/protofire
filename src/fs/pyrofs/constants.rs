@@ -1,9 +1,9 @@
-//! src/fs/simplefs/constants.rs
+//! src/fs/pyrofs/constants.rs
 //!
-//! Superblock and table geometry constants for the on-disk SimpleFs layout.
+//! Superblock and table geometry constants for the on-disk PyroFs layout.
 
-// Superblock and table geometry constants for the on-disk SimpleFs layout.
-pub(crate) const MAGIC: &[u8; 8] = b"ADAFS1\0\0";
+// Superblock and table geometry constants for the on-disk PyroFs layout.
+pub(crate) const MAGIC: &[u8; 8] = b"PYROFS1\0";
 pub(crate) const PRIMARY_SUPERBLOCK_BLOCK: usize = 0;
 pub(crate) const SECONDARY_SUPERBLOCK_BLOCK: usize = 1;
 pub(crate) const SUPERBLOCK_LABEL_OFFSET: usize = 64;

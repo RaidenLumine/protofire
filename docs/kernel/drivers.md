@@ -293,7 +293,7 @@ monitor, and asserts the shell's answer — the key is a HID report, the report
 is a transfer event, and the event ring's own MSI-X vector is what carries it —
 and attaches a **disk** beside it whose first sector carries a pattern the
 driver reads back; `make check-x8664-usb-disk` goes further and boots the
-host's own SimpleFs image on a USB disk, reads enough of it to wrap the rings,
+host's own PyroFs image on a USB disk, reads enough of it to wrap the rings,
 loads a program out of it, and checks on the host that the guest's writes
 reached the image; and `make check-x8664-usb-hotplug` moves a device on and off
 a hub's port after the boot, and a device out of and into a root port, which is

@@ -451,7 +451,7 @@ fn fuzz_fs_volume_opens() {
     use protofire::fs::iso9660::Iso9660Volume;
     use protofire::fs::ntfs::NtfsFs;
     use protofire::fs::partition::read_partitions;
-    use protofire::fs::simplefs::SimpleFs;
+    use protofire::fs::pyrofs::PyroFs;
     use protofire::fs::squashfs::SquashfsVolume;
     use protofire::fs::xfs::XfsVolume;
 
@@ -475,7 +475,7 @@ fn fuzz_fs_volume_opens() {
         let _ = NtfsFs::new(dev.clone());
         let _ = SquashfsVolume::open(dev.clone());
         let _ = Iso9660Volume::open(dev.clone());
-        let _ = SimpleFs::open(dev.clone(), false);
+        let _ = PyroFs::open(dev.clone(), false);
         let _ = XfsVolume::open(dev.clone());
         // The partition table is read before any of them: an MBR or GPT with
         // nonsense in it is what a filesystem parser is handed.

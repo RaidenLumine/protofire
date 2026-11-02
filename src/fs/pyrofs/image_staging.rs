@@ -1,4 +1,4 @@
-//! src/fs/simplefs/image_staging.rs
+//! src/fs/pyrofs/image_staging.rs
 //!
 //! Image building (for mkfs-like creation) and staging area management.
 
@@ -19,11 +19,11 @@ use super::constants::*;
 use super::free_fns::*;
 use super::types::*;
 use super::ImageEntry;
-use super::SimpleFs;
+use super::PyroFs;
 
 // ── Image building ────────────────────────────────────────────────────
 
-impl SimpleFs {
+impl PyroFs {
     pub fn build_image(label: &str, files: &[ImageEntry<'_>]) -> Result<Vec<u8>> {
         Self::build_image_with_headroom(label, files, 0, 0, 0)
     }
@@ -41,7 +41,7 @@ impl SimpleFs {
             extra_inodes,
             extra_dir_entries,
             extra_data_blocks,
-            SimpleFsFormatVersion::V2,
+            PyroFsFormatVersion::V2,
             0,
         )
     }
@@ -63,7 +63,7 @@ impl SimpleFs {
             extra_inodes,
             extra_dir_entries,
             extra_data_blocks,
-            SimpleFsFormatVersion::V4PersistentSecurityDescriptorsWithXattrs,
+            PyroFsFormatVersion::V4PersistentSecurityDescriptorsWithXattrs,
             extra_xattrs,
         )
     }
@@ -74,7 +74,7 @@ impl SimpleFs {
         extra_inodes: usize,
         extra_dir_entries: usize,
         extra_data_blocks: usize,
-        format_version: SimpleFsFormatVersion,
+        format_version: PyroFsFormatVersion,
         extra_xattr_capacity: usize,
     ) -> Result<Vec<u8>> {
         let nodes = build_nodes(files)?;
@@ -271,7 +271,7 @@ impl SimpleFs {
 // ── Staging area ──────────────────────────────────────────────────────
 
 pub struct StagingArea {
-    fs: Arc<SimpleFs>,
+    fs: Arc<PyroFs>,
     staging_root: String,
 }
 
@@ -280,7 +280,7 @@ impl StagingArea {
     ///
     /// The staging root directory is created if it does not already exist.
     /// Returns an error if `staging_root` is `/` or empty.
-    pub fn create(fs: &Arc<SimpleFs>, staging_root: &str) -> Result<Self> {
+    pub fn create(fs: &Arc<PyroFs>, staging_root: &str) -> Result<Self> {
         if staging_root.is_empty() || staging_root == "/" {
             return Err(Error::InvalidArgument);
         }
@@ -432,7 +432,7 @@ impl StagingArea {
 /// version permanent) or [`rollback`](VersionSwitch::rollback) (swap the
 /// backup back into place, undoing the publish).
 pub struct VersionSwitch {
-    fs: Arc<SimpleFs>,
+    fs: Arc<PyroFs>,
     target: String,
     backup_path: String,
     backup_exists: bool,

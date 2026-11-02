@@ -1,6 +1,6 @@
-//! src/fs/simplefs/mod.rs
+//! src/fs/pyrofs/mod.rs
 //!
-//! SimpleFs — on-disk format parser, validator, and runtime file/directory
+//! PyroFs — on-disk format parser, validator, and runtime file/directory
 //! operations.
 
 use alloc::collections::BTreeMap;
@@ -17,7 +17,7 @@ use super::filesystem::profiler::FsProfiler;
 #[allow(dead_code)] // wired for compilation; the read/write path consumes it later (see types.rs)
 pub(crate) mod compression;
 pub(crate) mod constants;
-#[allow(dead_code)] // wired for compilation; complements the inline dedup pool in SimpleFsState
+#[allow(dead_code)] // wired for compilation; complements the inline dedup pool in PyroFsState
 pub(crate) mod dedup;
 pub(crate) mod dir_ops;
 pub(crate) mod extent_repair;
@@ -39,7 +39,7 @@ pub(crate) mod xattr;
 // Types imported via pub(crate) use types::* below.
 pub(crate) use types::OnDiskDirEntry;
 pub(crate) use types::OnDiskInode;
-pub(crate) use types::SimpleFsFormatVersion;
+pub(crate) use types::PyroFsFormatVersion;
 pub(crate) use types::XattrRecord;
 
 // ── Core struct definitions ──
@@ -76,7 +76,7 @@ pub(crate) struct UndoLog {
 }
 
 #[derive(Clone)]
-pub(crate) struct SimpleFsState {
+pub(crate) struct PyroFsState {
     inodes: Vec<OnDiskInode>,
     dir_entries: Vec<OnDiskDirEntry>,
     active_inode_table_block: usize,
@@ -114,12 +114,12 @@ pub(crate) struct SimpleFsState {
     open_handles: BTreeMap<usize, usize>,
 }
 
-pub struct SimpleFs {
+pub struct PyroFs {
     label: String,
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     device: Arc<dyn BlockDevice>,
     cache: BlockCache,
-    state: Mutex<SimpleFsState>,
+    state: Mutex<PyroFsState>,
     case_sensitive: bool,
     inode_table_blocks: usize,
     dirent_table_blocks: usize,
@@ -133,18 +133,18 @@ pub struct SimpleFs {
     xattr_capacity: usize,
 }
 
-impl Drop for SimpleFs {
+impl Drop for PyroFs {
     fn drop(&mut self) {
         let _ = self.cache.flush();
     }
 }
 
-pub struct SimpleFsVolume {
-    inner: Arc<SimpleFs>,
+pub struct PyroFsVolume {
+    inner: Arc<PyroFs>,
 }
 
 struct SimpleVNode {
-    fs: Arc<SimpleFs>,
+    fs: Arc<PyroFs>,
     inode_index: usize,
     name: String,
 }

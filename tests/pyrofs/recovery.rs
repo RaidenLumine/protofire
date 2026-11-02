@@ -1,6 +1,6 @@
-//! tests/simplefs/recovery.rs
+//! tests/pyrofs/recovery.rs
 //!
-//! Host-side recovery and long-sequence regression tests for writable SimpleFs
+//! Host-side recovery and long-sequence regression tests for writable PyroFs
 //! behavior.
 
 mod support;
@@ -13,8 +13,8 @@ use std::sync::Mutex;
 use protofire::fs::block::BlockDevice;
 use protofire::fs::block::MemoryBlockDevice;
 use protofire::fs::block::BLOCK_SIZE;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::fs::vfs::VolumeCheckReport;
 use protofire::Error;
@@ -36,7 +36,7 @@ fn writable_image(
     extra_data_blocks: usize,
 ) -> Vec<u8> {
     build_seed_image(
-        "recovery-simplefs",
+        "recovery-pyrofs",
         extra_inodes,
         extra_dir_entries,
         extra_data_blocks,
@@ -86,14 +86,14 @@ fn shadow_dirent_table_block(device: &dyn BlockDevice, superblock_lba: u64) -> u
     )
 }
 
-fn ensure_dir(volume: &SimpleFsVolume, path: &str) {
+fn ensure_dir(volume: &PyroFsVolume, path: &str) {
     match volume.create_dir(path) {
         Ok(()) | Err(Error::AlreadyExists) => {}
         Err(error) => panic!("create dir {path}: {error:?}"),
     }
 }
 
-fn collect_dir_names(volume: &SimpleFsVolume, path: &str) -> Vec<String> {
+fn collect_dir_names(volume: &PyroFsVolume, path: &str) -> Vec<String> {
     let mut entries = Vec::new();
     let mut index = 0;
     while let Ok(entry) = volume.read_dir(path, index) {
@@ -117,14 +117,14 @@ fn patterned_payload(round: usize) -> Vec<u8> {
 }
 
 fn build_stable_device() -> Arc<MemoryBlockDevice> {
-    build_stable_anchor_device("simplefs-recovery", "recovery-simplefs", 48, 64, 16)
+    build_stable_anchor_device("pyrofs-recovery", "recovery-pyrofs", 48, 64, 16)
 }
 
 fn build_device_with_removable_file() -> Arc<MemoryBlockDevice> {
-    let device = MemoryBlockDevice::new("simplefs-recovery", writable_image(64, 96, 16), false);
+    let device = MemoryBlockDevice::new("pyrofs-recovery", writable_image(64, 96, 16), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/trash").expect("create trash");
         let file = volume
             .create_file("/trash/old.bin")
@@ -136,10 +136,10 @@ fn build_device_with_removable_file() -> Arc<MemoryBlockDevice> {
 }
 
 fn build_device_after_rename_remove_sequence() -> Arc<MemoryBlockDevice> {
-    let device = MemoryBlockDevice::new("simplefs-recovery", writable_image(96, 128, 24), false);
+    let device = MemoryBlockDevice::new("pyrofs-recovery", writable_image(96, 128, 24), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/left").expect("create left");
         volume.create_dir("/right").expect("create right");
 
@@ -165,10 +165,10 @@ fn build_device_after_rename_remove_sequence() -> Arc<MemoryBlockDevice> {
 }
 
 fn build_device_after_packed_directory_mutations() -> Arc<MemoryBlockDevice> {
-    let device = MemoryBlockDevice::new("simplefs-recovery", writable_image(96, 128, 64), false);
+    let device = MemoryBlockDevice::new("pyrofs-recovery", writable_image(96, 128, 64), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/bulk").expect("create bulk directory");
 
         for index in 0..40 {
@@ -192,7 +192,7 @@ fn build_device_after_packed_directory_mutations() -> Arc<MemoryBlockDevice> {
     device
 }
 
-fn assert_rename_remove_sequence_state(volume: &SimpleFsVolume) {
+fn assert_rename_remove_sequence_state(volume: &PyroFsVolume) {
     let final_file = volume
         .lookup("/right/final.bin")
         .expect("lookup final payload");
@@ -205,7 +205,7 @@ fn assert_rename_remove_sequence_state(volume: &SimpleFsVolume) {
     assert_eq!(volume.stat("/right").expect("stat right").size, 1);
 }
 
-fn assert_rename_remove_sequence_without_next_file(volume: &SimpleFsVolume) {
+fn assert_rename_remove_sequence_without_next_file(volume: &PyroFsVolume) {
     assert_rename_remove_sequence_state(volume);
     assert!(matches!(
         volume.lookup("/right/next.bin"),
@@ -213,7 +213,7 @@ fn assert_rename_remove_sequence_without_next_file(volume: &SimpleFsVolume) {
     ));
 }
 
-fn assert_packed_directory_mutation_state(volume: &SimpleFsVolume) {
+fn assert_packed_directory_mutation_state(volume: &PyroFsVolume) {
     let mut names = collect_dir_names(volume, "/bulk");
     names.sort();
 
@@ -310,8 +310,8 @@ fn publish_complex_next_file_with_primary_superblock_failure(device: &Arc<Memory
             mode: FaultMode::BeforeWrite,
         },
     );
-    let fs = SimpleFs::open(failing, true).expect("open failing complex simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing complex pyrofs");
+    let volume = PyroFsVolume::new(fs);
     assert!(matches!(
         volume.create_file("/right/next.bin"),
         Err(Error::DeviceError)
@@ -319,8 +319,8 @@ fn publish_complex_next_file_with_primary_superblock_failure(device: &Arc<Memory
 }
 
 fn synchronize_writable_baseline(device: &Arc<MemoryBlockDevice>) {
-    let fs = SimpleFs::open(device.clone(), true).expect("open complex simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open complex pyrofs");
+    let volume = PyroFsVolume::new(fs);
     let baseline = volume
         .check_and_repair()
         .expect("synchronize complex baseline");
@@ -347,16 +347,16 @@ fn assert_complex_shadow_drift_after_rename_remove_sequence<F, S>(
     mutate(&mut block);
     write_block(&*device, shadow_block, &block);
 
-    let reopened = SimpleFs::open(device.clone(), true).expect("reopen with shadow metadata drift");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device.clone(), true).expect("reopen with shadow metadata drift");
+    let volume = PyroFsVolume::new(reopened);
     let report = volume
         .check_and_repair()
         .expect("repair shadow metadata drift");
     assert_eq!(report.repairs_applied, 1);
     assert_eq!(report.checksum_failures, 0);
 
-    let repaired = SimpleFs::open(device, true).expect("reopen repaired complex simplefs");
-    let volume = SimpleFsVolume::new(repaired);
+    let repaired = PyroFs::open(device, true).expect("reopen repaired complex pyrofs");
+    let volume = PyroFsVolume::new(repaired);
     assert_rename_remove_sequence_state(&volume);
 }
 
@@ -376,23 +376,23 @@ fn assert_complex_fallback_after_newer_metadata_corruption<F, S>(
     write_block(&*device, active_block, &block);
 
     let reopened =
-        SimpleFs::open(device.clone(), true).expect("fallback reopen through older complex slot");
-    let volume = SimpleFsVolume::new(reopened);
+        PyroFs::open(device.clone(), true).expect("fallback reopen through older complex slot");
+    let volume = PyroFsVolume::new(reopened);
     assert_rename_remove_sequence_without_next_file(&volume);
 
     let report = volume
         .check_and_repair()
-        .expect("repair fallback-opened complex simplefs state");
+        .expect("repair fallback-opened complex pyrofs state");
     assert_eq!(report.repairs_applied, 2);
     assert_eq!(report.checksum_failures, 0);
 
-    let repaired = SimpleFs::open(device, true).expect("reopen repaired complex simplefs");
-    let volume = SimpleFsVolume::new(repaired);
+    let repaired = PyroFs::open(device, true).expect("reopen repaired complex pyrofs");
+    let volume = PyroFsVolume::new(repaired);
     assert_rename_remove_sequence_without_next_file(&volume);
 }
 
 #[test]
-fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
+fn pyrofs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
     let cases = [
         FaultInjection {
             write_number: 1,
@@ -412,13 +412,13 @@ fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
         let device = build_stable_device();
         let failing = FailingBlockDevice::new(device.clone(), fault);
 
-        let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+        let volume = PyroFsVolume::new(fs);
         let pending_path = format!("/pending-{index}");
         assert_eq!(volume.create_dir(&pending_path), Err(Error::DeviceError));
 
-        let reopened = SimpleFs::open(device, true).expect("reopen stable simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device, true).expect("reopen stable pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         let anchor = volume
             .lookup("/stable/anchor.txt")
             .expect("lookup stable anchor");
@@ -429,7 +429,7 @@ fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
 }
 
 #[test]
-fn simplefs_failed_metadata_commit_rollback_is_visible_without_reopen() {
+fn pyrofs_failed_metadata_commit_rollback_is_visible_without_reopen() {
     let device = build_stable_device();
     let failing = FailingBlockDevice::new(
         device,
@@ -439,8 +439,8 @@ fn simplefs_failed_metadata_commit_rollback_is_visible_without_reopen() {
         },
     );
 
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
     assert_eq!(volume.create_dir("/pending"), Err(Error::DeviceError));
     assert!(matches!(volume.lookup("/pending"), Err(Error::NotFound)));
 
@@ -456,7 +456,7 @@ fn simplefs_failed_metadata_commit_rollback_is_visible_without_reopen() {
 }
 
 #[test]
-fn simplefs_reopen_after_primary_superblock_write_failure_uses_secondary_commit() {
+fn pyrofs_reopen_after_primary_superblock_write_failure_uses_secondary_commit() {
     let device = build_stable_device();
     let failing = FailingBlockDevice::new(
         device.clone(),
@@ -466,18 +466,18 @@ fn simplefs_reopen_after_primary_superblock_write_failure_uses_secondary_commit(
         },
     );
 
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
     assert_eq!(volume.create_dir("/committed"), Err(Error::DeviceError));
 
-    let reopened = SimpleFs::open(device, true).expect("reopen mirrored simplefs");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen mirrored pyrofs");
+    let volume = PyroFsVolume::new(reopened);
     assert!(volume.lookup("/committed").is_ok());
     assert_eq!(volume.stat("/").expect("stat root").size, 3);
 }
 
 #[test]
-fn simplefs_remove_survives_primary_superblock_write_failure() {
+fn pyrofs_remove_survives_primary_superblock_write_failure() {
     let device = build_device_with_removable_file();
 
     let failing = FailingBlockDevice::new(
@@ -487,15 +487,15 @@ fn simplefs_remove_survives_primary_superblock_write_failure() {
             mode: FaultMode::BeforeWrite,
         },
     );
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
     assert_eq!(
         volume.remove_path("/trash/old.bin"),
         Err(Error::DeviceError)
     );
 
-    let reopened = SimpleFs::open(device, true).expect("reopen through secondary delete commit");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen through secondary delete commit");
+    let volume = PyroFsVolume::new(reopened);
     assert!(matches!(
         volume.lookup("/trash/old.bin"),
         Err(Error::NotFound)
@@ -504,7 +504,7 @@ fn simplefs_remove_survives_primary_superblock_write_failure() {
 }
 
 #[test]
-fn simplefs_failed_remove_rollback_is_visible_without_reopen() {
+fn pyrofs_failed_remove_rollback_is_visible_without_reopen() {
     let device = build_device_with_removable_file();
 
     let failing = FailingBlockDevice::new(
@@ -514,8 +514,8 @@ fn simplefs_failed_remove_rollback_is_visible_without_reopen() {
             mode: FaultMode::TornWrite { prefix_len: 96 },
         },
     );
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     assert_eq!(
         volume.remove_path("/trash/old.bin"),
@@ -529,7 +529,7 @@ fn simplefs_failed_remove_rollback_is_visible_without_reopen() {
 }
 
 #[test]
-fn simplefs_reopen_after_failed_remove_keeps_last_stable_state() {
+fn pyrofs_reopen_after_failed_remove_keeps_last_stable_state() {
     let device = build_device_with_removable_file();
     let failing = FailingBlockDevice::new(
         device.clone(),
@@ -538,17 +538,16 @@ fn simplefs_reopen_after_failed_remove_keeps_last_stable_state() {
             mode: FaultMode::TornWrite { prefix_len: 96 },
         },
     );
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     assert_eq!(
         volume.remove_path("/trash/old.bin"),
         Err(Error::DeviceError)
     );
 
-    let reopened =
-        SimpleFs::open(device, true).expect("reopen stable simplefs after failed remove");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen stable pyrofs after failed remove");
+    let volume = PyroFsVolume::new(reopened);
     let file = volume
         .lookup("/trash/old.bin")
         .expect("lookup file after failed remove reopen");
@@ -557,11 +556,11 @@ fn simplefs_reopen_after_failed_remove_keeps_last_stable_state() {
 }
 
 #[test]
-fn simplefs_check_and_repair_reports_single_primary_superblock_drift() {
+fn pyrofs_check_and_repair_reports_single_primary_superblock_drift() {
     let device = build_stable_device();
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open baseline simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open baseline pyrofs");
+        let volume = PyroFsVolume::new(fs);
         let baseline = volume
             .check_and_repair()
             .expect("synchronize writable baseline");
@@ -581,8 +580,8 @@ fn simplefs_check_and_repair_reports_single_primary_superblock_drift() {
 
     corrupt_primary_superblock_checksum(&*device);
 
-    let reopened = SimpleFs::open(device, true).expect("reopen with secondary superblock");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen with secondary superblock");
+    let volume = PyroFsVolume::new(reopened);
     let report = volume
         .check_and_repair()
         .expect("repair single-superblock drift");
@@ -591,7 +590,7 @@ fn simplefs_check_and_repair_reports_single_primary_superblock_drift() {
 }
 
 #[test]
-fn simplefs_check_and_repair_reports_shadow_inode_drift_after_rename_remove_sequence() {
+fn pyrofs_check_and_repair_reports_shadow_inode_drift_after_rename_remove_sequence() {
     let device = build_device_after_rename_remove_sequence();
     assert_complex_shadow_drift_after_rename_remove_sequence(
         device,
@@ -603,7 +602,7 @@ fn simplefs_check_and_repair_reports_shadow_inode_drift_after_rename_remove_sequ
 }
 
 #[test]
-fn simplefs_check_and_repair_reports_shadow_dirent_drift_after_rename_remove_sequence() {
+fn pyrofs_check_and_repair_reports_shadow_dirent_drift_after_rename_remove_sequence() {
     let device = build_device_after_rename_remove_sequence();
     assert_complex_shadow_drift_after_rename_remove_sequence(
         device,
@@ -615,7 +614,7 @@ fn simplefs_check_and_repair_reports_shadow_dirent_drift_after_rename_remove_seq
 }
 
 #[test]
-fn simplefs_check_and_repair_repairs_combined_shadow_slot_drift_after_rename_remove_sequence() {
+fn pyrofs_check_and_repair_repairs_combined_shadow_slot_drift_after_rename_remove_sequence() {
     let device = build_device_after_rename_remove_sequence();
     synchronize_complex_baseline(&device);
 
@@ -629,21 +628,21 @@ fn simplefs_check_and_repair_repairs_combined_shadow_slot_drift_after_rename_rem
     shadow_dirents[8] ^= 0x7f;
     write_block(&*device, shadow_dirent_table, &shadow_dirents);
 
-    let reopened = SimpleFs::open(device.clone(), true).expect("reopen with combined shadow drift");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device.clone(), true).expect("reopen with combined shadow drift");
+    let volume = PyroFsVolume::new(reopened);
     let report = volume
         .check_and_repair()
         .expect("repair combined shadow metadata drift");
     assert_eq!(report.repairs_applied, 1);
     assert_eq!(report.checksum_failures, 0);
 
-    let repaired = SimpleFs::open(device, true).expect("reopen repaired complex simplefs");
-    let volume = SimpleFsVolume::new(repaired);
+    let repaired = PyroFs::open(device, true).expect("reopen repaired complex pyrofs");
+    let volume = PyroFsVolume::new(repaired);
     assert_rename_remove_sequence_state(&volume);
 }
 
 #[test]
-fn simplefs_check_and_repair_repairs_shadow_slot_drift_after_packed_directory_mutations() {
+fn pyrofs_check_and_repair_repairs_shadow_slot_drift_after_packed_directory_mutations() {
     let device = build_device_after_packed_directory_mutations();
     synchronize_writable_baseline(&device);
 
@@ -657,22 +656,21 @@ fn simplefs_check_and_repair_repairs_shadow_slot_drift_after_packed_directory_mu
     shadow_dirents[72] ^= 0x7f;
     write_block(&*device, shadow_dirent_table, &shadow_dirents);
 
-    let reopened =
-        SimpleFs::open(device.clone(), true).expect("reopen with packed-dir shadow drift");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device.clone(), true).expect("reopen with packed-dir shadow drift");
+    let volume = PyroFsVolume::new(reopened);
     let report = volume
         .check_and_repair()
         .expect("repair packed-dir shadow metadata drift");
     assert_eq!(report.repairs_applied, 1);
     assert_eq!(report.checksum_failures, 0);
 
-    let repaired = SimpleFs::open(device, true).expect("reopen repaired packed-dir simplefs");
-    let volume = SimpleFsVolume::new(repaired);
+    let repaired = PyroFs::open(device, true).expect("reopen repaired packed-dir pyrofs");
+    let volume = PyroFsVolume::new(repaired);
     assert_packed_directory_mutation_state(&volume);
 }
 
 #[test]
-fn simplefs_check_and_repair_reports_primary_superblock_and_shadow_dirent_drift_after_complex_sequence(
+fn pyrofs_check_and_repair_reports_primary_superblock_and_shadow_dirent_drift_after_complex_sequence(
 ) {
     let device = build_device_after_rename_remove_sequence();
     synchronize_complex_baseline(&device);
@@ -684,21 +682,21 @@ fn simplefs_check_and_repair_reports_primary_superblock_and_shadow_dirent_drift_
     shadow_dirents[8] ^= 0x7f;
     write_block(&*device, shadow_dirent_table, &shadow_dirents);
 
-    let reopened = SimpleFs::open(device.clone(), true).expect("reopen with combined drift");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device.clone(), true).expect("reopen with combined drift");
+    let volume = PyroFsVolume::new(reopened);
     let report = volume
         .check_and_repair()
         .expect("repair combined superblock and dirent drift");
     assert_eq!(report.repairs_applied, 2);
     assert_eq!(report.checksum_failures, 0);
 
-    let repaired = SimpleFs::open(device, true).expect("reopen repaired complex simplefs");
-    let volume = SimpleFsVolume::new(repaired);
+    let repaired = PyroFs::open(device, true).expect("reopen repaired complex pyrofs");
+    let volume = PyroFsVolume::new(repaired);
     assert_rename_remove_sequence_state(&volume);
 }
 
 #[test]
-fn simplefs_complex_sequence_falls_back_when_newer_active_dirent_is_corrupted() {
+fn pyrofs_complex_sequence_falls_back_when_newer_active_dirent_is_corrupted() {
     let device = build_device_after_rename_remove_sequence();
     assert_complex_fallback_after_newer_metadata_corruption(
         device,
@@ -710,7 +708,7 @@ fn simplefs_complex_sequence_falls_back_when_newer_active_dirent_is_corrupted() 
 }
 
 #[test]
-fn simplefs_complex_sequence_falls_back_when_newer_active_inode_is_corrupted() {
+fn pyrofs_complex_sequence_falls_back_when_newer_active_inode_is_corrupted() {
     let device = build_device_after_rename_remove_sequence();
     assert_complex_fallback_after_newer_metadata_corruption(
         device,
@@ -722,7 +720,7 @@ fn simplefs_complex_sequence_falls_back_when_newer_active_inode_is_corrupted() {
 }
 
 #[test]
-fn simplefs_open_falls_back_to_older_valid_superblock_when_newer_metadata_is_corrupted() {
+fn pyrofs_open_falls_back_to_older_valid_superblock_when_newer_metadata_is_corrupted() {
     let device = build_stable_device();
     let failing = FailingBlockDevice::new(
         device.clone(),
@@ -731,8 +729,8 @@ fn simplefs_open_falls_back_to_older_valid_superblock_when_newer_metadata_is_cor
             mode: FaultMode::BeforeWrite,
         },
     );
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
     assert_eq!(volume.create_dir("/committed"), Err(Error::DeviceError));
 
     let active_inode_table = active_inode_table_block(&*device, 1);
@@ -740,9 +738,8 @@ fn simplefs_open_falls_back_to_older_valid_superblock_when_newer_metadata_is_cor
     active_table[..32].fill(0xff);
     write_block(&*device, active_inode_table, &active_table);
 
-    let reopened =
-        SimpleFs::open(device.clone(), true).expect("fallback reopen through older slot");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device.clone(), true).expect("fallback reopen through older slot");
+    let volume = PyroFsVolume::new(reopened);
     let anchor = volume
         .lookup("/stable/anchor.txt")
         .expect("lookup anchor through fallback state");
@@ -751,12 +748,12 @@ fn simplefs_open_falls_back_to_older_valid_superblock_when_newer_metadata_is_cor
 
     let report = volume
         .check_and_repair()
-        .expect("repair fallback-opened simplefs state");
+        .expect("repair fallback-opened pyrofs state");
     assert_eq!(report.repairs_applied, 2);
     assert_eq!(report.checksum_failures, 0);
 
-    let repaired = SimpleFs::open(device, true).expect("reopen repaired simplefs");
-    let volume = SimpleFsVolume::new(repaired);
+    let repaired = PyroFs::open(device, true).expect("reopen repaired pyrofs");
+    let volume = PyroFsVolume::new(repaired);
     let anchor = volume
         .lookup("/stable/anchor.txt")
         .expect("lookup repaired anchor");
@@ -765,11 +762,11 @@ fn simplefs_open_falls_back_to_older_valid_superblock_when_newer_metadata_is_cor
 }
 
 #[test]
-fn simplefs_failed_rename_rollback_is_visible_without_reopen() {
+fn pyrofs_failed_rename_rollback_is_visible_without_reopen() {
     let device = build_stable_device();
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         let file = volume
             .create_file("/stable/rename-me.txt")
             .expect("create rename source");
@@ -784,8 +781,8 @@ fn simplefs_failed_rename_rollback_is_visible_without_reopen() {
             mode: FaultMode::TornWrite { prefix_len: 96 },
         },
     );
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     assert_eq!(
         volume.rename("/stable/rename-me.txt", "/stable/renamed.txt"),
@@ -799,11 +796,11 @@ fn simplefs_failed_rename_rollback_is_visible_without_reopen() {
 }
 
 #[test]
-fn simplefs_cross_directory_rename_survives_primary_superblock_write_failure() {
-    let device = MemoryBlockDevice::new("simplefs-recovery", writable_image(64, 96, 16), false);
+fn pyrofs_cross_directory_rename_survives_primary_superblock_write_failure() {
+    let device = MemoryBlockDevice::new("pyrofs-recovery", writable_image(64, 96, 16), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/left").expect("create left");
         volume.create_dir("/right").expect("create right");
         let file = volume
@@ -820,15 +817,15 @@ fn simplefs_cross_directory_rename_survives_primary_superblock_write_failure() {
             mode: FaultMode::BeforeWrite,
         },
     );
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
     assert_eq!(
         volume.rename("/left/payload.bin", "/right/final.bin"),
         Err(Error::DeviceError)
     );
 
-    let reopened = SimpleFs::open(device, true).expect("reopen through secondary commit");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen through secondary commit");
+    let volume = PyroFsVolume::new(reopened);
     assert!(matches!(
         volume.lookup("/left/payload.bin"),
         Err(Error::NotFound)
@@ -842,15 +839,15 @@ fn simplefs_cross_directory_rename_survives_primary_superblock_write_failure() {
 }
 
 #[test]
-fn simplefs_long_mutation_sequence_survives_reopen_cycles() {
-    let device = MemoryBlockDevice::new("simplefs-recovery", writable_image(160, 192, 96), false);
+fn pyrofs_long_mutation_sequence_survives_reopen_cycles() {
+    let device = MemoryBlockDevice::new("pyrofs-recovery", writable_image(160, 192, 96), false);
     let mut expected_files = BTreeMap::new();
     let mut removed_paths = BTreeSet::new();
 
     for round in 0..12 {
         {
-            let fs = SimpleFs::open(device.clone(), true).expect("open mutable simplefs");
-            let volume = SimpleFsVolume::new(fs);
+            let fs = PyroFs::open(device.clone(), true).expect("open mutable pyrofs");
+            let volume = PyroFsVolume::new(fs);
             ensure_dir(&volume, "/staging");
             ensure_dir(&volume, "/archive");
             ensure_dir(&volume, "/history");
@@ -889,8 +886,8 @@ fn simplefs_long_mutation_sequence_survives_reopen_cycles() {
             }
         }
 
-        let reopened = SimpleFs::open(device.clone(), true).expect("reopen mutable simplefs");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device.clone(), true).expect("reopen mutable pyrofs");
+        let volume = PyroFsVolume::new(reopened);
         assert_eq!(volume.stat("/staging").expect("stat staging").size, 0);
 
         let expected_archive = expected_files
@@ -925,7 +922,7 @@ fn simplefs_long_mutation_sequence_survives_reopen_cycles() {
 }
 
 #[test]
-fn simplefs_torn_data_write_does_not_escape_without_metadata_commit() {
+fn pyrofs_torn_data_write_does_not_escape_without_metadata_commit() {
     let device = build_stable_device();
     let failing = FailingBlockDevice::new(
         device.clone(),
@@ -937,8 +934,8 @@ fn simplefs_torn_data_write_does_not_escape_without_metadata_commit() {
         },
     );
 
-    let fs = SimpleFs::open(failing, true).expect("open failing simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(failing, true).expect("open failing pyrofs");
+    let volume = PyroFsVolume::new(fs);
     let anchor = volume
         .lookup("/stable/anchor.txt")
         .expect("lookup stable anchor");
@@ -948,8 +945,8 @@ fn simplefs_torn_data_write_does_not_escape_without_metadata_commit() {
         .expect("relookup stable anchor after failed overwrite");
     assert_eq!(read_all(&*anchor), b"stable-state");
 
-    let reopened = SimpleFs::open(device, true).expect("reopen after torn data write");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen after torn data write");
+    let volume = PyroFsVolume::new(reopened);
     let anchor = volume
         .lookup("/stable/anchor.txt")
         .expect("lookup stable anchor");
@@ -957,7 +954,7 @@ fn simplefs_torn_data_write_does_not_escape_without_metadata_commit() {
 }
 
 #[test]
-fn simplefs_check_and_repair_detects_orphan_data_blocks_after_content_replace() {
+fn pyrofs_check_and_repair_detects_orphan_data_blocks_after_content_replace() {
     let image = build_seed_image(
         "orphan-detect",
         4, // extra inodes
@@ -965,8 +962,8 @@ fn simplefs_check_and_repair_detects_orphan_data_blocks_after_content_replace() 
         8, // extra data blocks — gives room for new allocation on content replace
     );
     let device = MemoryBlockDevice::new("orphan-detect-dev", image, false);
-    let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     // Before any mutation the volume should be clean.
     let initial = volume.check_and_repair().expect("initial check_and_repair");
@@ -974,7 +971,7 @@ fn simplefs_check_and_repair_detects_orphan_data_blocks_after_content_replace() 
     assert_eq!(volume.count_orphan_data_blocks(), 0);
 
     // Replace file contents — the old data block becomes an orphan because
-    // SimpleFs allocates a new block for the replacement content without
+    // PyroFs allocates a new block for the replacement content without
     // reclaiming the previous one.
     let seed = volume.lookup("/seed.txt").expect("lookup seed");
     let written = seed
@@ -990,9 +987,9 @@ fn simplefs_check_and_repair_detects_orphan_data_blocks_after_content_replace() 
 }
 
 #[test]
-fn simplefs_orphan_blocks_reclaimed_after_repair_are_allocatable() {
+fn pyrofs_orphan_blocks_reclaimed_after_repair_are_allocatable() {
     // Use extra data blocks so the old extent becomes an orphan when the file
-    // content is replaced (SimpleFs allocates a new extent for the overwrite).
+    // content is replaced (PyroFs allocates a new extent for the overwrite).
     let image = build_seed_image(
         "orphan-reclaim",
         4, // extra inodes
@@ -1000,8 +997,8 @@ fn simplefs_orphan_blocks_reclaimed_after_repair_are_allocatable() {
         8, // extra data blocks
     );
     let device = MemoryBlockDevice::new("orphan-reclaim-dev", image, false);
-    let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs.clone());
+    let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs.clone());
 
     // Replace file contents — the old data block becomes an orphan.
     let seed = volume.lookup("/seed.txt").expect("lookup seed");
@@ -1046,8 +1043,8 @@ fn simplefs_orphan_blocks_reclaimed_after_repair_are_allocatable() {
     // Reopen the volume to confirm the reclaimed file persisted correctly.
     drop(volume);
     drop(fs);
-    let fs = SimpleFs::open(device, true).expect("reopen after repair");
-    let volume2 = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device, true).expect("reopen after repair");
+    let volume2 = PyroFsVolume::new(fs);
 
     // The reclaimed file should still exist with correct content.
     let reclaimed = volume2
@@ -1058,11 +1055,11 @@ fn simplefs_orphan_blocks_reclaimed_after_repair_are_allocatable() {
 }
 
 #[test]
-fn simplefs_check_data_integrity_detects_corrupted_data_block() {
+fn pyrofs_check_data_integrity_detects_corrupted_data_block() {
     let image = build_seed_image("integrity-check", 4, 8, 8);
     let device = MemoryBlockDevice::new("integrity-check-dev", image, false);
-    let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     // Write to the seed file so a non-zero checksum is stored.
     let seed = volume.lookup("/seed.txt").expect("lookup seed");
@@ -1112,7 +1109,7 @@ fn simplefs_check_data_integrity_detects_corrupted_data_block() {
 }
 
 #[test]
-fn simplefs_crash_during_content_replace_recovers_consistent_state_on_reopen() {
+fn pyrofs_crash_during_content_replace_recovers_consistent_state_on_reopen() {
     let device = build_stable_device();
 
     // Trace through replace_file_contents_transactionally + flush_metadata for
@@ -1137,9 +1134,9 @@ fn simplefs_crash_during_content_replace_recovers_consistent_state_on_reopen() {
         };
         let failing = FailingBlockDevice::new(device.clone(), fault);
 
-        let fs = SimpleFs::open(failing, true)
+        let fs = PyroFs::open(failing, true)
             .unwrap_or_else(|err| panic!("open failing at write#{write_number}: {err:?}"));
-        let volume = SimpleFsVolume::new(fs);
+        let volume = PyroFsVolume::new(fs);
         let anchor = volume
             .lookup("/stable/anchor.txt")
             .expect("lookup anchor at write#{write_number}");
@@ -1149,9 +1146,9 @@ fn simplefs_crash_during_content_replace_recovers_consistent_state_on_reopen() {
         // Reopen on the stable device and verify the filesystem is usable.
         drop(volume);
         drop(anchor);
-        let reopened = SimpleFs::open(device.clone(), true)
+        let reopened = PyroFs::open(device.clone(), true)
             .unwrap_or_else(|err| panic!("reopen after crash at write#{write_number}: {err:?}"));
-        let volume = SimpleFsVolume::new(reopened);
+        let volume = PyroFsVolume::new(reopened);
         let anchor = volume.lookup("/stable/anchor.txt").unwrap_or_else(|err| {
             panic!("relookup anchor after crash at write#{write_number}: {err:?}")
         });

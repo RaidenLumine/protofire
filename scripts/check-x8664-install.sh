@@ -197,8 +197,8 @@ require_log_line() {
 # the zones the install had just put there — which is the read path over the
 # install's own writes.
 require_log_line "[driver] detected boot disk: nvme0"
-require_log_line "[fs    ] mounted GPT-partitioned SimpleFs volumes from ATA boot disk"
-if grep -F "[fs    ] failed to mount SimpleFs volumes from ATA boot disk" "$log" >/dev/null 2>&1; then
+require_log_line "[fs    ] mounted GPT-partitioned PyroFs volumes from ATA boot disk"
+if grep -F "[fs    ] failed to mount PyroFs volumes from ATA boot disk" "$log" >/dev/null 2>&1; then
     fail "the installed disk did not mount"
 fi
 # The system zone is the **pair** the install wrote: the boot selected the
@@ -360,7 +360,7 @@ case "$status" in
 esac
 log="$blank_log"
 require_log_line "[driver] detected boot disk: nvme0"
-require_log_line "[fs    ] mounted GPT-partitioned SimpleFs volumes from ATA boot disk"
+require_log_line "[fs    ] mounted GPT-partitioned PyroFs volumes from ATA boot disk"
 require_log_line "[fs    ] system: slot b active (build 2)"
 require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
 require_log_line "install-check-answered"
@@ -412,10 +412,10 @@ esac
 log="$foreign_log"
 require_log_line "[driver] detected boot disk: nvme0"
 require_log_line "[fs    ] the boot disk carries a partition table that names no zone of this kernel's; left alone"
-require_log_line "[fs    ] mounted in-memory demo SimpleFs volumes"
+require_log_line "[fs    ] mounted in-memory demo PyroFs volumes"
 # And the fixed offsets were *not* read: that line is the defect this section
 # exists for, and it is exactly what the boot printed before the change.
-if grep -F "[fs    ] mounted fixed-zone SimpleFs volumes from ATA boot disk" "$foreign_log" >/dev/null 2>&1; then
+if grep -F "[fs    ] mounted fixed-zone PyroFs volumes from ATA boot disk" "$foreign_log" >/dev/null 2>&1; then
     fail "the boot read the fixed offsets over a stranger's table"
 fi
 
@@ -461,8 +461,8 @@ require_log_line "[driver] detected boot disk: nvme0"
 # The fixed-zone route is the discriminator: the in-memory demo volumes print
 # a different line, and the boot must have mounted the disk's own zones.  The
 # `system: slot ...` line is the partition path's and is correctly absent here.
-require_log_line "[fs    ] mounted fixed-zone SimpleFs volumes from ATA boot disk"
-if grep -F "[fs    ] mounted in-memory demo SimpleFs volumes" "$table_less_log" >/dev/null 2>&1; then
+require_log_line "[fs    ] mounted fixed-zone PyroFs volumes from ATA boot disk"
+if grep -F "[fs    ] mounted in-memory demo PyroFs volumes" "$table_less_log" >/dev/null 2>&1; then
     fail "the table-less disk fell through to the in-memory demo volumes"
 fi
 

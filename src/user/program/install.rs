@@ -950,8 +950,8 @@ mod tests {
     use super::package::STAGE_VERIFY;
     use super::*;
     use crate::fs::block::MemoryBlockDevice;
-    use crate::fs::simplefs::SimpleFs;
-    use crate::fs::simplefs::SimpleFsVolume;
+    use crate::fs::pyrofs::PyroFs;
+    use crate::fs::pyrofs::PyroFsVolume;
     use crate::kernel::sync::Mutex;
     use crate::user::program::catalog::read_program_image;
     use crate::user::program::catalog::write_entire_file;
@@ -961,7 +961,7 @@ mod tests {
     use crate::user::program::metadata::parse_launch_manifest;
 
     /// A filesystem with the three zones the install path uses, each a writable
-    /// SimpleFs volume of its own.
+    /// PyroFs volume of its own.
     ///
     /// The zones are the production filesystem rather than a mock because the
     /// switch the install ends with is the filesystem's own primitive: a
@@ -979,11 +979,11 @@ mod tests {
                     // Headroom, because the install writes into these zones:
                     // a volume sized for nothing but its own superblock has no
                     // inode to put a package in.
-                    let image = SimpleFs::build_image_with_headroom(name, &[], 64, 128, 512)
+                    let image = PyroFs::build_image_with_headroom(name, &[], 64, 128, 512)
                         .expect("build a writable zone image");
                     let device = MemoryBlockDevice::new(name, image, false);
-                    let volume = SimpleFs::open(device, true).expect("open the zone");
-                    fs_guard.register(name, Arc::new(SimpleFsVolume::new(volume)));
+                    let volume = PyroFs::open(device, true).expect("open the zone");
+                    fs_guard.register(name, Arc::new(PyroFsVolume::new(volume)));
                     fs_guard
                         .mount(&format!("/dev/{name}"), path, name, 0)
                         .expect("mount the zone");

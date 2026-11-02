@@ -8,9 +8,9 @@ use std::sync::Arc;
 use protofire::fs::block::BlockDevice;
 use protofire::fs::block::MemoryBlockDevice;
 use protofire::fs::block::BLOCK_SIZE;
-use protofire::fs::simplefs::ImageEntry;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::ImageEntry;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::StaticFileSystem;
 use protofire::fs::FileSystem;
 use protofire::fs::NodeKind;
@@ -29,8 +29,8 @@ fn writable_image(
     extra_dir_entries: usize,
     extra_data_blocks: usize,
 ) -> Vec<u8> {
-    SimpleFs::build_image_with_headroom(
-        "maintenance-simplefs",
+    PyroFs::build_image_with_headroom(
+        "maintenance-pyrofs",
         &[ImageEntry {
             path: "/seed.txt",
             data: b"seed",
@@ -39,17 +39,17 @@ fn writable_image(
         extra_dir_entries,
         extra_data_blocks,
     )
-    .expect("build maintenance simplefs image")
+    .expect("build maintenance pyrofs image")
 }
 
 fn mount_single_volume(device: Arc<MemoryBlockDevice>) -> FileSystem {
-    let fs = SimpleFs::open(device.clone(), true).expect("open mounted simplefs");
+    let fs = PyroFs::open(device.clone(), true).expect("open mounted pyrofs");
     let mut mounted = FileSystem::new();
     mounted.register_block_device("test0", device);
-    mounted.register("simplefs:test", Arc::new(SimpleFsVolume::new(fs)));
+    mounted.register("pyrofs:test", Arc::new(PyroFsVolume::new(fs)));
     mounted
-        .mount("test0", "/data", "simplefs:test", 0)
-        .expect("mount test simplefs");
+        .mount("test0", "/data", "pyrofs:test", 0)
+        .expect("mount test pyrofs");
     mounted
 }
 

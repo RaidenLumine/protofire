@@ -120,7 +120,7 @@ trap cleanup EXIT INT TERM
 # capacity has answered a question; only a *block* coming back with the bytes
 # the host wrote shows the read path, and the pattern is what tells those bytes
 # from a zeroed buffer.  The filesystem rejects the image afterwards — it is not
-# a SimpleFs volume — which is a read of its own.
+# a PyroFs volume — which is a read of its own.
 usb_disk="$(mktemp)"
 if ! truncate -s 8M "$usb_disk" 2>/dev/null; then
     dd if=/dev/zero of="$usb_disk" bs=1M count=8 2>/dev/null

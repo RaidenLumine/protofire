@@ -176,13 +176,13 @@ help:
 		'  make check-x8664-low-memory           - boot a very small x86_64 machine and check it clamps its pool and reaches the shell' \
 		'  make check-x8664-audit-persist        - boot with audit=persist and read the audit log back from the shell' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
-		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
+		'  make check-x8664-usb-disk             - boot a real PyroFs image on a USB disk and check it mounts and is written' \
 		'  make check-x8664-install              - install the zones onto an sgdisk-made disk and boot it' \
 		'  make check-x8664-iso                  - boot the kernel from a GRUB ISO and check the loader hand-off and its memory map' \
 		'  make check-x8664-usb-hotplug          - plug a device into a hub after boot and check it is seen then' \
 		'  make check-x8664-usb-contention       - hold the rings while the interrupt fires and check the tick drains the report' \
 		'  make check-x8664-usb-room-budget      - drop every ring release and check the ring refuses at its budget' \
-		'  make check-x8664-nvme                 - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
+		'  make check-x8664-nvme                 - boot a real PyroFs image on an NVMe device and check the controller mounts it' \
 		'  make check-aarch64-nvme               - the same NVMe disk on the device-tree machine, through its PCIe window' \
 		'  make check-riscv64-nvme               - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
 		'  make check-x8664-hda                  - play a tone from the shell and check the samples reach the host audio backend' \
@@ -301,7 +301,7 @@ check-riscv64:
 	test-service
 
 # Integration tests use --features demo-disk so that init.rs enables the
-# in-memory demo SimpleFs volumes when running outside of unit-test cfg(test).
+# in-memory demo PyroFs volumes when running outside of unit-test cfg(test).
 test: setup-dev
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk
 
@@ -315,7 +315,7 @@ test-concurrency:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard --test process_stress --test udp_wait
 
 test-storage:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix --test simplefs_undo_property --test fat32 --test simplefs_property --test memory_pressure
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test pyrofs --test pyrofs_recovery --test pyrofs_fault_matrix --test pyrofs_undo_property --test fat32 --test pyrofs_property --test memory_pressure
 
 test-fs-locking:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test sync_lock
@@ -739,7 +739,7 @@ check-x8664-init-no-start:
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-runtime.sh
 
-# Boot the kernel with a real SimpleFs image on a USB disk — no other disk, so
+# Boot the kernel with a real PyroFs image on a USB disk — no other disk, so
 # the volume is what the boot has to mount — and require that it mounts, that a
 # program is loaded out of it, and that the host's copy of the image changed.
 # The reads wrap the controller's event and transfer rings several times, which

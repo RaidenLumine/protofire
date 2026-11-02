@@ -828,7 +828,7 @@ impl Ext4Fs {
                     let name_bytes = &block_buf[pos + 8..pos + 8 + name_len];
                     // Use from_utf8_lossy to ensure non-UTF-8 directory entries
                     // are at least visible rather than silently dropped.  This
-                    // matches the SimpleFs behaviour; U+FFFD replacement
+                    // matches the PyroFs behaviour; U+FFFD replacement
                     // characters make it obvious to users that a filename
                     // contains non-UTF-8 bytes.
                     //

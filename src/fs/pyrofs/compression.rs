@@ -1,4 +1,4 @@
-//! src/fs/simplefs/compression.rs
+//! src/fs/pyrofs/compression.rs
 //!
 //! Chunked per-file transparent compression for V4 volumes.
 //!

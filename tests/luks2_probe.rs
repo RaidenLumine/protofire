@@ -91,12 +91,12 @@ fn luks2_recovers_the_master_key_cryptsetup_printed() {
     );
 }
 
-/// A SimpleFs volume inside an encrypted zone opens and reads.
+/// A PyroFs volume inside an encrypted zone opens and reads.
 ///
 /// `luks2_opens_a_volume_cryptsetup_wrote` proves the unwrap; this proves the
 /// thing the unwrap exists for — that what comes out is a device a filesystem
 /// can be built on.  The chain is the boot's: a volume `cryptsetup` made, a
-/// SimpleFs image on the other side of it, and a read that crosses both.
+/// PyroFs image on the other side of it, and a read that crosses both.
 ///
 /// The image is built at the size the volume's payload has, and `luks2_open`
 /// hands back a device whose block 0 is the payload's block 0 — which is what

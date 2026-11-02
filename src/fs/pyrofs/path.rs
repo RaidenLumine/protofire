@@ -1,6 +1,6 @@
-//! src/fs/simplefs/path.rs
+//! src/fs/pyrofs/path.rs
 //!
-//! Path resolution and symlink following for SimpleFs.
+//! Path resolution and symlink following for PyroFs.
 
 use alloc::format;
 use alloc::string::String;
@@ -16,13 +16,13 @@ use super::super::vfs::NodeKind;
 use super::constants::*;
 use super::format_io::names_match;
 use super::types::*;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 
-impl SimpleFs {
+impl PyroFs {
     pub(crate) fn find_child(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         parent_index: usize,
         segment: &str,
     ) -> Result<usize> {
@@ -33,7 +33,7 @@ impl SimpleFs {
 
     pub(crate) fn resolve_live_child_dirent_locked(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         parent_index: usize,
         segment: &str,
     ) -> Result<ResolvedChildEntry> {
@@ -112,7 +112,7 @@ impl SimpleFs {
     /// Returns the final inode index after resolving all symlinks encountered
     /// along the path.  Symlink resolution depth is bounded by
     /// [`MAX_SYMLINK_DEPTH`].
-    pub(crate) fn resolve_path_locked(&self, state: &SimpleFsState, path: &str) -> Result<usize> {
+    pub(crate) fn resolve_path_locked(&self, state: &PyroFsState, path: &str) -> Result<usize> {
         self.resolve_path_locked_depth(state, path, 0)
     }
 
@@ -120,7 +120,7 @@ impl SimpleFs {
     /// recursive calls to prevent stack overflow from loops.
     pub(crate) fn resolve_path_locked_depth(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         path: &str,
         depth: usize,
     ) -> Result<usize> {

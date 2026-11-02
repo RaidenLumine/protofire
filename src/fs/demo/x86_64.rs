@@ -93,7 +93,7 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     #[cfg(target_os = "none")]
     crate::println!("[heap]   after entries array: {} KiB free", h() / 1024);
 
-    let result = SimpleFs::build_image_with_headroom(
+    let result = PyroFs::build_image_with_headroom(
         zone.volume_label(),
         &entries,
         APPS_ZONE_EXTRA_INODES,

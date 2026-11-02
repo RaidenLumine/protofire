@@ -1,4 +1,4 @@
-//! src/fs/simplefs/dedup.rs
+//! src/fs/pyrofs/dedup.rs
 //!
 //! Cross-file content deduplication for V4 volumes.
 //!
@@ -22,10 +22,10 @@ use crate::Error;
 use crate::Result;
 
 use super::super::block::BLOCK_SIZE;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 
-impl SimpleFs {
+impl PyroFs {
     /// FNV-1a 64-bit content hash used as the dedup lookup key.
     fn content_hash(contents: &[u8]) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;
@@ -146,7 +146,7 @@ impl SimpleFs {
     /// the pool itself.
     fn dedup_share_or_pool_locked(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         inode_index: usize,
         contents: &[u8],
     ) -> Result<()> {

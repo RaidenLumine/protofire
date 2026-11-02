@@ -60,8 +60,8 @@ than a caller:
   every selected dirty block under the lock and clear its flag after the
   device says yes.  `generation` is already bumped whenever an entry's
   contents change (`insert`, `bump_generation_and_update`).
-- **The flush callers.**  `SimpleFsVolume::sync` (`src/fs/simplefs/vfs.rs`)
-  calls `cache.flush()` and then the device's `flush`; `SimpleFs`'s `Drop`
+- **The flush callers.**  `PyroFsVolume::sync` (`src/fs/pyrofs/vfs.rs`)
+  calls `cache.flush()` and then the device's `flush`; `PyroFs`'s `Drop`
   calls it again.  The maintenance thread runs the aged path —
   `src/kernel/maintenance.rs` calls `fs::sync_global_caches_aged` every
   `WRITE_BACK_AGE_TICKS` — but the VFS default answers `0` and **only fat32
@@ -111,7 +111,7 @@ same helper, so the three cannot drift.
 The maintenance thread already runs it every `WRITE_BACK_AGE_TICKS`
 (`src/kernel/maintenance.rs`), it is the flush with the least ordering to
 respect and the most blocks at once, and it is the one whose whole purpose is
-to write data nobody is waiting on.  `SimpleFsVolume` gains the
+to write data nobody is waiting on.  `PyroFsVolume` gains the
 `flush_aged` implementation the VFS default has been answering `0` for, so
 the main filesystem stops being the one that never write-backs in the
 background.  That is a **durability behaviour change** and it is part of the
@@ -231,7 +231,7 @@ The mechanism, the caller and the counter split are in the tree.
   **once per flush**.  Without it the flush would pick up a block rewritten
   mid-flight and chase a busy writer without end.  It was found while writing
   the test for the rewrite case, which is what that test is for.
-- `SimpleFsVolume::flush_aged` exists, so the maintenance thread's aged
+- `PyroFsVolume::flush_aged` exists, so the maintenance thread's aged
   write-back covers the main filesystem and not only fat32.  That is the
   durability change this RFC decided on, and it lands here.
 - The counter split is in `DeviceIo` and the boot-work line: `blk-read-high-water`

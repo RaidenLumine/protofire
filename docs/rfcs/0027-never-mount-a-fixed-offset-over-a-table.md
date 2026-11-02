@@ -30,12 +30,12 @@ boot:
 
 - a **GPT** disk with one Linux-type partition at LBA 2048 and the demo
   image's bytes written underneath it prints
-  `[fs    ] mounted fixed-zone SimpleFs volumes from ATA boot disk` — the
+  `[fs    ] mounted fixed-zone PyroFs volumes from ATA boot disk` — the
   volume mounted at LBA 2048 is the *vendor's partition*, read and writable
   as `/apps` and `/data`;
 - an **MBR** disk with a table of Linux-type entries at the demo slots prints
   `system: slot b active (build 2)` and
-  `mounted MBR-partitioned SimpleFs volumes from ATA boot disk` — the MBR path
+  `mounted MBR-partitioned PyroFs volumes from ATA boot disk` — the MBR path
   identifies a zone by slot and never compares the type byte, so a stranger's
   table is believed whenever the bytes at those offsets happen to parse.
 

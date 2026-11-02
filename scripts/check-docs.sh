@@ -72,7 +72,7 @@
 #
 # Three shapes are not citations and are skipped: the extension on its own
 # (`.rs`), a header example written the way a file writes it (`//! build.rs`),
-# and a pattern rather than a path (`src/fs/simplefs/{vfs,file_io}.rs`,
+# and a pattern rather than a path (`src/fs/pyrofs/{vfs,file_io}.rs`,
 # `tests/<area>/<name>.rs`).  A pattern is checked by the rule it states, not
 # by this script.
 #

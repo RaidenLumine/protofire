@@ -1,4 +1,4 @@
-//! src/fs/simplefs/format_io.rs
+//! src/fs/pyrofs/format_io.rs
 //!
 //! On-disk format I/O: superblock, inode/dirent tables, image building.
 //!
@@ -54,7 +54,7 @@ fn wait_for_read(device: &dyn BlockDevice, ticket: Ticket) -> Result<()> {
 /// The read is the mount's, not this: one table is a request the mount submits
 /// beside the dirent table's, and both are decoded here once they have landed.
 pub(crate) fn decode_inodes(
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     buffer: &[u8],
     count: usize,
 ) -> Result<Vec<OnDiskInode>> {
@@ -105,7 +105,7 @@ pub(crate) fn decode_inodes(
 
 pub(crate) fn read_inode_persistent_security_descriptor(
     bytes: &[u8],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     base: usize,
 ) -> Result<Option<OnDiskPersistentSecurityDescriptor>> {
     let Some(layout) = format_version.persistent_security_descriptor_layout() else {
@@ -122,7 +122,7 @@ pub(crate) fn read_inode_persistent_security_descriptor(
 /// Decode the dirent table out of the bytes read for it.  See
 /// [`decode_inodes`] for why the read is not part of this.
 pub(crate) fn decode_dir_entries(
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     buffer: &[u8],
     count: usize,
 ) -> Result<Vec<OnDiskDirEntry>> {
@@ -151,7 +151,7 @@ pub(crate) fn decode_dir_entries(
         entries.push(OnDiskDirEntry {
             inode_index,
             kind,
-            // NOTE(utf-8): SimpleFs stores filenames as opaque bytes on disk.
+            // NOTE(utf-8): PyroFs stores filenames as opaque bytes on disk.
             // `from_utf8_lossy` replaces invalid UTF-8 sequences with U+FFFD
             // (replacement character).  This means a filename containing raw
             // bytes that survive a read→write→read round-trip will be
@@ -231,7 +231,7 @@ pub(crate) fn ensure_node<'a>(
 
     let parent = parent_path(path);
     let name = base_name(path);
-    validate_dir_entry_name_for_format(name, SimpleFsFormatVersion::V2)?;
+    validate_dir_entry_name_for_format(name, PyroFsFormatVersion::V2)?;
     let index = nodes.len();
     nodes.push(BuilderNode {
         name: name.to_string(),
@@ -334,7 +334,7 @@ pub(crate) fn blocks_for(byte_len: usize) -> usize {
 
 pub(crate) fn validate_dir_entry_name_for_format(
     name: &str,
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
 ) -> Result<()> {
     if name.is_empty()
         || name == "/"
@@ -350,7 +350,7 @@ pub(crate) fn validate_dir_entry_name_for_format(
 pub(crate) fn load_current_runtime_state(
     device: &dyn BlockDevice,
     case_sensitive: bool,
-    mount_policy: SimpleFsRuntimeMountPolicy,
+    mount_policy: PyroFsRuntimeMountPolicy,
 ) -> Result<(
     String,
     ParsedSuperblock,
@@ -431,7 +431,7 @@ pub(crate) fn load_runtime_state_from_superblock(
     device: &dyn BlockDevice,
     parsed_superblock: ParsedSuperblock,
     case_sensitive: bool,
-    mount_policy: SimpleFsRuntimeMountPolicy,
+    mount_policy: PyroFsRuntimeMountPolicy,
 ) -> Result<(Vec<OnDiskInode>, Vec<OnDiskDirEntry>)> {
     let format_version = parsed_superblock.format_version;
     format_version.ensure_runtime_mount_supported(device.is_read_only(), mount_policy)?;
@@ -520,8 +520,8 @@ pub(crate) fn read_superblock_record(
     parse_superblock(&superblock)
 }
 
-pub(crate) fn parse_supported_format_version(raw: u32) -> Result<SimpleFsFormatVersion> {
-    SimpleFsFormatVersion::parse_supported(raw)
+pub(crate) fn parse_supported_format_version(raw: u32) -> Result<PyroFsFormatVersion> {
+    PyroFsFormatVersion::parse_supported(raw)
 }
 
 pub(crate) fn parse_superblock(superblock: &[u8]) -> Result<(String, ParsedSuperblock)> {
@@ -628,7 +628,7 @@ pub(crate) fn validate_superblock_record(record: SuperblockRecord) -> Result<()>
 pub(crate) fn write_superblock(
     block: &mut [u8],
     label: &str,
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     record: SuperblockRecord,
 ) {
     block.fill(0);
@@ -735,7 +735,7 @@ pub(crate) fn superblock_checksum(block: &[u8]) -> u32 {
 
 pub(crate) fn write_inode_table(
     image: &mut [u8],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     table_block: usize,
     inodes: &[BuilderInode],
 ) -> Result<()> {
@@ -775,7 +775,7 @@ pub(crate) fn write_inode_table(
 
 pub(crate) fn write_dir_entry_table(
     image: &mut [u8],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     table_block: usize,
     dir_entries: &[BuilderDirEntry],
 ) -> Result<()> {
@@ -798,7 +798,7 @@ pub(crate) fn write_dir_entry_table(
 
 pub(crate) fn write_runtime_inode_table(
     image: &mut [u8],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     table_block: usize,
     inodes: &[OnDiskInode],
 ) -> Result<()> {
@@ -864,7 +864,7 @@ pub(crate) fn write_runtime_inode_table(
 
 pub(crate) fn write_runtime_dir_entry_table(
     image: &mut [u8],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     table_block: usize,
     dir_entries: &[OnDiskDirEntry],
 ) -> Result<()> {
@@ -894,7 +894,7 @@ pub(crate) fn write_runtime_dir_entry_table(
 /// of the parser in `xattr.rs`.
 pub(crate) fn write_runtime_xattr_table(
     image: &mut [u8],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     table_block: usize,
     xattrs: &[XattrRecord],
 ) -> Result<()> {
@@ -934,7 +934,7 @@ pub(crate) fn parse_label(superblock: &[u8]) -> String {
 pub(crate) fn validate_loaded_metadata(
     inodes: &[OnDiskInode],
     dir_entries: &[OnDiskDirEntry],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     data_block_start: usize,
     device_block_count: usize,
     case_sensitive: bool,
@@ -1070,7 +1070,7 @@ pub(crate) fn validate_loaded_metadata(
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn write_inode_persistent_security_descriptor(
     inode: &mut [u8],
-    format_version: SimpleFsFormatVersion,
+    format_version: PyroFsFormatVersion,
     persistent_security: Option<OnDiskPersistentSecurityDescriptor>,
 ) -> Result<()> {
     let Some(layout) = format_version.persistent_security_descriptor_layout() else {

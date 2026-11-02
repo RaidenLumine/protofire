@@ -155,7 +155,7 @@ mod fs_metadata;
 
 Use that when a directory would hold a single file and the extra `mod.rs` would
 be a level of indirection with nothing in it. Where a directory genuinely has
-several files (`src/fs/simplefs/`, `src/network/tcp/`), a normal
+several files (`src/fs/pyrofs/`, `src/network/tcp/`), a normal
 `mod.rs` is the right shape.
 
 Re-export deliberately rather than wholesale: `pub use` in a `mod.rs` is how a

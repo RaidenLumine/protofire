@@ -100,7 +100,7 @@ Layout of the kernel crate:
 | `src/user/` | Userspace support: `demo/` (ELF builders) and `shared/` (shell + ABI runtime) |
 | `src/user/shared/` | **Single source of truth for the syscall ABI** |
 | `src/util/` | Utility helpers |
-| `tests/` | Host-side integration tests (fs, io, memory, net, process, simplefs, sync, syscall) |
+| `tests/` | Host-side integration tests (fs, io, memory, net, process, pyrofs, sync, syscall) |
 | `docs/` | Subsystem mechanism (`kernel/`), status (`status.md`), specifications (`fmts/`) and design documents (`rfcs/`) |
 
 ---

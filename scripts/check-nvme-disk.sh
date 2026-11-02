@@ -205,8 +205,8 @@ assert_mounts() {
     require_log_line "[nvme  ] initialising NVMe controller at BAR="
     require_log_line "[nvme  ] NVMe ready: $image_blocks blocks × 512 bytes"
     require_log_line "[driver] detected boot disk: nvme0 ($image_blocks blocks)"
-    require_log_line "[fs    ] mounted MBR-partitioned SimpleFs volumes from ATA boot disk"
-    if grep -F "[fs    ] failed to mount SimpleFs volumes from ATA boot disk" "$log" >/dev/null 2>&1; then
+    require_log_line "[fs    ] mounted MBR-partitioned PyroFs volumes from ATA boot disk"
+    if grep -F "[fs    ] failed to mount PyroFs volumes from ATA boot disk" "$log" >/dev/null 2>&1; then
         fail "the volume on the NVMe namespace did not mount"
     fi
 }

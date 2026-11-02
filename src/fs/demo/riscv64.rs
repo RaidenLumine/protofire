@@ -20,7 +20,7 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     // Headroom for what a running machine installs here: the zone is the one an
     // install writes, and an image built with no room for one would fail the
     // first install a fresh machine ever attempted.
-    SimpleFs::build_image_with_headroom(
+    PyroFs::build_image_with_headroom(
         zone.volume_label(),
         &entries,
         APPS_ZONE_EXTRA_INODES,

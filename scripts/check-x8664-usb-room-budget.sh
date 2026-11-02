@@ -58,7 +58,7 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT INT TERM
 
-# The same host-made image both boots read: a real SimpleFs volume is what wraps
+# The same host-made image both boots read: a real PyroFs volume is what wraps
 # the rings, and a single sector would not reach the budget.
 image="$work/demo-disk.img"
 "$CARGO" run --offline --quiet -- mkimage "$image"

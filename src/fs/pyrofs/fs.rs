@@ -1,9 +1,9 @@
-//! src/fs/simplefs/fs.rs
+//! src/fs/pyrofs/fs.rs
 //!
-//! SimpleFs core implementation: path lookup, metadata accessors, and the
+//! PyroFs core implementation: path lookup, metadata accessors, and the
 //! locked directory-entry / inode-slot primitives.
 //!
-//! These methods are recovered from the original protofire-kernel simplefs
+//! These methods are recovered from the original protofire-kernel pyrofs
 //! `fs.rs`; the current tree splits the original file across `path.rs`,
 //! `transaction.rs`, `dir_ops.rs`, `vfs.rs`, and this file.
 
@@ -17,10 +17,10 @@ use super::super::vfs::Metadata;
 use super::super::vfs::NodeKind;
 use super::types::OnDiskDirEntry;
 use super::types::OnDiskInode;
-use super::SimpleFs;
-use super::SimpleFsState;
+use super::PyroFs;
+use super::PyroFsState;
 
-impl SimpleFs {
+impl PyroFs {
     /// Bump the live open-handle count for `inode_index`.  Every `SimpleVNode`
     /// created for this index must be balanced by a matching drop so that an
     /// unlinked slot is never recycled while a handle still references it.
@@ -109,7 +109,7 @@ impl SimpleFs {
 
     /// The blocks a file's data occupies, as `(first_block, block_count)`.
     ///
-    /// SimpleFs gives every file one contiguous extent, and this is where it
+    /// PyroFs gives every file one contiguous extent, and this is where it
     /// starts and how long it is.  The caller that needs it is the one that
     /// has to treat part of a volume differently from the rest: an install
     /// writes everything *except* the file that commits the volume, and then
@@ -138,7 +138,7 @@ impl SimpleFs {
 
     /// Resolve a path to an inode index under an already-held state lock,
     /// without following symlinks.
-    pub(crate) fn lookup_index_locked(&self, state: &SimpleFsState, path: &str) -> Result<usize> {
+    pub(crate) fn lookup_index_locked(&self, state: &PyroFsState, path: &str) -> Result<usize> {
         if path.is_empty() || path == "/" {
             return Ok(0);
         }
@@ -161,7 +161,7 @@ impl SimpleFs {
 
     pub(crate) fn parent_index_of_locked(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         child_index: usize,
     ) -> Result<Option<usize>> {
         if child_index == 0 {
@@ -178,7 +178,7 @@ impl SimpleFs {
 
     pub(crate) fn is_descendant_index_locked(
         &self,
-        state: &SimpleFsState,
+        state: &PyroFsState,
         candidate_index: usize,
         ancestor_index: usize,
     ) -> Result<bool> {
@@ -200,7 +200,7 @@ impl SimpleFs {
     /// metadata transaction.
     pub(crate) fn insert_dir_entry_locked(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         parent_index: usize,
         entry: OnDiskDirEntry,
     ) -> Result<()> {
@@ -257,7 +257,7 @@ impl SimpleFs {
     /// under a metadata transaction.
     pub(crate) fn remove_dir_entry_locked(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         parent_index: usize,
         entry_index: usize,
     ) -> Result<OnDiskDirEntry> {
@@ -311,7 +311,7 @@ impl SimpleFs {
         Ok(removed)
     }
 
-    pub(crate) fn has_available_inode_slot(&self, state: &SimpleFsState) -> bool {
+    pub(crate) fn has_available_inode_slot(&self, state: &PyroFsState) -> bool {
         !state.free_inode_slots.is_empty() || state.inodes.len() < self.inode_capacity
     }
 
@@ -320,7 +320,7 @@ impl SimpleFs {
     /// if the enclosing transaction rolls back.
     pub(crate) fn allocate_inode_slot(
         &self,
-        state: &mut SimpleFsState,
+        state: &mut PyroFsState,
         inode: OnDiskInode,
     ) -> Result<usize> {
         state.save_free_slots_for_undo();

@@ -1,6 +1,6 @@
-//! tests/simplefs/validation.rs
+//! tests/pyrofs/validation.rs
 //!
-//! Host-side integration tests for SimpleFs image validation and mutation
+//! Host-side integration tests for PyroFs image validation and mutation
 //! behavior.
 
 use std::collections::BTreeMap;
@@ -12,9 +12,9 @@ use std::sync::Mutex;
 use protofire::fs::block::BlockDevice;
 use protofire::fs::block::MemoryBlockDevice;
 use protofire::fs::block::BLOCK_SIZE;
-use protofire::fs::simplefs::ImageEntry;
-use protofire::fs::simplefs::SimpleFs;
-use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::pyrofs::ImageEntry;
+use protofire::fs::pyrofs::PyroFs;
+use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::fs::vfs::NodeKind;
 use protofire::fs::vfs::VNode;
@@ -131,8 +131,8 @@ fn writable_image(
     extra_dir_entries: usize,
     extra_data_blocks: usize,
 ) -> Vec<u8> {
-    SimpleFs::build_image_with_headroom(
-        "writable-simplefs",
+    PyroFs::build_image_with_headroom(
+        "writable-pyrofs",
         &[ImageEntry {
             path: "/seed.txt",
             data: b"seed",
@@ -141,34 +141,34 @@ fn writable_image(
         extra_dir_entries,
         extra_data_blocks,
     )
-    .expect("build writable simplefs image")
+    .expect("build writable pyrofs image")
 }
 
 fn nested_image() -> Vec<u8> {
-    SimpleFs::build_image(
-        "nested-simplefs",
+    PyroFs::build_image(
+        "nested-pyrofs",
         &[ImageEntry {
             path: "/apps/demo.txt",
             data: b"nested",
         }],
     )
-    .expect("build nested simplefs image")
+    .expect("build nested pyrofs image")
 }
 
 fn valid_image() -> Vec<u8> {
-    SimpleFs::build_image(
-        "demo-simplefs",
+    PyroFs::build_image(
+        "demo-pyrofs",
         &[ImageEntry {
             path: "/README.txt",
-            data: b"hello simplefs",
+            data: b"hello pyrofs",
         }],
     )
-    .expect("build valid simplefs image")
+    .expect("build valid pyrofs image")
 }
 
 fn two_file_image() -> Vec<u8> {
-    SimpleFs::build_image(
-        "demo-simplefs-two",
+    PyroFs::build_image(
+        "demo-pyrofs-two",
         &[
             ImageEntry {
                 path: "/A.txt",
@@ -180,7 +180,7 @@ fn two_file_image() -> Vec<u8> {
             },
         ],
     )
-    .expect("build two-file simplefs image")
+    .expect("build two-file pyrofs image")
 }
 
 fn read_u32_le(image: &[u8], offset: usize) -> u32 {
@@ -202,7 +202,7 @@ fn read_all(node: &dyn VNode) -> Vec<u8> {
     buffer
 }
 
-fn collect_dir_names(volume: &SimpleFsVolume, path: &str) -> Vec<String> {
+fn collect_dir_names(volume: &PyroFsVolume, path: &str) -> Vec<String> {
     let mut entries = Vec::new();
     let mut index = 0;
     while let Ok(entry) = volume.read_dir(path, index) {
@@ -212,7 +212,7 @@ fn collect_dir_names(volume: &SimpleFsVolume, path: &str) -> Vec<String> {
     entries
 }
 
-fn ensure_dir(volume: &SimpleFsVolume, path: &str) {
+fn ensure_dir(volume: &PyroFsVolume, path: &str) {
     match volume.stat(path) {
         Ok(metadata) => assert_eq!(metadata.kind, NodeKind::Directory),
         Err(Error::NotFound) => volume.create_dir(path).expect("create missing directory"),
@@ -264,97 +264,97 @@ fn write_superblock_u32(image: &mut [u8], offset: usize, value: u32) {
 }
 
 #[test]
-fn simplefs_open_accepts_valid_images() {
-    let device = MemoryBlockDevice::new("simplefs", valid_image(), true);
-    let fs = SimpleFs::open(device, true).expect("open valid simplefs image");
-    let volume = SimpleFsVolume::new(fs);
+fn pyrofs_open_accepts_valid_images() {
+    let device = MemoryBlockDevice::new("pyrofs", valid_image(), true);
+    let fs = PyroFs::open(device, true).expect("open valid pyrofs image");
+    let volume = PyroFsVolume::new(fs);
 
-    assert_eq!(volume.name(), "demo-simplefs");
+    assert_eq!(volume.name(), "demo-pyrofs");
     assert_eq!(volume.stat("/").expect("stat root").size, 1);
     assert_eq!(volume.stat("/README.txt").expect("stat file").size, 14);
 }
 
 #[test]
-fn simplefs_open_rejects_inverted_inode_and_dirent_tables() {
+fn pyrofs_open_rejects_inverted_inode_and_dirent_tables() {
     let mut image = valid_image();
     let inode_table_block = read_u32_le(&image, 24);
     write_superblock_u32(&mut image, 28, inode_table_block - 1);
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_data_block_before_dirent_table() {
+fn pyrofs_open_rejects_data_block_before_dirent_table() {
     let mut image = valid_image();
     let dirent_table_block = read_u32_le(&image, 28);
     write_superblock_u32(&mut image, 32, dirent_table_block - 1);
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_directory_entry_ranges_past_table() {
+fn pyrofs_open_rejects_directory_entry_ranges_past_table() {
     let mut image = valid_image();
     let root_inode = inode_base(&image, 0);
     image[root_inode + 8..root_inode + 12].copy_from_slice(&(2_u32).to_le_bytes());
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_file_sizes_larger_than_allocated_blocks() {
+fn pyrofs_open_rejects_file_sizes_larger_than_allocated_blocks() {
     let mut image = valid_image();
     let file_inode = inode_base(&image, 1);
     image[file_inode + 20..file_inode + 24]
         .copy_from_slice(&((BLOCK_SIZE as u32) + 1).to_le_bytes());
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_dir_entries_with_invalid_inode_indices() {
+fn pyrofs_open_rejects_dir_entries_with_invalid_inode_indices() {
     let mut image = valid_image();
     let first_dirent = dirent_base(&image, 0);
     image[first_dirent..first_dirent + 4].copy_from_slice(&(99_u32).to_le_bytes());
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_read_dir_rejects_out_of_bounds_indices_even_with_following_dirents() {
-    let device = MemoryBlockDevice::new("simplefs", nested_image(), true);
-    let fs = SimpleFs::open(device, true).expect("open nested simplefs image");
-    let volume = SimpleFsVolume::new(fs);
+fn pyrofs_read_dir_rejects_out_of_bounds_indices_even_with_following_dirents() {
+    let device = MemoryBlockDevice::new("pyrofs", nested_image(), true);
+    let fs = PyroFs::open(device, true).expect("open nested pyrofs image");
+    let volume = PyroFsVolume::new(fs);
 
     assert_eq!(volume.read_dir("/", 0).expect("root entry 0").name, "apps");
     assert_eq!(volume.read_dir("/", 1), Err(Error::NotFound));
 }
 
 #[test]
-fn simplefs_write_rejects_offsets_beyond_u32_file_size_limit() {
-    let device = MemoryBlockDevice::new("simplefs", valid_image(), false);
-    let fs = SimpleFs::open(device, true).expect("open writable simplefs image");
-    let volume = SimpleFsVolume::new(fs);
+fn pyrofs_write_rejects_offsets_beyond_u32_file_size_limit() {
+    let device = MemoryBlockDevice::new("pyrofs", valid_image(), false);
+    let fs = PyroFs::open(device, true).expect("open writable pyrofs image");
+    let volume = PyroFsVolume::new(fs);
     let node = volume.lookup("/README.txt").expect("lookup readme node");
 
     assert_eq!(
@@ -364,10 +364,10 @@ fn simplefs_write_rejects_offsets_beyond_u32_file_size_limit() {
 }
 
 #[test]
-fn simplefs_set_len_rejects_lengths_beyond_u32_file_size_limit() {
-    let device = MemoryBlockDevice::new("simplefs", valid_image(), false);
-    let fs = SimpleFs::open(device, true).expect("open writable simplefs image");
-    let volume = SimpleFsVolume::new(fs);
+fn pyrofs_set_len_rejects_lengths_beyond_u32_file_size_limit() {
+    let device = MemoryBlockDevice::new("pyrofs", valid_image(), false);
+    let fs = PyroFs::open(device, true).expect("open writable pyrofs image");
+    let volume = PyroFsVolume::new(fs);
     let node = volume.lookup("/README.txt").expect("lookup readme node");
 
     assert_eq!(
@@ -377,7 +377,7 @@ fn simplefs_set_len_rejects_lengths_beyond_u32_file_size_limit() {
 }
 
 #[test]
-fn simplefs_open_rejects_overlapping_live_file_extents() {
+fn pyrofs_open_rejects_overlapping_live_file_extents() {
     let mut image = two_file_image();
     let first_inode = inode_base(&image, 1);
     let second_inode = inode_base(&image, 2);
@@ -385,109 +385,109 @@ fn simplefs_open_rejects_overlapping_live_file_extents() {
 
     image[second_inode + 12..second_inode + 16].copy_from_slice(&first_data_block.to_le_bytes());
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_duplicate_names_within_a_directory() {
+fn pyrofs_open_rejects_duplicate_names_within_a_directory() {
     let mut image = two_file_image();
     let second_dirent = dirent_base(&image, 1);
     image[second_dirent + 8] = b'A';
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_case_colliding_names_when_case_insensitive() {
+fn pyrofs_open_rejects_case_colliding_names_when_case_insensitive() {
     let mut image = two_file_image();
     let second_dirent = dirent_base(&image, 1);
     image[second_dirent + 8] = b'a';
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, false),
+        PyroFs::open(device, false),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_allows_case_colliding_names_when_case_sensitive() {
+fn pyrofs_open_allows_case_colliding_names_when_case_sensitive() {
     let mut image = two_file_image();
     let second_dirent = dirent_base(&image, 1);
     image[second_dirent + 8] = b'a';
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
-    assert!(SimpleFs::open(device, true).is_ok());
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
+    assert!(PyroFs::open(device, true).is_ok());
 }
 
 #[test]
-fn simplefs_open_rejects_directory_entries_pointing_to_root_inode() {
+fn pyrofs_open_rejects_directory_entries_pointing_to_root_inode() {
     let mut image = valid_image();
     let first_dirent = dirent_base(&image, 0);
     image[first_dirent..first_dirent + 4].copy_from_slice(&(0_u32).to_le_bytes());
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_multiple_parents_for_the_same_live_inode() {
+fn pyrofs_open_rejects_multiple_parents_for_the_same_live_inode() {
     let mut image = two_file_image();
     let second_dirent = dirent_base(&image, 1);
     image[second_dirent..second_dirent + 4].copy_from_slice(&(1_u32).to_le_bytes());
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_directory_entry_kind_mismatch_with_target_inode() {
+fn pyrofs_open_rejects_directory_entry_kind_mismatch_with_target_inode() {
     let mut image = valid_image();
     let first_dirent = dirent_base(&image, 0);
     image[first_dirent + 4] = 1;
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_reopen_after_creating_directory_preserves_dir_entry_kind() {
-    let device = MemoryBlockDevice::new("simplefs", valid_image(), false);
+fn pyrofs_reopen_after_creating_directory_preserves_dir_entry_kind() {
+    let device = MemoryBlockDevice::new("pyrofs", valid_image(), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs image");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs image");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/state").expect("create state directory");
     }
 
-    let reopened = SimpleFs::open(device, true).expect("reopen after metadata flush");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen after metadata flush");
+    let volume = PyroFsVolume::new(reopened);
     let state = volume.stat("/state").expect("stat created directory");
     assert_eq!(state.kind, NodeKind::Directory);
 }
 
 #[test]
-fn simplefs_reuses_deleted_inode_slots_for_repeated_file_churn() {
-    let device = MemoryBlockDevice::new("simplefs", writable_image(0, 0, 8), false);
+fn pyrofs_reuses_deleted_inode_slots_for_repeated_file_churn() {
+    let device = MemoryBlockDevice::new("pyrofs", writable_image(0, 0, 8), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs image");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs image");
+        let volume = PyroFsVolume::new(fs);
         volume
             .create_dir("/scratch")
             .expect("create scratch directory");
@@ -513,8 +513,8 @@ fn simplefs_reuses_deleted_inode_slots_for_repeated_file_churn() {
         assert_eq!(node.write(0, b"final").expect("write final payload"), 5);
     }
 
-    let reopened = SimpleFs::open(device, true).expect("reopen churned simplefs image");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen churned pyrofs image");
+    let volume = PyroFsVolume::new(reopened);
     assert_eq!(volume.stat("/scratch").expect("stat scratch").size, 1);
     let node = volume
         .lookup("/scratch/final.bin")
@@ -523,11 +523,11 @@ fn simplefs_reuses_deleted_inode_slots_for_repeated_file_churn() {
 }
 
 #[test]
-fn simplefs_reuses_deleted_inode_slots_for_repeated_directory_churn() {
-    let device = MemoryBlockDevice::new("simplefs", writable_image(0, 0, 4), false);
+fn pyrofs_reuses_deleted_inode_slots_for_repeated_directory_churn() {
+    let device = MemoryBlockDevice::new("pyrofs", writable_image(0, 0, 4), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs image");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs image");
+        let volume = PyroFsVolume::new(fs);
         volume
             .create_dir("/scratch")
             .expect("create scratch directory");
@@ -546,8 +546,8 @@ fn simplefs_reuses_deleted_inode_slots_for_repeated_directory_churn() {
             .expect("create final directory");
     }
 
-    let reopened = SimpleFs::open(device, true).expect("reopen churned simplefs image");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen churned pyrofs image");
+    let volume = PyroFsVolume::new(reopened);
     assert_eq!(volume.stat("/scratch").expect("stat scratch").size, 1);
     assert_eq!(
         volume
@@ -559,13 +559,13 @@ fn simplefs_reuses_deleted_inode_slots_for_repeated_directory_churn() {
 }
 
 #[test]
-fn simplefs_open_uses_secondary_superblock_when_primary_is_corrupted() {
+fn pyrofs_open_uses_secondary_superblock_when_primary_is_corrupted() {
     let mut image = valid_image();
     image[0] = 0;
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
-    let fs = SimpleFs::open(device, true).expect("open image with mirrored fallback");
-    let volume = SimpleFsVolume::new(fs);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
+    let fs = PyroFs::open(device, true).expect("open image with mirrored fallback");
+    let volume = PyroFsVolume::new(fs);
     assert_eq!(
         volume.stat("/README.txt").expect("stat mirrored file").size,
         14
@@ -573,7 +573,7 @@ fn simplefs_open_uses_secondary_superblock_when_primary_is_corrupted() {
 }
 
 #[test]
-fn simplefs_open_rejects_dirent_slots_not_owned_by_any_live_directory() {
+fn pyrofs_open_rejects_dirent_slots_not_owned_by_any_live_directory() {
     let mut image = two_file_image();
     let root_inode = inode_base(&image, 0);
     image[root_inode + 8..root_inode + 12].copy_from_slice(&(1_u32).to_le_bytes());
@@ -584,17 +584,17 @@ fn simplefs_open_rejects_dirent_slots_not_owned_by_any_live_directory() {
     image[second_dirent..second_dirent + 4].copy_from_slice(&(1_u32).to_le_bytes());
 
     assert!(matches!(
-        SimpleFs::open(MemoryBlockDevice::new("simplefs", image, true), true),
+        PyroFs::open(MemoryBlockDevice::new("pyrofs", image, true), true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_reopen_preserves_large_directory_mutations() {
-    let device = MemoryBlockDevice::new("simplefs", writable_image(96, 128, 64), false);
+fn pyrofs_reopen_preserves_large_directory_mutations() {
+    let device = MemoryBlockDevice::new("pyrofs", writable_image(96, 128, 64), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs image");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs image");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/bulk").expect("create bulk directory");
 
         for index in 0..40 {
@@ -616,8 +616,8 @@ fn simplefs_reopen_preserves_large_directory_mutations() {
             .expect("rename within packed dir");
     }
 
-    let reopened = SimpleFs::open(device, true).expect("reopen writable simplefs image");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen writable pyrofs image");
+    let volume = PyroFsVolume::new(reopened);
     let mut names = collect_dir_names(&volume, "/bulk");
     names.sort();
 
@@ -632,11 +632,11 @@ fn simplefs_reopen_preserves_large_directory_mutations() {
 }
 
 #[test]
-fn simplefs_reopen_preserves_cross_directory_renames() {
-    let device = MemoryBlockDevice::new("simplefs", writable_image(32, 48, 8), false);
+fn pyrofs_reopen_preserves_cross_directory_renames() {
+    let device = MemoryBlockDevice::new("pyrofs", writable_image(32, 48, 8), false);
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs image");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs image");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/left").expect("create left");
         volume.create_dir("/right").expect("create right");
         volume.create_dir("/archive").expect("create archive");
@@ -654,8 +654,8 @@ fn simplefs_reopen_preserves_cross_directory_renames() {
             .expect("rename into archive");
     }
 
-    let reopened = SimpleFs::open(device, true).expect("reopen renamed simplefs image");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen renamed pyrofs image");
+    let volume = PyroFsVolume::new(reopened);
     assert!(matches!(
         volume.lookup("/left/payload.bin"),
         Err(Error::NotFound)
@@ -671,16 +671,16 @@ fn simplefs_reopen_preserves_cross_directory_renames() {
 }
 
 #[test]
-fn simplefs_reopen_preserves_long_file_truncate_and_regrow_zero_fill() {
-    let device = MemoryBlockDevice::new("simplefs", writable_image(16, 16, 24), false);
+fn pyrofs_reopen_preserves_long_file_truncate_and_regrow_zero_fill() {
+    let device = MemoryBlockDevice::new("pyrofs", writable_image(16, 16, 24), false);
     let mut original = vec![0_u8; BLOCK_SIZE * 3 + 137];
     for (index, byte) in original.iter_mut().enumerate() {
         *byte = (index % 251) as u8;
     }
 
     {
-        let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs image");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs image");
+        let volume = PyroFsVolume::new(fs);
         volume.create_dir("/logs").expect("create logs directory");
         let node = volume
             .create_file("/logs/big.bin")
@@ -692,8 +692,8 @@ fn simplefs_reopen_preserves_long_file_truncate_and_regrow_zero_fill() {
     }
 
     {
-        let reopened = SimpleFs::open(device.clone(), true).expect("reopen after write");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device.clone(), true).expect("reopen after write");
+        let volume = PyroFsVolume::new(reopened);
         let node = volume.lookup("/logs/big.bin").expect("lookup large file");
         assert_eq!(read_all(&*node), original);
         node.set_len((BLOCK_SIZE + 29) as u64)
@@ -702,8 +702,8 @@ fn simplefs_reopen_preserves_long_file_truncate_and_regrow_zero_fill() {
             .expect("regrow large file");
     }
 
-    let reopened = SimpleFs::open(device, true).expect("reopen after regrow");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen after regrow");
+    let volume = PyroFsVolume::new(reopened);
     let node = volume.lookup("/logs/big.bin").expect("lookup regrown file");
     let bytes = read_all(&*node);
     let retained_len = BLOCK_SIZE + 29;
@@ -714,37 +714,37 @@ fn simplefs_reopen_preserves_long_file_truncate_and_regrow_zero_fill() {
 }
 
 #[test]
-fn simplefs_open_rejects_unknown_inode_kind_values() {
+fn pyrofs_open_rejects_unknown_inode_kind_values() {
     let mut image = valid_image();
     let file_inode = inode_base(&image, 1);
     image[file_inode] = 0xff;
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_open_rejects_unknown_directory_entry_kind_values() {
+fn pyrofs_open_rejects_unknown_directory_entry_kind_values() {
     let mut image = valid_image();
     let first_dirent = dirent_base(&image, 0);
     image[first_dirent + 4] = 0xff;
 
-    let device = MemoryBlockDevice::new("simplefs", image, true);
+    let device = MemoryBlockDevice::new("pyrofs", image, true);
     assert!(matches!(
-        SimpleFs::open(device, true),
+        PyroFs::open(device, true),
         Err(Error::InvalidArgument)
     ));
 }
 
 #[test]
-fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
-    let backing = MemoryBlockDevice::new("simplefs", writable_image(48, 64, 16), false);
+fn pyrofs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
+    let backing = MemoryBlockDevice::new("pyrofs", writable_image(48, 64, 16), false);
     {
-        let fs = SimpleFs::open(backing.clone(), true).expect("open writable simplefs image");
-        let volume = SimpleFsVolume::new(fs);
+        let fs = PyroFs::open(backing.clone(), true).expect("open writable pyrofs image");
+        let volume = PyroFsVolume::new(fs);
         volume
             .create_dir("/stable")
             .expect("create stable directory");
@@ -754,7 +754,7 @@ fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
         assert_eq!(node.write(0, b"stable-state").expect("write anchor"), 12);
     }
 
-    let failing = FailingBlockDevice::new("simplefs-failing", backing.clone());
+    let failing = FailingBlockDevice::new("pyrofs-failing", backing.clone());
     let failure_cases = [
         ("inode-table", 1, WriteFailureMode::BeforeWrite),
         (
@@ -778,8 +778,8 @@ fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
         failing.arm_failure(call, mode);
 
         {
-            let fs = SimpleFs::open(failing.clone(), true).expect("open with injected device");
-            let volume = SimpleFsVolume::new(fs);
+            let fs = PyroFs::open(failing.clone(), true).expect("open with injected device");
+            let volume = PyroFsVolume::new(fs);
             assert_eq!(
                 volume.create_dir(&pending),
                 Err(Error::DeviceError),
@@ -789,9 +789,9 @@ fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
 
         failing.clear_failure();
 
-        let reopened = SimpleFs::open(backing.clone(), true)
-            .expect("reopen after interrupted metadata commit");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened =
+            PyroFs::open(backing.clone(), true).expect("reopen after interrupted metadata commit");
+        let volume = PyroFsVolume::new(reopened);
         let anchor = volume
             .lookup("/stable/anchor.txt")
             .expect("lookup previously committed anchor");
@@ -813,15 +813,15 @@ fn simplefs_reopen_after_failed_metadata_commit_keeps_last_stable_state() {
 }
 
 #[test]
-fn simplefs_long_mutation_sequence_survives_reopen_cycles() {
-    let device = MemoryBlockDevice::new("simplefs", writable_image(192, 384, 192), false);
+fn pyrofs_long_mutation_sequence_survives_reopen_cycles() {
+    let device = MemoryBlockDevice::new("pyrofs", writable_image(192, 384, 192), false);
     let mut expected_files = BTreeMap::<String, Vec<u8>>::new();
     let mut removed_paths = BTreeSet::<String>::new();
 
     for cycle in 0..12 {
         {
-            let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs image");
-            let volume = SimpleFsVolume::new(fs);
+            let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs image");
+            let volume = PyroFsVolume::new(fs);
             ensure_dir(&volume, "/staging");
             ensure_dir(&volume, "/archive");
             ensure_dir(&volume, "/history");
@@ -867,8 +867,8 @@ fn simplefs_long_mutation_sequence_survives_reopen_cycles() {
             }
         }
 
-        let reopened = SimpleFs::open(device.clone(), true).expect("reopen after mutation cycle");
-        let volume = SimpleFsVolume::new(reopened);
+        let reopened = PyroFs::open(device.clone(), true).expect("reopen after mutation cycle");
+        let volume = PyroFsVolume::new(reopened);
         let mut staging_entries = collect_dir_names(&volume, "/staging");
         staging_entries.sort();
 
@@ -904,8 +904,8 @@ fn simplefs_long_mutation_sequence_survives_reopen_cycles() {
 }
 
 #[test]
-fn simplefs_repeated_metadata_and_data_reads_return_consistent_data() {
-    let image = SimpleFs::build_image(
+fn pyrofs_repeated_metadata_and_data_reads_return_consistent_data() {
+    let image = PyroFs::build_image(
         "cache-consistency",
         &[ImageEntry {
             path: "/docs/readme.txt",
@@ -914,8 +914,8 @@ fn simplefs_repeated_metadata_and_data_reads_return_consistent_data() {
     )
     .expect("build test image");
     let device = MemoryBlockDevice::new("cache-consistency-dev", image, true);
-    let fs = SimpleFs::open(device, true).expect("open SimpleFs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device, true).expect("open PyroFs");
+    let volume = PyroFsVolume::new(fs);
 
     // First stat and read.
     let stat1 = volume.stat("/docs/readme.txt").expect("stat 1");
@@ -952,8 +952,8 @@ fn simplefs_repeated_metadata_and_data_reads_return_consistent_data() {
 }
 
 #[test]
-fn simplefs_data_checksum_survives_write_and_reopen() {
-    let image = SimpleFs::build_image_with_headroom(
+fn pyrofs_data_checksum_survives_write_and_reopen() {
+    let image = PyroFs::build_image_with_headroom(
         "checksum-survive",
         &[ImageEntry {
             path: "/docs/readme.txt",
@@ -965,8 +965,8 @@ fn simplefs_data_checksum_survives_write_and_reopen() {
     )
     .expect("build test image");
     let device = MemoryBlockDevice::new("checksum-survive-dev", image, false);
-    let fs = SimpleFs::open(device.clone(), true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device.clone(), true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     let node = volume.lookup("/docs/readme.txt").expect("lookup");
     node.write(0, b"after-checksum-write")
@@ -976,17 +976,17 @@ fn simplefs_data_checksum_survives_write_and_reopen() {
     // Reopen and verify content is readable (checksum was persisted).
     drop(volume);
     drop(node);
-    let reopened = SimpleFs::open(device, true).expect("reopen simplefs");
-    let volume = SimpleFsVolume::new(reopened);
+    let reopened = PyroFs::open(device, true).expect("reopen pyrofs");
+    let volume = PyroFsVolume::new(reopened);
     let node = volume.lookup("/docs/readme.txt").expect("relookup");
     assert_eq!(read_all(&*node), b"after-checksum-write");
 }
 
 #[test]
-fn simplefs_device_health_reports_healthy_for_memory_backed_volume() {
+fn pyrofs_device_health_reports_healthy_for_memory_backed_volume() {
     use protofire::fs::block::DeviceHealth;
 
-    let image = SimpleFs::build_image(
+    let image = PyroFs::build_image(
         "health-check",
         &[ImageEntry {
             path: "/README.txt",
@@ -995,8 +995,8 @@ fn simplefs_device_health_reports_healthy_for_memory_backed_volume() {
     )
     .expect("build test image");
     let device = MemoryBlockDevice::new("health-check-dev", image, true);
-    let fs = SimpleFs::open(device, true).expect("open simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device, true).expect("open pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     assert_eq!(volume.device_health(), DeviceHealth::Healthy);
 }

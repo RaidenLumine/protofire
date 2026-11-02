@@ -191,7 +191,7 @@ fn creating_a_directory_at_a_mount_point_reports_that_it_exists() {
 ///
 /// The disk here is the shape that made the change: the demo image's bytes sit
 /// at the fixed offsets *underneath* a verified GPT whose one entry belongs to
-/// a stranger.  Before the change the boot printed `mounted fixed-zone SimpleFs
+/// a stranger.  Before the change the boot printed `mounted fixed-zone PyroFs
 /// volumes` for exactly this disk — a vendor's partition read and writable as
 /// `/apps` and `/data`.  The assertion is on the report the boot recorded,
 /// which is the fact the log line is printed from.
@@ -328,8 +328,8 @@ fn without_a_passphrase_every_zone_is_read_as_it_lies() {
     fs.init_with_boot_disk(Some(device));
 
     assert!(
-        fs.filesystems.contains_key("simplefs-system"),
-        "an unencrypted disk must still mount as the SimpleFs system zone"
+        fs.filesystems.contains_key("pyrofs-system"),
+        "an unencrypted disk must still mount as the PyroFs system zone"
     );
 }
 

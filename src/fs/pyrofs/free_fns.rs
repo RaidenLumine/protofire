@@ -1,4 +1,4 @@
-//! src/fs/simplefs/free_fns.rs
+//! src/fs/pyrofs/free_fns.rs
 //!
 //! Low-level helpers: byte I/O, kind encoding, test utilities.
 //!

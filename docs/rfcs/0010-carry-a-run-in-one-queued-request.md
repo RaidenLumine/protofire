@@ -51,7 +51,7 @@ decision below.
 - **The mapping.**  `DmaBuffer` (`src/memory/dma.rs`) is allocated as
   *physically contiguous* frames and is page-aligned, so a buffer's pages are
   `phys_addr() + i * 4096` and PRP entries for them need no list.
-- **The callers.**  The mount (`src/fs/simplefs/format_io.rs`) reads its
+- **The callers.**  The mount (`src/fs/pyrofs/format_io.rs`) reads its
   tables with one `read_blocks` each; the cache
   (`src/fs/block_cache.rs`) reads at most `1 + PREFETCH_RUN_BLOCKS` = 5 blocks
   in one call.

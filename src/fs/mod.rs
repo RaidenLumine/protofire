@@ -14,8 +14,8 @@ pub mod crypt_device;
 pub mod luks2;
 // ═══════════════════════════════════════════════════════════════════════
 // Legacy demo disk builder — kept for the fs.init() boot path and
-// kernel-side MBR tests.  New code that just needs a SimpleFs image
-// should call `SimpleFs::build_image` directly.
+// kernel-side MBR tests.  New code that just needs a PyroFs image
+// should call `PyroFs::build_image` directly.
 // The canonical distribution copy lives in protofire-os/demo-disk.
 // ═══════════════════════════════════════════════════════════════════════
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
@@ -45,7 +45,7 @@ pub mod lock_timing;
 pub mod ntfs;
 pub mod partition;
 pub mod path;
-pub mod simplefs;
+pub mod pyrofs;
 pub mod squashfs;
 /// The system volume's A/B pair: which slot a boot takes, and how it switches.
 pub mod system_image;
@@ -149,7 +149,7 @@ pub(crate) const DEVFS_FS_NAME: &str = "devfs";
 pub(crate) const DEVFS_MOUNT_DEVICE: &str = "/dev/protofire-devfs";
 pub(crate) const SERVICEFS_FS_NAME: &str = "servicefs";
 pub(crate) const SERVICEFS_MOUNT_DEVICE: &str = "/dev/protofire-servicefs";
-pub(crate) const TEMP_FS_NAME: &str = "simplefs-temp";
+pub(crate) const TEMP_FS_NAME: &str = "pyrofs-temp";
 pub(crate) const TEMP_MOUNT_DEVICE: &str = "/dev/protofire-temp";
 pub(crate) const TEMP_MOUNT_PATH: &str = "/tmp";
 pub(crate) const TEMP_DIRECTORY_MODE: u16 = 0o777;
@@ -181,7 +181,7 @@ pub struct FileSystem {
     pub(crate) current_working_dir: Mutex<String>,
     pub(crate) next_handle: Mutex<u64>,
     pub(crate) storage_init_report: Mutex<Option<StorageInitReport>>,
-    /// Root filesystem type: `"simplefs"` (default) or `"ext4"`.
+    /// Root filesystem type: `"pyrofs"` (default) or `"ext4"`.
     pub(crate) rootfs_type: String,
     /// The passphrase a LUKS2-encrypted zone is opened with, if any.
     ///

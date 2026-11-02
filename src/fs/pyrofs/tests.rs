@@ -1,9 +1,9 @@
-//! src/fs/simplefs/tests.rs
+//! src/fs/pyrofs/tests.rs
 //!
 //! Unit tests for the SimpleFS driver.
 //!
 //! V4 test images are produced directly with
-//! [`SimpleFs::build_v4_image_with_headroom`], which lays out the real V4
+//! [`PyroFs::build_v4_image_with_headroom`], which lays out the real V4
 //! geometry (active/shadow xattr table pair immediately after the dirent
 //! tables) and writes a checksummed superblock — no post-hoc patching.
 //!
@@ -38,19 +38,19 @@ use crate::Error;
 use crate::Result;
 
 use super::ImageEntry;
-use super::SimpleFs;
-use super::SimpleFsVolume;
+use super::PyroFs;
+use super::PyroFsVolume;
 
 // ── V4 image helpers ──────────────────────────────────────────────────
 
 /// Build a writable V4 SimpleFS image with a single `/README.txt` seed file
 /// and generous headroom, wrapped in an in-memory block device.
 ///
-/// The image is produced by the real [`SimpleFs::build_v4_image_with_headroom`]
+/// The image is produced by the real [`PyroFs::build_v4_image_with_headroom`]
 /// builder, so the xattr table geometry in the superblock is correct without
 /// any post-hoc patching.
 fn build_v4_test_device(name: &str, seed: &[u8]) -> Arc<MemoryBlockDevice> {
-    let image = SimpleFs::build_v4_image_with_headroom(
+    let image = PyroFs::build_v4_image_with_headroom(
         "v4-test",
         &[ImageEntry {
             path: "/README.txt",
@@ -66,14 +66,14 @@ fn build_v4_test_device(name: &str, seed: &[u8]) -> Arc<MemoryBlockDevice> {
 }
 
 /// Open the V4 image writable (public runtime mount policy).
-fn open_writable_v4_for_test(device: Arc<dyn BlockDevice>) -> Arc<SimpleFs> {
-    SimpleFs::open(device, true).expect("open writable v4 simplefs")
+fn open_writable_v4_for_test(device: Arc<dyn BlockDevice>) -> Arc<PyroFs> {
+    PyroFs::open(device, true).expect("open writable v4 pyrofs")
 }
 
 /// Build a writable V2 image — the format the tree's own image builders
 /// produce — with a single `/README.txt` seed file.
 fn build_v2_test_device(name: &str, seed: &[u8]) -> Arc<MemoryBlockDevice> {
-    let image = SimpleFs::build_image_with_headroom(
+    let image = PyroFs::build_image_with_headroom(
         name,
         &[ImageEntry {
             path: "/README.txt",
@@ -177,7 +177,7 @@ struct MetadataWriteFailureState {
 /// metadata write after
 /// [`arm_failure`](MetadataFailingBlockDevice::arm_failure). The kernel `Mutex`
 /// guard is returned directly (no `Result`), matching the
-/// host-side FailingBlockDevice used by `tests/simplefs/validation.rs`.
+/// host-side FailingBlockDevice used by `tests/pyrofs/validation.rs`.
 struct MetadataFailingBlockDevice {
     name: String,
     parent: Arc<dyn BlockDevice>,
@@ -276,7 +276,7 @@ impl BlockDevice for MetadataFailingBlockDevice {
 fn v4_volume_opens_and_reads_seed_file() {
     let device = build_v4_test_device("v4-seed", b"demo");
     let fs = open_writable_v4_for_test(device);
-    let volume = SimpleFsVolume::new(fs);
+    let volume = PyroFsVolume::new(fs);
 
     let root = volume.lookup("/").expect("lookup /");
     assert_eq!(root.kind(), NodeKind::Directory);
@@ -292,7 +292,7 @@ fn v4_set_xattr_round_trip_within_capacity() {
     let device = build_v4_test_device("v4-xattr", b"demo");
     let fs = open_writable_v4_for_test(device);
 
-    let value = b"hello simplefs xattr";
+    let value = b"hello pyrofs xattr";
     fs.transaction(|ctx| ctx.set_xattr("/README.txt", b"user.note", value))
         .expect("set xattr");
 
@@ -330,7 +330,7 @@ fn a_file_flag_set_at_runtime_survives_a_remount() {
     let device = build_v4_test_device("v4-flags", b"demo");
 
     {
-        let volume = SimpleFsVolume::new(open_writable_v4_for_test(device.clone()));
+        let volume = PyroFsVolume::new(open_writable_v4_for_test(device.clone()));
         let file = volume.lookup("/README.txt").expect("lookup");
         assert_eq!(file.get_file_flags().expect("read flags"), 0);
 
@@ -343,7 +343,7 @@ fn a_file_flag_set_at_runtime_survives_a_remount() {
     }
 
     // A fresh mount over the same device: the bit has to be on the record.
-    let volume = SimpleFsVolume::new(open_writable_v4_for_test(device.clone()));
+    let volume = PyroFsVolume::new(open_writable_v4_for_test(device.clone()));
     let file = volume.lookup("/README.txt").expect("lookup after remount");
     assert_eq!(
         file.get_file_flags().expect("read flags after remount"),
@@ -355,7 +355,7 @@ fn a_file_flag_set_at_runtime_survives_a_remount() {
     file.set_file_flags(0, FILE_FLAG_COMPRESSED)
         .expect("clear the compression flag");
     drop(volume);
-    let volume = SimpleFsVolume::new(open_writable_v4_for_test(device));
+    let volume = PyroFsVolume::new(open_writable_v4_for_test(device));
     let file = volume.lookup("/README.txt").expect("lookup after remount");
     assert_eq!(
         file.get_file_flags().expect("read flags"),
@@ -374,8 +374,8 @@ fn setting_a_file_flag_on_a_v2_volume_is_refused() {
     use crate::abi::fs::FILE_FLAG_COMPRESSED;
 
     let device = build_v2_test_device("v2-flags", b"demo");
-    let fs = SimpleFs::open(device, true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(device, true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     let file = volume.lookup("/README.txt").expect("lookup");
     assert!(matches!(
@@ -399,7 +399,7 @@ fn a_caller_cannot_set_or_clear_the_dedup_flag() {
     use crate::abi::fs::FILE_FLAG_DEDUPED;
 
     let device = build_v4_test_device("v4-flags-dedup", b"demo");
-    let volume = SimpleFsVolume::new(open_writable_v4_for_test(device));
+    let volume = PyroFsVolume::new(open_writable_v4_for_test(device));
     let file = volume.lookup("/README.txt").expect("lookup");
 
     for (set, clear) in [
@@ -423,8 +423,8 @@ fn a_caller_cannot_set_or_clear_the_dedup_flag() {
 fn metadata_commit_after_the_first_writes_only_the_blocks_that_changed() {
     let device = build_v2_test_device("write-skip", b"demo");
     let counting = WriteCountingBlockDevice::new(device);
-    let fs = SimpleFs::open(counting.clone(), true).expect("open writable simplefs");
-    let volume = SimpleFsVolume::new(fs);
+    let fs = PyroFs::open(counting.clone(), true).expect("open writable pyrofs");
+    let volume = PyroFsVolume::new(fs);
 
     // The first commit has nothing describing the shadow slot, so it writes
     // both tables whole, plus the two superblock mirrors.
@@ -488,13 +488,13 @@ fn v4_xattr_publish_torn_primary_superblock_recovers_clean() {
         // invariant under test is that the volume repairs to a clean state and
         // the xattr table stays consistent with the winning generation.
         let fs = open_writable_v4_for_test(device.clone());
-        let volume = SimpleFsVolume::new(fs);
+        let volume = PyroFsVolume::new(fs);
         let report = VfsFileSystem::check_and_repair(&volume).expect("repair");
         assert!(report.repairs_applied >= 1);
     }
     {
         let fs = open_writable_v4_for_test(device);
-        let volume = SimpleFsVolume::new(fs);
+        let volume = PyroFsVolume::new(fs);
         assert!(VfsFileSystem::check_and_repair(&volume)
             .expect("clean")
             .is_clean());
@@ -520,12 +520,12 @@ fn v4_publish_rejected_before_write_recovers() {
     // The new generation is loadable via the secondary mirror, and the
     // volume repairs to a clean state.
     let fs = open_writable_v4_for_test(device.clone());
-    let volume = SimpleFsVolume::new(fs);
+    let volume = PyroFsVolume::new(fs);
     let report = VfsFileSystem::check_and_repair(&volume).expect("repair");
     assert!(report.repairs_applied >= 1);
 
     let fs = open_writable_v4_for_test(device);
-    let volume = SimpleFsVolume::new(fs);
+    let volume = PyroFsVolume::new(fs);
     assert!(VfsFileSystem::check_and_repair(&volume)
         .expect("clean")
         .is_clean());
@@ -556,7 +556,7 @@ fn repeated_crash_recovery_cycles_v4() {
         // cycle — the torn publish is what we exercise.)
         {
             let fs = open_writable_v4_for_test(device.clone());
-            let volume = SimpleFsVolume::new(fs);
+            let volume = PyroFsVolume::new(fs);
             let file = volume.lookup("/README.txt").expect("lookup");
             assert_eq!(
                 file.write(0, &payload).expect("commit stable content"),
@@ -571,7 +571,7 @@ fn repeated_crash_recovery_cycles_v4() {
         // publishes and the committed payload is left intact.
         {
             let fs = open_writable_v4_for_test(failing.clone());
-            let volume = SimpleFsVolume::new(fs);
+            let volume = PyroFsVolume::new(fs);
             let file = volume.lookup("/README.txt").expect("lookup");
             failing.arm_failure(2, MetadataWriteFailureMode::TornWrite { prefix_len: 32 });
             assert!(matches!(
@@ -585,7 +585,7 @@ fn repeated_crash_recovery_cycles_v4() {
         // committed before the crash is intact.
         {
             let fs = open_writable_v4_for_test(device.clone());
-            let volume = SimpleFsVolume::new(fs);
+            let volume = PyroFsVolume::new(fs);
             let file = volume.lookup("/README.txt").expect("lookup after crash");
             assert_eq!(read_full_test(&*file), payload);
 
