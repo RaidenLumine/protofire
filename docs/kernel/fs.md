@@ -48,14 +48,14 @@ access is the descriptor's own question, answered by
 
 ## Paths
 
-`normalize_path` in `bits/src/path.rs` is the one place a path becomes
+`normalize_path` in `src/fs/path.rs` is the one place a path becomes
 canonical.  It produces an absolute path with no `.`, no `..`, no empty
 components and no redundant slashes; a relative argument is resolved against
 the current working directory first.  It rejects what the namespace does not
 speak: an embedded control character, a backslash, a `C:`-style drive prefix
 and the `//?/` device form.  No Unicode normalisation is applied — a filename
 is bytes the caller chose, and callers that want NFC/NFD equivalence opt in
-through `bits/src/unicode/`.
+through `src/fs/unicode/`.
 
 The facade wraps this with the working directory (`normalize_path_from`), and
 the per-call cwd is machine-wide: `current_working_dir` is one string, not one
@@ -216,7 +216,7 @@ and reads with.
 
 Names are validated per format when a node is created, and lookups can be
 case-insensitive: the zone decides (`StorageZone::case_sensitive` in
-`src/fs/layout.rs`), and `bits/src/unicode/` supplies the folding used by the
+`src/fs/layout.rs`), and `src/fs/unicode/` supplies the folding used by the
 formats that need it.  Symlinks are inline when the target fits in the inode's
 extent fields (`MAX_INLINE_SYMLINK_LEN`) and resolution is bounded by
 `MAX_SYMLINK_DEPTH`.
@@ -521,7 +521,7 @@ volume on a memory device instead.
 | `src/fs/mod.rs` | The `FileSystem` facade, the global singleton, the mount snapshot |
 | `src/fs/vfs/filesystem.rs`, `src/fs/vfs/vnode.rs` | The `FileSystem`/`VNode` traits, `ReadOnlyFileSystem`, `StaticFileSystem` |
 | `src/fs/vfs/types.rs` | `NodeKind`, `Metadata`, `SecurityDescriptor`, `VolumeCheckReport` |
-| `bits/src/path.rs` | Path normalisation |
+| `src/fs/path.rs` | Path normalisation |
 | `src/fs/filesystem/` | Boot layout, mount and resolve, open, I/O, rename, overlay, security, profiler |
 | `src/fs/simplefs/` | SimpleFs: superblock, tables, transactions, recovery, staging, xattrs |
 | `src/fs/layout.rs` | Zones, mount flags and the fixed fallback disk ranges |

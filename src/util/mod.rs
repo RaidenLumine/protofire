@@ -8,4 +8,4 @@ pub mod logger;
 /// not carry it.
 #[cfg(not(target_os = "none"))]
 pub mod sign_tool;
-pub use protofire_bits::sync_unsafe_cell;
+pub mod sync_unsafe_cell;

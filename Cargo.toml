@@ -20,7 +20,7 @@ publish = false
 # it declares its own `[workspace]` and needs crates.io, which is the property
 # `fuzz/README.md` argues for — so `make check-fuzz-targets` covers it.
 [workspace]
-members = ["tools/gen-kaslr-relocs", "shared", "bits"]
+members = ["tools/gen-kaslr-relocs", "shared"]
 
 # The lints the whole workspace shares.  The root package opts in below, the
 # KASLR tool does the same in its own manifest, and `fuzz/` — a workspace of
@@ -239,7 +239,6 @@ fault_profiler = []
 educational_networking = []
 
 [dependencies]
-protofire-bits = { path = "bits" }
 protofire-shared = { path = "shared" }
 
 [profile.dev]

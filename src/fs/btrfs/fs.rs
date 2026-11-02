@@ -11,8 +11,8 @@ use alloc::vec::Vec;
 use crate::fs::block::BlockDevice;
 use crate::Error;
 
-use crate::bits::crypto::crc32c;
 use crate::kernel::compression::zstd_decompress;
+use crate::kernel::crypto::crc32c;
 
 use super::types::parse_dir_entry;
 use super::types::ChunkItemData;

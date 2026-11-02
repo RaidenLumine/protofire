@@ -239,7 +239,6 @@ run_p3() {
     run_make_step "make check-ext4-image" check-ext4-image
     run_make_step "make check-luks2-image" check-luks2-image
     run_make_step "make check-luks2-zone" check-luks2-zone
-    run_make_step "make check-bits-is-a-leaf" check-bits-is-a-leaf
     # And every configuration the manifest declares, which is the one gate
     # that builds the switches no boot hands to a `check-*` target.
     run_make_step "make check-feature-matrix" check-feature-matrix

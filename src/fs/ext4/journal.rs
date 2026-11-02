@@ -4,9 +4,9 @@
 
 use super::constants::*;
 use super::types::*;
-use crate::bits::crypto::crc32c;
 use crate::fs::block::BLOCK_SIZE;
 use crate::fs::block_cache::BlockCache;
+use crate::kernel::crypto::crc32c;
 use crate::Error;
 use crate::Result;
 use alloc::vec;

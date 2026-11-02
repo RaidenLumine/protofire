@@ -44,7 +44,7 @@ pub mod layout;
 pub mod lock_timing;
 pub mod ntfs;
 pub mod partition;
-pub use protofire_bits::path;
+pub mod path;
 pub mod simplefs;
 pub mod squashfs;
 /// The system volume's A/B pair: which slot a boot takes, and how it switches.
@@ -52,9 +52,7 @@ pub mod system_image;
 #[cfg(any(test, feature = "demo-disk"))]
 pub(crate) mod test_support;
 pub mod tmpfs;
-/// Unicode tables, from : they are data and arithmetic over
-/// it, with no  reference in any of the 4596 lines.
-pub use protofire_bits::unicode;
+pub mod unicode;
 pub mod vfs;
 /// Where a running machine writes, and why each place is the right one.
 pub mod write_locations;

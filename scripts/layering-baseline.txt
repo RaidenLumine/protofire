@@ -294,13 +294,6 @@
 # rather than a new direction: the service manager has always read the
 # declarations it runs.
 #
-# `fs` no longer names `crypto` at all.  The eleven references were the
-# digest, CRC and AES the filesystems check their own metadata with, and they
-# went to `protofire-bits` — a crate with no `crate::` references, which is
-# what a leaf service should look like.  The row is gone rather than
-# renumbered because the direction it recorded was the symptom: a filesystem
-# reaching through `kernel` to get an algorithm that never needed the kernel.
-#
 # `network` -> `sync` grew by one for the trust-anchor table: the added anchors
 # live behind a `Mutex`, and a `Vec` a program appends to is what that layer is
 # for.  `network` already names `sync` for every other shared table it keeps.
@@ -420,6 +413,7 @@ drivers                      process                      17
 drivers                      sync                         25
 fs                           block                        4
 fs                           compression                  2
+fs                           crypto                       11
 fs                           drivers                      2
 fs                           memory                       5
 fs                           security                     29

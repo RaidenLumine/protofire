@@ -402,7 +402,7 @@ pub(crate) fn build_system_zone_from(init_elf: &[u8], generation: u64) -> Result
 /// only in the host tests: read the package, verify what it claims, write the
 /// app zone, and make the version active.
 pub(crate) fn build_data_zone_from(zone: StorageZone, program: &[u8]) -> Result<Vec<u8>> {
-    let digest = crate::bits::crypto::sha256_hex(program);
+    let digest = crate::kernel::crypto::sha256_hex(program);
     let manifest = alloc::format!(
         "name = \"demo-installed\"\nversion = \"1.0.0\"\nformat = \"{}\"\nentry = \"bin/demo.elf\"\nworking_dir = \".\"\nentry_sha256 = \"{}\"\n",
         crate::user::program::DEMO_PROGRAM_FORMAT,

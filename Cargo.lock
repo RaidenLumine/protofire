@@ -10,13 +10,8 @@ version = "0.1.0"
 name = "protofire"
 version = "0.8.13"
 dependencies = [
- "protofire-bits",
  "protofire-shared",
 ]
-
-[[package]]
-name = "protofire-bits"
-version = "0.1.0"
 
 [[package]]
 name = "protofire-shared"

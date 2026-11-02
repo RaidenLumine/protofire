@@ -143,7 +143,7 @@ fn reject_drive_prefixed_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn has_drive_prefix(path: &str) -> bool {
+pub(crate) fn has_drive_prefix(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }

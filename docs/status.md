@@ -412,7 +412,7 @@ PBKDF2 primitives.
   One of those four was not in LUKS2 at all: the XTS tweak's alpha step
   multiplied in the **wrong byte order** — carry out of the first byte and
   0x87 into the last, where IEEE 1619 carries out of the last and folds into
-  the first.  That is a defect in `bits/src/crypto.rs` that predates this
+  the first.  That is a defect in `src/kernel/crypto.rs` that predates this
   work and affects every user of `aes_xts_encrypt`/`decrypt`, and only LUKS2
   exposed it because it is the first caller to decrypt more than one 16-byte
   block in a unit.  The single-block NIST vector passed either way;

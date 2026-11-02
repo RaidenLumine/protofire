@@ -33,7 +33,7 @@ use crate::Error;
 /// partition reader whose GPT header carries two of them
 /// ([RFC 0018](../../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)),
 /// names the layer's own door instead of the kernel module underneath it.
-pub use crate::bits::crypto::crc32;
+pub use crate::kernel::crypto::crc32;
 
 // ── ChecksumPolicy ─────────────────────────────────────────────────────────
 
@@ -75,7 +75,7 @@ pub trait ChecksumVerifier {
         if self.checksum_policy() == ChecksumPolicy::Off {
             return Ok(());
         }
-        let computed = crate::bits::crypto::crc32c(data);
+        let computed = crate::kernel::crypto::crc32c(data);
         if computed == expected {
             return Ok(());
         }
