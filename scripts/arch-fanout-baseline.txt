@@ -41,7 +41,8 @@ user/demo/demo_program_x86_64_rust.rs                1  # fact: the same, for th
 user/demo/payload_test_support.rs                    1  # fact: the helper builds x86_64 payloads for the host tests
 user/demo/shell_payload.rs                           6  # fact: a payload is its architecture — its syscall trap and the section it is extracted from are that machine's, and the arch layer cannot be called from a blob that is copied out of the kernel image and run elsewhere.  The six are the three `asm!` blocks of `sigasync` (trap, probe), two per machine: that builtin used to be gated whole and is not, which is the fall from 18 — its handler, its messages and its install/raise sequence are the same on all three, and only the instruction and the register differ
 user/exception.rs                                    4  # fact: the two user-mode exception dispatchers, which exist only where a machine can enter the kernel from user mode
-user/shared/abi/ptrace.rs                            2  # fact: the user-space mirror of the x86_64 PTRACE_GETREGS record
-user/shared/syscall.rs                               2  # fact: the never-returning halt is hlt on x86_64 and wfi on aarch64
+shared/src/abi/ptrace.rs                            2  # fact: the user-space mirror of the x86_64 PTRACE_GETREGS record
+shared/src/syscall.rs                               2  # fact: the never-returning halt is hlt on x86_64 and wfi on aarch64
 user/syscall/mod.rs                                  7  # fact: the trap that enters the kernel from user mode; one file per machine, and riscv64 has none
 user/syscall/payload.rs                              6  # fact: the per-machine payload-runtime macros, emitted into the payload sections
+shared/src/abi/runtime.rs                           6  # fact: `TARGET_ARCH` answers what the binary was built for, and a ring-3 crate cannot reach the kernel's arch module to ask; the three names plus the `not(any(...))` fallback are the machine's vocabulary, which is what a fourth architecture would extend

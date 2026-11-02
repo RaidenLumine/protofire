@@ -81,9 +81,22 @@ trap cleanup EXIT INT TERM
 
 # Every file outside `src/arch/` that names an architecture, and how many
 # times, as `<path under src/> <count>` sorted by path.
+#
+# `shared/` is a crate of its own but not a different machine: its files are
+# compiled for every target this kernel builds, so an architecture gate in one
+# of them is exactly the wall this check exists to keep visible.  It is reached
+# with its `shared/` prefix rather than under `src/`, because a path in this
+# baseline has to name the file that is there — the same reason the `src/`
+# paths are relative to the repository and not to `src/`.
 census() {
-    find src -name '*.rs' -not -path 'src/arch/*' | sort | while read -r file; do
-        rel="${file#src/}"
+    {
+        find src -name '*.rs' -not -path 'src/arch/*'
+        find shared -name '*.rs'
+    } | sort | while read -r file; do
+        case "$file" in
+            shared/*) rel="$file" ;;
+            *) rel="${file#src/}" ;;
+        esac
         count="$(awk '
             { line = $0; sub(/\/\/.*/, "", line) }
             {
