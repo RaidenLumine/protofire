@@ -1192,7 +1192,7 @@ fn generic_set_len_clamps_position_before_followup_write() {
     assert_eq!(&buffer[..count], b"abcdXY");
 }
 
-// ── poll() readiness ───────────────────────────────────────────────────────
+// poll() readiness
 //
 // `poll` used to ask only whether the descriptor carried the right; the object
 // behind it was never consulted.  An empty eventfd therefore reported

@@ -5,7 +5,7 @@
 
 use super::allocator::KernelGlobalAllocator;
 
-// ─── Global allocator wiring ──────────────────────────────────────────────
+// Global allocator wiring
 
 #[global_allocator]
 #[cfg(target_os = "none")]

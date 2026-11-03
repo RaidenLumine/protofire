@@ -160,7 +160,7 @@ impl MemoryManager {
                 self.page_table.mark_accessed_owned(owner, page_addr);
                 self.fault_profiler.inc_page_faults_demand_paged();
 
-                // ── Fault-around: speculatively pre-map adjacent DemandPaged
+                // Fault-around: speculatively pre-map adjacent DemandPaged
                 //     pages to reduce future page faults.  Pages are pre-mapped
                 //     only if they are DemandPaged, have stored content, and
                 //     frames are available.  Limited to FAULT_AROUND_PAGES per

@@ -598,7 +598,7 @@ unsafe extern "C" fn ap_entry(hart_id: u64) -> ! {
         cpu_id
     );
 
-    // ── Enter the scheduler dispatch loop ──
+    // Enter the scheduler dispatch loop
     crate::arch::interrupts::enable();
     loop {
         // SAFETY: `sched_ptr` is this CPU's live scheduler, registered above and

@@ -9,7 +9,7 @@ use crate::memory::paging::MappingKind;
 use crate::Error;
 use crate::Result;
 
-// ── Advice values ──────────────────────────────────────────────────────
+// Advice values
 
 const MADV_NORMAL: i32 = 0;
 const MADV_RANDOM: i32 = 1;

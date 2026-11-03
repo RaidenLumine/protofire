@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use crate::network::internet::ipv4::Ipv4Addr;
 
-// ─── Route entry ────────────────────────────────────────────────────────
+// Route entry
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteEntry {
@@ -78,7 +78,7 @@ impl RouteEntry {
     }
 }
 
-// ─── Routing table ─────────────────────────────────────────────────────
+// Routing table
 
 #[derive(Debug, Clone)]
 pub struct RoutingTable {
@@ -197,7 +197,7 @@ impl RoutingTable {
     }
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

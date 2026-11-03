@@ -7,7 +7,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// ── Sizes ──
+// Sizes
 
 /// ISO 9660 logical sector size (always 2048 for data tracks).
 pub const SECTOR_SIZE: usize = 2048;
@@ -15,7 +15,7 @@ pub const SECTOR_SIZE: usize = 2048;
 /// Offset of the Primary Volume Descriptor (sector 16, 0-indexed).
 pub const PVD_SECTOR: u64 = 16;
 
-// ── Volume Descriptor ──
+// Volume Descriptor
 
 /// Primary Volume Descriptor (ECMA-119 §7.4).
 ///
@@ -69,7 +69,7 @@ impl Pvd {
     }
 }
 
-// ── Directory Record ──
+// Directory Record
 
 /// Byte offset of the root directory's record inside the PVD.
 ///
@@ -300,7 +300,7 @@ pub struct DirRecord {
     /// ISO 9660 file identifier (raw bytes).
     pub identifier: Vec<u8>,
 
-    // ── Rock Ridge extensions ──
+    // Rock Ridge extensions
     /// POSIX alternative name (from NM entry).
     pub rr_name: Option<String>,
     /// POSIX attributes: (mode, links, uid, gid).
@@ -533,7 +533,7 @@ impl DirRecord {
     }
 }
 
-// ── SUSP / Rock Ridge parsing ──
+// SUSP / Rock Ridge parsing
 
 /// Parse SUSP continuation entries in the System Use area.
 fn parse_susp_entries(
@@ -677,7 +677,7 @@ fn parse_susp_entries(
     }
 }
 
-// ── Filename decoding ──
+// Filename decoding
 
 /// Decode an ISO 9660 file identifier to a human-readable name.
 pub(crate) fn decode_iso_filename(raw: &[u8]) -> String {
@@ -730,7 +730,7 @@ fn decode_joliet_filename(raw: &[u8]) -> String {
     String::from_utf16_lossy(trimmed)
 }
 
-// ── El Torito Boot Catalog ───────────────────────────────────────────────────
+// El Torito Boot Catalog
 
 /// Parsed El Torito boot catalog entry.
 #[derive(Debug, Clone)]
@@ -807,7 +807,7 @@ pub fn parse_boot_catalog(sector: &[u8]) -> Vec<BootEntry> {
     entries
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

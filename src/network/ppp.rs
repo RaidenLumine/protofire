@@ -22,7 +22,7 @@ use core::fmt;
 use crate::Error;
 use crate::Result;
 
-// ── Constants ───────────────────────────────────────────────────────────────
+// Constants
 
 /// PPP frame delimiter (Flag sequence).
 pub const PPP_FLAG: u8 = 0x7E;
@@ -86,7 +86,7 @@ const LCP_MAX_CONFIGURE: u32 = 10;
 /// Maximum LCP terminate retries.
 const LCP_MAX_TERMINATE: u32 = 3;
 
-// ── FCS-16 (CRC-16-CCITT) ───────────────────────────────────────────────────
+// FCS-16 (CRC-16-CCITT)
 
 /// PPP FCS-16 (RFC 1662 Appendix A), a CRC-16-CCITT variant.
 ///
@@ -144,7 +144,7 @@ fn ppp_fcs_complete(data: &[u8]) -> u16 {
     crc
 }
 
-// ── Byte-stuffing ───────────────────────────────────────────────────────────
+// Byte-stuffing
 
 /// Apply async byte-stuffing (RFC 1662 §4.2) to `data`.
 ///
@@ -198,7 +198,7 @@ pub fn ppp_unstuff(data: &[u8]) -> Result<Vec<u8>> {
     Ok(unstuffed)
 }
 
-// ── Frame encode / decode ───────────────────────────────────────────────────
+// Frame encode / decode
 
 /// Build a complete PPP frame from a protocol number and payload.
 ///
@@ -304,7 +304,7 @@ pub fn ppp_parse_frame(frame: &[u8]) -> Result<(u16, Vec<u8>)> {
     Ok((protocol, info))
 }
 
-// ── PPPoE framing (RFC 2516) ────────────────────────────────────────────────
+// PPPoE framing (RFC 2516)
 
 /// Build the PPPoE session payload for a `(protocol, information)` pair.
 ///
@@ -342,7 +342,7 @@ pub fn ppp_pppoe_parse_payload(payload: &[u8]) -> Result<(u16, Vec<u8>)> {
     Ok((protocol, payload[info_start..].to_vec()))
 }
 
-// ── LCP state machine ───────────────────────────────────────────────────────
+// LCP state machine
 
 /// PPP Link Control Protocol phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,7 +447,7 @@ impl PppState {
         self.peer_ipv4_address = None;
     }
 
-    // ── LCP packet building ──────────────────────────────────────────────
+    // LCP packet building
 
     /// Build an LCP Configure-Request packet.
     pub fn build_configure_request(&mut self) -> Vec<u8> {
@@ -523,7 +523,7 @@ impl PppState {
         build_lcp_packet(LCP_CODE_ECHO_REPLY, id, data)
     }
 
-    // ── IPCP packet building ─────────────────────────────────────────────
+    // IPCP packet building
 
     /// Build an IPCP Configure-Request with the IPv4 address option.
     pub fn build_ipcp_configure_request(&self, ipv4_address: [u8; 4]) -> Vec<u8> {
@@ -550,7 +550,7 @@ impl Default for PppState {
     }
 }
 
-// ── LCP packet helpers ──────────────────────────────────────────────────────
+// LCP packet helpers
 
 /// Build an LCP packet with the given code, identifier, and data.
 fn build_lcp_packet(code: u8, id: u8, data: &[u8]) -> Vec<u8> {
@@ -582,7 +582,7 @@ pub fn parse_lcp_packet(packet: &[u8]) -> Result<(u8, u8, u16, &[u8])> {
     Ok((code, id, length, &packet[4..length as usize]))
 }
 
-// ── LCP option parsing ──────────────────────────────────────────────────────
+// LCP option parsing
 
 /// A single LCP configuration option.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -617,7 +617,7 @@ pub fn parse_lcp_options(data: &[u8]) -> Result<Vec<LcpOption>> {
     Ok(options)
 }
 
-// ── Keepalive / tick ────────────────────────────────────────────────────────
+// Keepalive / tick
 
 impl PppState {
     /// Periodic tick handler.  Drives LCP echo keepalive and retransmission
@@ -935,13 +935,13 @@ impl PppState {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── CRC-16 ──────────────────────────────────────────────────────────
+    // CRC-16
 
     #[test]
     fn crc16_known_vectors() {
@@ -989,7 +989,7 @@ mod tests {
         assert!(!ppp_check_fcs(&frame));
     }
 
-    // ── Byte-stuffing ───────────────────────────────────────────────────
+    // Byte-stuffing
 
     #[test]
     fn byte_stuff_roundtrip() {
@@ -1037,7 +1037,7 @@ mod tests {
         assert!(ppp_unstuff(&[PPP_FLAG, b'A']).is_err());
     }
 
-    // ── Frame encode/decode ─────────────────────────────────────────────
+    // Frame encode/decode
 
     #[test]
     fn frame_roundtrip_ipv4() {
@@ -1066,7 +1066,7 @@ mod tests {
         assert_eq!(info, payload);
     }
 
-    // ── PPPoE payload framing (RFC 2516) ──────────────────────────────
+    // PPPoE payload framing (RFC 2516)
 
     #[test]
     fn pppoe_payload_roundtrip_two_byte_protocol() {
@@ -1110,7 +1110,7 @@ mod tests {
         assert!(ppp_pppoe_parse_payload(&[0x00]).is_err());
     }
 
-    // ── LCP state machine ───────────────────────────────────────────────
+    // LCP state machine
 
     #[test]
     fn lcp_configure_exchange_establishes_link() {
@@ -1246,7 +1246,7 @@ mod tests {
         assert_eq!(state.phase, PppPhase::Dead);
     }
 
-    // ── LCP option parsing ──────────────────────────────────────────────
+    // LCP option parsing
 
     #[test]
     fn parse_lcp_options_extracts_mru_and_accm() {
@@ -1280,7 +1280,7 @@ mod tests {
         assert_eq!(opts.len(), 1);
     }
 
-    // ── IPCP ────────────────────────────────────────────────────────────
+    // IPCP
 
     #[test]
     fn ipcp_configure_request_assigns_address() {

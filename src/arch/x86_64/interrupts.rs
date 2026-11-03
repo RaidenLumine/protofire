@@ -23,7 +23,7 @@ pub const KEYBOARD_VECTOR: u8 = 33;
 /// exists (`super::ioapic::ioapic_setup_isa_irqs`).
 pub const COM1_VECTOR: u8 = 36;
 
-// ─── MSI-X vectors for device drivers ────────────────────────────
+// MSI-X vectors for device drivers
 // These are allocated from the free range 34-127 (non-exception,
 // non-IPI, non-syscall).  VirtIO uses 46-47; NVMe's completions are
 // message-signalled like the other PCIe devices' now, so its driver

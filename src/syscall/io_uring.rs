@@ -38,15 +38,13 @@ use super::user_memory;
 use super::SyscallContext;
 use super::SyscallDispatch;
 
-// ── Constants
-// ──────────────────────────────────────────────────────────────────
+// Constants
 
 /// The default timeout for the blocking wait inside io_uring_enter (in ticks).
 /// At 100 Hz this is ~1 second.
 const DEFAULT_ENTER_WAIT_TICKS: u64 = 100;
 
-// ── IoUringSetup (#126)
-// ────────────────────────────────────────────────────────
+// IoUringSetup (#126)
 
 /// Syscall #126: IoUringSetup — create an io_uring instance.
 ///
@@ -80,8 +78,7 @@ pub(super) fn io_uring_setup(context: &mut SyscallContext) -> Result<SyscallDisp
     Ok(SyscallDispatch::complete(fd))
 }
 
-// ── IoUringEnter (#127)
-// ────────────────────────────────────────────────────────
+// IoUringEnter (#127)
 
 /// Syscall #127: IoUringEnter — submit SQEs and/or reap CQEs.
 ///
@@ -95,7 +92,7 @@ pub(super) fn io_uring_setup(context: &mut SyscallContext) -> Result<SyscallDisp
 ///
 /// Returns the number of CQEs written (u32, zero-extended to usize).
 pub(super) fn io_uring_enter(context: &mut SyscallContext) -> Result<SyscallDispatch> {
-    // ── Unpack arguments ────────────────────────────────────────────────────
+    // Unpack arguments
     let fd = context.arg(0) as i32;
     let to_submit = context.arg(1) as u32;
     let min_complete = (context.arg(1) >> 32) as u32;
@@ -105,7 +102,7 @@ pub(super) fn io_uring_enter(context: &mut SyscallContext) -> Result<SyscallDisp
     let cqes_ptr = context.arg(4) as *mut IoUringCqe;
     let flags = context.arg(5) as u32;
 
-    // ── Validation ──────────────────────────────────────────────────────────
+    // Validation
     super::validate_known_flags(flags as usize, IORING_ENTER_GETEVENTS as usize)?;
 
     if to_submit > IO_URING_MAX_ENTRIES {
@@ -132,10 +129,10 @@ pub(super) fn io_uring_enter(context: &mut SyscallContext) -> Result<SyscallDisp
         _ => return Err(Error::InvalidArgument),
     };
 
-    // ── Phase 1: Re-probe pending operations ───────────────────────────────
+    // Phase 1: Re-probe pending operations
     let mut completed_this_round = reprobe_pending_ops(&state, &process)?;
 
-    // ── Phase 2: Submit new SQEs ───────────────────────────────────────────
+    // Phase 2: Submit new SQEs
     if to_submit > 0 {
         let sqe_count = to_submit as usize;
         user_memory::with_optional_input_slice(
@@ -162,7 +159,7 @@ pub(super) fn io_uring_enter(context: &mut SyscallContext) -> Result<SyscallDisp
         )?;
     }
 
-    // ── Phase 3: Wait if needed ─────────────────────────────────────────────
+    // Phase 3: Wait if needed
     let should_wait = (flags & IORING_ENTER_GETEVENTS) != 0;
     if should_wait && min_complete > 0 && completed_this_round < min_complete as usize {
         // Wait with a default timeout, re-probing pending ops on wake.
@@ -191,14 +188,13 @@ pub(super) fn io_uring_enter(context: &mut SyscallContext) -> Result<SyscallDisp
         let _ = reprobe_pending_ops(&state, &process)?;
     }
 
-    // ── Phase 4: Write CQEs to user space ──────────────────────────────────
+    // Phase 4: Write CQEs to user space
     let written = flush_cqes(&state, cqes_ptr, cqes_capacity)?;
 
     Ok(SyscallDispatch::complete(written))
 }
 
-// ── SQE execution
-// ──────────────────────────────────────────────────────────────
+// SQE execution
 
 /// Execute a single SQE and return an optional CQE.
 ///
@@ -301,8 +297,7 @@ fn execute_sqe(
     }
 }
 
-// ── Pending op re-probe
-// ────────────────────────────────────────────────────────
+// Pending op re-probe
 
 /// Re-probe pending operations and produce CQEs for those that are ready.
 /// Returns the number of new completions produced.
@@ -360,8 +355,7 @@ fn reprobe_pending_ops_internal(
     Ok(new_completions)
 }
 
-// ── CQE flushing
-// ───────────────────────────────────────────────────────────────
+// CQE flushing
 
 /// Drain completed CQEs from the ring and write them to user memory.
 /// Returns the number of CQEs written.
@@ -406,8 +400,7 @@ fn flush_cqes(
     Ok(to_write)
 }
 
-// ── Helpers
-// ────────────────────────────────────────────────────────────────────
+// Helpers
 
 /// Create a success CQE.
 fn cqe_ok(user_data: u64, result: i32) -> IoUringCqe {
@@ -463,7 +456,7 @@ fn poll_check_fd(process: &Process, fd: FileDescriptor, events: u16) -> Result<b
     Ok(ready)
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

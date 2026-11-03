@@ -18,7 +18,7 @@ use super::DNS_TYPE_A;
 use super::DNS_TYPE_AAAA;
 use super::DNS_TYPE_PTR;
 
-// ── A record parsing ──
+// A record parsing
 
 /// Parse a DNS response and extract the first A record's IPv4 address.
 ///
@@ -37,7 +37,7 @@ pub(crate) fn parse_a_record_with_ttl(response: &[u8]) -> Result<(Ipv4Addr, u32)
         return Err(Error::DeviceError);
     }
 
-    // ── Header ──
+    // Header
     let flags = u16::from_be_bytes([response[2], response[3]]);
     let rcode = flags & DNS_FLAGS_RCODE_MASK;
     let qdcount = u16::from_be_bytes([response[4], response[5]]);
@@ -58,7 +58,7 @@ pub(crate) fn parse_a_record_with_ttl(response: &[u8]) -> Result<(Ipv4Addr, u32)
         return Err(Error::TimedOut);
     }
 
-    // ── Skip the question section ──
+    // Skip the question section
     let mut pos = DNS_HEADER_SIZE;
     for _ in 0..qdcount {
         pos = skip_name(response, pos)?;
@@ -68,7 +68,7 @@ pub(crate) fn parse_a_record_with_ttl(response: &[u8]) -> Result<(Ipv4Addr, u32)
         }
     }
 
-    // ── Scan answer RRs for an A record ──
+    // Scan answer RRs for an A record
     for _ in 0..ancount {
         pos = skip_name(response, pos)?;
 
@@ -108,7 +108,7 @@ pub(crate) fn parse_a_record_with_ttl(response: &[u8]) -> Result<(Ipv4Addr, u32)
     Err(Error::TimedOut)
 }
 
-// ── AAAA record parsing ──
+// AAAA record parsing
 
 /// Parse a DNS response and extract the first AAAA record's IPv6 address.
 ///
@@ -119,7 +119,7 @@ pub fn parse_aaaa_record(response: &[u8]) -> Result<Ipv6Addr> {
         return Err(Error::DeviceError);
     }
 
-    // ── Header ──
+    // Header
     let flags = u16::from_be_bytes([response[2], response[3]]);
     let rcode = flags & DNS_FLAGS_RCODE_MASK;
     let qdcount = u16::from_be_bytes([response[4], response[5]]);
@@ -140,7 +140,7 @@ pub fn parse_aaaa_record(response: &[u8]) -> Result<Ipv6Addr> {
         return Err(Error::TimedOut);
     }
 
-    // ── Skip the question section ──
+    // Skip the question section
     let mut pos = DNS_HEADER_SIZE;
     for _ in 0..qdcount {
         pos = skip_name(response, pos)?;
@@ -150,7 +150,7 @@ pub fn parse_aaaa_record(response: &[u8]) -> Result<Ipv6Addr> {
         }
     }
 
-    // ── Scan answer RRs for an AAAA record ──
+    // Scan answer RRs for an AAAA record
     for _ in 0..ancount {
         pos = skip_name(response, pos)?;
 
@@ -196,7 +196,7 @@ pub fn parse_aaaa_record(response: &[u8]) -> Result<Ipv6Addr> {
     Err(Error::TimedOut)
 }
 
-// ── PTR record parsing ──
+// PTR record parsing
 
 /// Parse a PTR DNS response and extract the first target hostname.
 ///
@@ -262,7 +262,7 @@ pub fn parse_ptr_record(response: &[u8]) -> Result<String> {
     Err(Error::TimedOut)
 }
 
-// ── Name decoding ──
+// Name decoding
 
 /// Read a DNS name (possibly compressed) into a String, starting at `pos`.
 ///

@@ -33,7 +33,7 @@ use super::types::XFS_DIR2_LEAF1_MAGIC;
 use super::types::XFS_DIR2_LEAFN_MAGIC;
 use crate::fs::vfs::XattrEntry;
 
-// ── Superblock ──────────────────────────────────────────────────────────────
+// Superblock
 
 pub fn read_superblock(device: &Arc<dyn BlockDevice>) -> Result<Superblock, Error> {
     let mut buf = vec![0u8; 512];
@@ -78,7 +78,7 @@ pub fn check_journal(sb: &Superblock) -> JournalInfo {
     }
 }
 
-// ── Inode I/O ───────────────────────────────────────────────────────────────
+// Inode I/O
 
 /// Compute the byte offset of an inode on disk.
 pub fn inode_addr(sb: &Superblock, ino: u64) -> (u64, u32) {
@@ -112,7 +112,7 @@ pub fn read_inode_buf(
     Ok((core, buf))
 }
 
-// ── Directory reading ───────────────────────────────────────────────────────
+// Directory reading
 
 /// Read directory entries from an inode (supports shortform and block formats).
 pub fn read_dir_from_inode(
@@ -286,7 +286,7 @@ fn read_block_dir_entries(
     Ok(entries)
 }
 
-// ── Extent / File reading ──────────────────────────────────────────────────
+// Extent / File reading
 
 /// Get extent list for a file inode.
 pub fn get_extents(
@@ -379,7 +379,7 @@ pub fn read_inline_file(
     Ok(n)
 }
 
-// ── Extended attributes ──────────────────────────────────────────────────────
+// Extended attributes
 
 /// List extended attributes for an inode.
 ///
@@ -428,5 +428,5 @@ pub fn list_xattrs_for_inode(
         .collect())
 }
 
-// ── Byte I/O ────────────────────────────────────────────────────────────────
+// Byte I/O
 // read_device_bytes is shared via super::btree::read_device_bytes

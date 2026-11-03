@@ -23,7 +23,7 @@
 
 use alloc::vec::Vec;
 
-// ─── Wire-format constants (RFC 3344) ──────────────────────────────────────
+// Wire-format constants (RFC 3344)
 
 /// ICMP type carried by every agent advertisement (Router Advertisement).
 pub const ICMP_TYPE_ROUTER_ADVERTISEMENT: u8 = 9;
@@ -41,7 +41,7 @@ pub const CARE_OF_EXT_HEADER_LEN: usize = 2;
 /// Size of a single care-of address in bytes.
 pub const ADDRESS_SIZE: usize = 4;
 
-// ─── Capability flags (mobility-agent extension) ───────────────────────────
+// Capability flags (mobility-agent extension)
 
 /// R — registration required.  The mobile node must register before using
 /// the care-of address.
@@ -59,7 +59,7 @@ pub const FLAG_VAN_JACOBSON: u8 = 0x04;
 /// T — tunnel reverse-encapsulation is supported.
 pub const FLAG_TUNNEL_REVERSE: u8 = 0x02;
 
-// ─── Agent advertisement ───────────────────────────────────────────────────
+// Agent advertisement
 
 /// A decoded Mobile IPv4 agent advertisement.
 ///
@@ -195,7 +195,7 @@ impl AgentAdvertisement {
     }
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

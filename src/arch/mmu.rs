@@ -182,7 +182,7 @@ pub fn phys_addr_of(virtual_address: usize) -> Option<usize> {
     }
 }
 
-// ── AArch64 hosts ───────────────────────────────────────────────────────
+// AArch64 hosts
 //
 // Bare-metal AArch64 owns the real preparation machinery (above).  A host
 // that is not x86_64 does not emulate a user address space at all, so the
@@ -313,7 +313,7 @@ pub fn activate_prepared_runtime_kernel_page_tables() -> Option<()> {
 pub type ForkClonedAddressSpace =
     crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>;
 
-// ── Primitives a target may not have ────────────────────────────────────
+// Primitives a target may not have
 //
 // Each stub names the reason in one line; the kernel-side documentation for
 // what they mean is on the real implementations (`aarch64::mmu`,
@@ -429,7 +429,7 @@ pub unsafe fn unmap_page(_virtual_address: usize) -> bool {
     false
 }
 
-// ── Diagnostics an architecture may not be able to answer ───────────────
+// Diagnostics an architecture may not be able to answer
 //
 // The kernel asks these about the tables it *prepared*, which is a thing only
 // x86_64 does here: it is the architecture whose runtime tables are built

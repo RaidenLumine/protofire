@@ -19,7 +19,7 @@ fn exhaust_pool(memory: &mut MemoryManager, chunk: usize) -> usize {
     count
 }
 
-// ── Frame exhaustion ───────────────────────────────────────────────────────
+// Frame exhaustion
 
 #[test]
 fn frame_allocator_eventually_exhausts_and_returns_none() {
@@ -86,7 +86,7 @@ fn frame_allocator_reclaims_fragmented_space() {
     }
 }
 
-// ── Large multi-frame allocation ──────────────────────────────────────────
+// Large multi-frame allocation
 
 #[test]
 fn large_contiguous_allocation_eventually_fails() {
@@ -102,7 +102,7 @@ fn large_contiguous_allocation_eventually_fails() {
     }
 }
 
-// ── Map/unmap cycles ──────────────────────────────────────────────────────
+// Map/unmap cycles
 
 #[test]
 fn map_and_unmap_small_ranges() {
@@ -151,7 +151,7 @@ fn re_map_same_address_after_unmap() {
     memory.unmap(base, 4).expect("final unmap");
 }
 
-// ── Allocate-and-free churn ───────────────────────────────────────────────
+// Allocate-and-free churn
 
 #[test]
 fn churn_with_varied_sizes() {

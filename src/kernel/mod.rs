@@ -97,7 +97,7 @@ const DEMO_WORKER_SLEEP_TICKS: u64 = 6;
 /// for placing a suitable init program here when building the boot disk.
 const DEFAULT_INIT_PATH: &str = "/system/init.elf";
 
-// ── Volume recovery summary ────────────────────────────────────────────
+// Volume recovery summary
 
 /// Accumulated volume recovery counters captured during `recover_volumes()`
 /// and queryable at runtime via the `SystemHealth` syscall.
@@ -183,12 +183,12 @@ impl Kernel {
             crate::memory::install_global_unchecked(&self.memory);
         }
 
-        // ── SMP AP discovery (must run before prepare_arch_paging) ──
+        // SMP AP discovery (must run before prepare_arch_paging)
         // The bootstrap identity map is still active at this point, so
         // ACPI tables at arbitrary physical addresses are readable.
         // Also save the boot CR3 before we switch page tables — the AP
         // trampoline needs the bootstrap identity map (first 4 GiB).
-        // ── Platform state the kernel needs before it switches tables ──
+        // Platform state the kernel needs before it switches tables
         // What has to be saved, and what the machine describes about itself,
         // are the machine's answers; the order they are asked in is here.
         crate::arch::platform::capture_early_state();
@@ -239,7 +239,7 @@ impl Kernel {
             t3,
         );
 
-        // ── Swap area initialisation ──
+        // Swap area initialisation
         // Scan registered block devices for a swap partition or device and
         // initialise the swap subsystem if one is found.  This must happen
         // after filesystem init (which registers block devices) and before
@@ -247,7 +247,7 @@ impl Kernel {
         #[cfg(target_os = "none")]
         self.maybe_init_swap();
 
-        // ── PCI/PCIe enumeration ──
+        // PCI/PCIe enumeration
         crate::arch::platform::enumerate_buses();
 
         // Initialize the bare-metal network stack if a VirtIO network device
@@ -328,7 +328,7 @@ impl Kernel {
                     );
                 }
 
-                // ── IPv6 SLAAC ──
+                // IPv6 SLAAC
                 // Armed here, driven by the tick path: the timer is configured
                 // later in the boot than the network, so a routine that *waited*
                 // on ticks would hang — which is why the blocking version was
@@ -436,7 +436,7 @@ impl Kernel {
         boot.set_recovery_summary(tx_recovered, tx_repaired, vol_checked, vol_repaired);
         let t4 = tick();
 
-        // ── BootReport: subsystem tracking continued ──
+        // BootReport: subsystem tracking continued
         use crate::abi::diagnostic::SUBSYSTEM_STATUS_OK;
 
         boot.record_subsystem("recovery", SUBSYSTEM_STATUS_OK, t3, t4);
@@ -471,17 +471,17 @@ impl Kernel {
         let t5 = tick();
         boot.record_subsystem("interrupts+timer", SUBSYSTEM_STATUS_OK, t4, t5);
 
-        // ── NUMA topology initialisation ──
+        // NUMA topology initialisation
         self.init_numa();
 
-        // ── Per-CPU data initialisation ──
+        // Per-CPU data initialisation
         // The machine installs the BSP's block and says which logical CPU
         // this is; riscv64's answer is the hart the boot protocol named.
         let bsp_cpu_id =
             crate::arch::percpu::install_bsp(&self.scheduler as *const Scheduler as *mut Scheduler);
         debug_assert_eq!(bsp_cpu_id, crate::kernel::percpu::get_mut().cpu_id);
 
-        // ── Set NUMA node ID on the BSP per-CPU data ──
+        // Set NUMA node ID on the BSP per-CPU data
         if let Some(topo) = topology::global() {
             // The CPU asking is the BSP, and which logical id that is belongs to
             // the architecture: 0 where the reset lands on CPU 0, and the hart
@@ -492,10 +492,10 @@ impl Kernel {
             println!("[init  ] BSP numa_node_id={}", node_id);
         }
 
-        // ── SMP AP bring-up ──
+        // SMP AP bring-up
         crate::arch::platform::bring_up_secondary_cpus();
 
-        // ── Devices whose interrupts are delivered by that controller ──
+        // Devices whose interrupts are delivered by that controller
         //
         // After the APs, because programming an MSI-X table *places* the
         // device's entries: an entry assigned to a CPU that has not enabled
@@ -506,7 +506,7 @@ impl Kernel {
         // can be checked without a driver.
         crate::arch::platform::program_device_msix();
 
-        // ── Power management (CPU frequency scaling) ──
+        // Power management (CPU frequency scaling)
         // Probe the architecture frequency driver and install the default
         // governor.  Safe on architectures without scaling support.
         crate::kernel::power::init();
@@ -521,7 +521,7 @@ impl Kernel {
         let t6 = tick();
         boot.record_subsystem("syscall-table", SUBSYSTEM_STATUS_OK, t5, t6);
 
-        // ── Audit subsystem ───────────────────────────────────────────
+        // Audit subsystem
         // The ring buffer has to exist before anything can produce a record:
         // `emit_record` drops what it is handed until then, and the boot path
         // is itself a producer — a privileged service declaration is audited
@@ -533,7 +533,7 @@ impl Kernel {
             crate::kernel::audit::global().map_or(0, |buffer| buffer.capacity())
         );
 
-        // ── Init program ──────────────────────────────────────────────
+        // Init program
         // Read the kernel command line to determine the init program path.
         // The distribution (protofire-os) passes `init=/system/init.elf` via
         // the bootloader (e.g. GRUB config).  Falls back to DEFAULT_INIT_PATH
@@ -623,7 +623,7 @@ impl Kernel {
         let t7 = tick();
         boot.record_subsystem("spawn", SUBSYSTEM_STATUS_OK, t6, t7);
 
-        // ── BootReport: memory layout snapshot from heap bounds ──
+        // BootReport: memory layout snapshot from heap bounds
         if let Some(mem) = crate::memory::global() {
             let (heap_start, heap_end) = mem.heap_bounds();
             boot.set_memory_layout(
@@ -731,7 +731,7 @@ impl Kernel {
             return;
         }
 
-        // ── Fallback: single-node configuration
+        // Fallback: single-node configuration
         //
         // online_cpu_count() returns 1 before AP bring-up, so on x86_64
         // without ACPI SRAT we will only see the BSP; the device-tree machines
@@ -1252,7 +1252,7 @@ fn transaction_log_entry_kind_label(kind: crate::fs::NodeKind) -> &'static str {
     }
 }
 
-// ── Worker registry ─────────────────────────────────────────────────────────
+// Worker registry
 // Maps worker entry names (from service config files) to kernel thread
 // entry-point functions.  Extended by the distribution when it needs
 // additional kernel worker threads.

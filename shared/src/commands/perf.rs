@@ -9,7 +9,7 @@ use crate::abi::diagnostic;
 use crate::syscall;
 use crate::types::CmdResult;
 
-// ─── perf ───────────────────────────────────────────────────────────────
+// perf
 
 /// Performance profiling command.
 ///
@@ -33,7 +33,7 @@ pub fn cmd_perf(argv: &[String]) -> CmdResult {
 pub fn cmd_perf_stat() -> CmdResult {
     let mut out = String::new();
 
-    // ── Alloc Profiler ──
+    // Alloc Profiler
     out.push_str("─── Alloc Profiler ───\n");
     {
         let mut buf = [0u8; diagnostic::ALLOC_PROFILER_RECORD_SIZE];
@@ -73,7 +73,7 @@ pub fn cmd_perf_stat() -> CmdResult {
         }
     }
 
-    // ── Fault Profiler ──
+    // Fault Profiler
     out.push_str("\n─── Fault Profiler ───\n");
     {
         let mut buf = [0u8; diagnostic::FAULT_PROFILER_RECORD_SIZE];
@@ -124,7 +124,7 @@ pub fn cmd_perf_stat() -> CmdResult {
         }
     }
 
-    // ── FS Profiler ──
+    // FS Profiler
     out.push_str("\n─── FS Profiler ───\n");
     {
         let mut buf = [0u8; diagnostic::FS_PROFILER_RECORD_SIZE];
@@ -150,7 +150,7 @@ pub fn cmd_perf_stat() -> CmdResult {
         }
     }
 
-    // ── Net Profiler ──
+    // Net Profiler
     out.push_str("\n─── Net Profiler ───\n");
     {
         let mut buf = [0u8; diagnostic::NET_PROFILER_RECORD_SIZE];
@@ -201,7 +201,7 @@ pub fn cmd_perf_stat() -> CmdResult {
 pub fn cmd_perf_sched() -> CmdResult {
     let mut out = String::new();
 
-    // ── Scheduler ──
+    // Scheduler
     out.push_str("─── Scheduler ───\n");
     {
         let mut buf = [0u8; diagnostic::SYSTEM_INFO_RECORD_SIZE];
@@ -238,7 +238,7 @@ pub fn cmd_perf_sched() -> CmdResult {
         }
     }
 
-    // ── Per-CPU ──
+    // Per-CPU
     out.push_str("\n─── Per-CPU ───\n");
     {
         let mut buf = [0u8; diagnostic::PER_CPU_RECORD_SIZE];

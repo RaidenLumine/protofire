@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use super::*;
 
-// ─── History recording ────────────────────────────────────────────────
+// History recording
 
 /// Append `line` to the command history, capping the history at
 /// [`HISTORY_MAX`] entries and skipping consecutive duplicates.
@@ -27,7 +27,7 @@ pub(crate) fn add_history(line: &str) {
     }
 }
 
-// ── History expansion ─────────────────────────────────────────────────
+// History expansion
 
 /// Expand `!!` (last command), `!N` (Nth command), and `!-N` (N commands
 /// back) references in `line`.  Unresolvable references are left literal.
@@ -86,7 +86,7 @@ pub(crate) fn expand_history(line: String) -> String {
     result
 }
 
-// ── tests ─────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

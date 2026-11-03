@@ -17,7 +17,7 @@ use crate::fs::vfs::XattrEntry;
 
 pub const BLOCK_SIZE: usize = 512;
 
-// ── BPB / Boot sector ─────────────────────────────────────────────────────
+// BPB / Boot sector
 
 pub const NTFS_MAGIC: &[u8; 4] = b"NTFS";
 
@@ -87,7 +87,7 @@ impl BootSector {
     }
 }
 
-// ── MFT Record ────────────────────────────────────────────────────────────
+// MFT Record
 
 pub const MFT_MAGIC: [u8; 4] = *b"FILE";
 pub const MFT_RECORD_IN_USE: u16 = 0x0001;
@@ -129,7 +129,7 @@ impl MftRecordHeader {
     }
 }
 
-// ── Attributes ────────────────────────────────────────────────────────────
+// Attributes
 
 pub const ATTR_TYPE_STANDARD_INFO: u32 = 0x10;
 /// The list of a record's attributes and the records that hold them, which a
@@ -500,7 +500,7 @@ pub fn parse_ea_entries(content: &[u8]) -> Vec<XattrEntry> {
     entries
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

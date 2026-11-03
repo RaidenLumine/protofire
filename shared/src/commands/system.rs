@@ -21,7 +21,7 @@ use crate::types::CmdResult;
 // constants for the `test` command
 const KERNEL_VER: &str = env!("CARGO_PKG_VERSION");
 
-// ─── help ───────────────────────────────────────────────────────────────
+// help
 
 pub fn cmd_help(argv: &[String]) -> CmdResult {
     let output = if argv.len() > 1 {
@@ -102,7 +102,7 @@ pub fn cmd_help(argv: &[String]) -> CmdResult {
     CmdResult::from_output(output)
 }
 
-// ─── echo, clear ────────────────────────────────────────────────────────
+// echo, clear
 
 pub fn cmd_echo(argv: &[String]) -> CmdResult {
     let mut out = String::new();
@@ -120,7 +120,7 @@ pub fn cmd_clear() -> CmdResult {
     CmdResult::from_output(String::from("\x1b[2J\x1b[H"))
 }
 
-// ─── test / [ ───────────────────────────────────────────────────────────
+// test / [
 
 /// `test` / `[` — evaluate an expression and return 0 (true) or 1 (false).
 pub fn cmd_test(cwd: &str, argv: &[String]) -> CmdResult {
@@ -242,12 +242,12 @@ fn test_int_cmp<F: Fn(i64, i64) -> bool>(a: &str, b: &str, cmp: F) -> i32 {
     }
 }
 
-// ─── sysinfo ────────────────────────────────────────────────────────────
+// sysinfo
 
 pub fn cmd_sysinfo() -> CmdResult {
     let mut out = String::new();
 
-    // ── System section ──
+    // System section
     out.push_str("─── System ───\n");
     out.push_str(&format!("OS:      Protofire {}\n", KERNEL_VER));
     out.push_str("Arch:    ");
@@ -277,7 +277,7 @@ pub fn cmd_sysinfo() -> CmdResult {
                 info.process_count, info.ready_count, info.waiting_count,
             ));
 
-            // ── Scheduler section ──
+            // Scheduler section
             out.push_str("\n─── Scheduler ───\n");
             out.push_str(&format!("dispatch:       {}\n", info.dispatch_count));
             out.push_str(&format!("block:          {}\n", info.block_count));
@@ -294,7 +294,7 @@ pub fn cmd_sysinfo() -> CmdResult {
         }
     }
 
-    // ── Memory section ──
+    // Memory section
     out.push_str("\n─── Memory ───\n");
     {
         let mut alloc_buf = [0u8; diagnostic::ALLOC_PROFILER_RECORD_SIZE];
@@ -330,7 +330,7 @@ pub fn cmd_sysinfo() -> CmdResult {
         }
     }
 
-    // ── Fault section ──
+    // Fault section
     out.push_str("\n─── Faults ───\n");
     {
         let mut fault_buf = [0u8; diagnostic::FAULT_PROFILER_RECORD_SIZE];
@@ -405,7 +405,7 @@ pub fn cmd_sysinfo() -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ─── top ────────────────────────────────────────────────────────────────
+// top
 
 pub fn cmd_top(argv: &[String]) -> CmdResult {
     let mut count: usize = 10;
@@ -482,7 +482,7 @@ pub fn cmd_top(argv: &[String]) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── ABI diagnostic decode helpers ───────────────────────────────────────
+// ABI diagnostic decode helpers
 
 fn decode_thread_priority(priority: u64) -> &'static str {
     match priority {
@@ -503,7 +503,7 @@ fn process_name_from_record(record: &diagnostic::ProcessInfoRecord) -> &str {
     core::str::from_utf8(&record.name[..nul_pos]).unwrap_or("?")
 }
 
-// ─── dmesg ──────────────────────────────────────────────────────────────
+// dmesg
 
 pub fn cmd_dmesg(argv: &[String]) -> CmdResult {
     // Parse optional -l <level> flag.
@@ -595,7 +595,7 @@ fn level_to_log_prefix(level: &str) -> &str {
     }
 }
 
-// ─── uname ──────────────────────────────────────────────────────────────
+// uname
 
 pub fn cmd_uname(argv: &[String]) -> CmdResult {
     let all = argv.len() > 1 && argv[1] == "-a";
@@ -610,7 +610,7 @@ pub fn cmd_uname(argv: &[String]) -> CmdResult {
     CmdResult::from_output(output)
 }
 
-// ─── sleep ──────────────────────────────────────────────────────────────
+// sleep
 
 pub fn cmd_sleep(argv: &[String]) -> CmdResult {
     if argv.len() < 2 {
@@ -624,7 +624,7 @@ pub fn cmd_sleep(argv: &[String]) -> CmdResult {
     CmdResult::empty()
 }
 
-// ─── uptime ─────────────────────────────────────────────────────────────
+// uptime
 
 pub fn cmd_uptime() -> CmdResult {
     let mut sched_buf = [0u8; diagnostic::SYSTEM_INFO_RECORD_SIZE];

@@ -158,7 +158,7 @@ impl Process {
         }
     }
 
-    // ─── Local (Unix domain) socket operations ──────────────────────────
+    // Local (Unix domain) socket operations
 
     fn local_socket_object(socket: Arc<LocalSocket>) -> KernelObject {
         KernelObject::LocalSocket(socket)

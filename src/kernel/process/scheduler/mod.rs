@@ -27,7 +27,7 @@ use super::Thread;
 use super::ThreadPriority;
 use super::THREAD_PRIORITY_COUNT;
 
-// ── Submodule declarations ──
+// Submodule declarations
 pub(crate) mod address;
 pub(crate) mod api;
 pub(crate) mod dispatch;
@@ -44,7 +44,7 @@ pub(crate) mod timer;
 pub(crate) mod types;
 pub(crate) mod waker;
 
-// ── Re-exports ──
+// Re-exports
 pub use api::on_local_timer_tick_with_preemption;
 pub use api::on_timer_tick;
 pub use api::on_timer_tick_with_preemption;
@@ -63,13 +63,13 @@ pub(crate) use types::SchedulerHotspotStats;
 pub(crate) use types::SchedulerStats;
 pub(crate) use types::TimedWaiter;
 
-// ── Constants ──
+// Constants
 pub const TIME_SLICE_TICKS: u64 = 2;
 
 pub(crate) const BOOST_THRESHOLD_TICKS: u64 = 50;
 pub(crate) const BOOST_DURATION_TICKS: u64 = 8;
 
-// ── Global scheduler pointer ──
+// Global scheduler pointer
 #[cfg(not(test))]
 static CURRENT_SCHEDULER: AtomicPtr<Scheduler> = AtomicPtr::new(ptr::null_mut());
 #[cfg(test)]
@@ -77,7 +77,7 @@ std::thread_local! {
     static CURRENT_SCHEDULER: Cell<*mut Scheduler> = const { Cell::new(ptr::null_mut()) };
 }
 
-// ── Pointer helpers ──
+// Pointer helpers
 //
 // The shared slot below is the host's: on bare metal a scheduler is found
 // through the CPU's own pointer, so nothing writes this one there.
@@ -125,7 +125,7 @@ pub(crate) fn clear_thread_local_scheduler_slot() {
     CURRENT_SCHEDULER.with(|slot| slot.set(ptr::null_mut()));
 }
 
-// ── Scheduler struct ──
+// Scheduler struct
 pub struct Scheduler {
     ready_queues: Mutex<[VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT]>,
     waiting_queue: Mutex<Vec<TimedWaiter>>,

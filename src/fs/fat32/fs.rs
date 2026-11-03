@@ -145,7 +145,7 @@ impl FatFs {
         Ok(())
     }
 
-    // ─── FSInfo bookkeeping + durability ───────────────────────────────────
+    // FSInfo bookkeeping + durability
 
     /// Read the FAT32 FSInfo sector, adopting its free-cluster count and
     /// next-free-cluster hint when the structure validates.  FAT12/16 and

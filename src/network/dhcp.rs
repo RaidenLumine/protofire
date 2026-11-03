@@ -51,7 +51,7 @@ pub enum LeaseState {
     Expired,
 }
 
-// ── Protocol constants (RFC 2131 / 2132) ───────────────────────────────
+// Protocol constants (RFC 2131 / 2132)
 
 const DHCP_SERVER_PORT: u16 = 67;
 const DHCP_CLIENT_PORT: u16 = 68;
@@ -97,7 +97,7 @@ const DEFAULT_REBINDING_TICKS: u64 = DEFAULT_LEASE_TICKS * 7 / 8;
 /// How many ticks to wait for each DHCP response before timing out.
 const RESPONSE_TIMEOUT_TICKS: u64 = 200; // 2 s at 100 Hz
 
-// ── Option parsing helpers ─────────────────────────────────────────────
+// Option parsing helpers
 
 /// Walk the DHCP options field, invoking `visitor` for each option.
 ///
@@ -148,7 +148,7 @@ fn read_ipv4(bytes: &[u8]) -> Option<Ipv4Addr> {
     Some([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
-// ── Message builders ───────────────────────────────────────────────────
+// Message builders
 
 /// Build a BOOTP header with the given message type and options appended.
 fn build_bootp_message(
@@ -219,7 +219,7 @@ fn build_bootp_message(
     msg
 }
 
-// ── Lease parsing ──────────────────────────────────────────────────────
+// Lease parsing
 
 /// Parse a DHCPOFFER / DHCPACK message into a [`DhcpLease`].
 ///
@@ -300,7 +300,7 @@ pub fn parse_dhcp_reply(msg: &[u8]) -> Option<DhcpLease> {
     })
 }
 
-// ── Public API ─────────────────────────────────────────────────────────
+// Public API
 
 /// Perform the DISCOVER → OFFER → REQUEST → ACK handshake and return the
 /// negotiated lease.

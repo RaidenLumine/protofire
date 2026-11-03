@@ -131,7 +131,7 @@ extern "C" fn aarch64_trap_dispatch(frame: &mut TrapFrame) {
     validate_user_entry_frame_or_terminate(frame, entered_from_user);
     capture_current_user_context(frame);
 
-    // ── NMI-class exceptions (SError / FIQ) ───────────────────────────
+    // NMI-class exceptions (SError / FIQ)
     // SError (the architectural NMI) and FIQ (used as a higher-priority
     // interrupt on some systems) are not masked by the normal IRQ mask.
     // They run on a dedicated minimal path: count, run registered NMI
@@ -167,7 +167,7 @@ extern "C" fn aarch64_trap_dispatch(frame: &mut TrapFrame) {
         return;
     }
 
-    // ── fault profiler: unhandled trap fatal ──
+    // fault profiler: unhandled trap fatal
     if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
@@ -215,7 +215,7 @@ fn validate_user_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool, 
     ) {
         exception::UserFrameValidationAction::Continue => return,
         exception::UserFrameValidationAction::TerminateCurrentThread => {
-            // ── fault profiler: invalid frame termination ──
+            // fault profiler: invalid frame termination
             if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_terminated();
             }
@@ -240,7 +240,7 @@ fn validate_user_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool, 
         exception::UserFrameValidationAction::FatalWithoutCurrentThread => {}
     }
 
-    // ── fault profiler: kernel fatal ──
+    // fault profiler: kernel fatal
     if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
@@ -279,7 +279,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
     );
     let fault_address = lower_el_sync_fault_address(frame);
 
-    // ── fault profiler: lower-EL sync exception counters ──
+    // fault profiler: lower-EL sync exception counters
     if class != exception::EXCEPTION_CLASS_SVC64 {
         if let Some(memory) = crate::memory::global_mut() {
             memory.fault_profiler.inc_faults_total();
@@ -303,7 +303,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
         }
     }
 
-    // ── demand-paging / CoW resolution for user-mode page faults ──
+    // demand-paging / CoW resolution for user-mode page faults
     // Attempt MemoryManager::resolve_page_fault before falling through
     // to user-exception delivery.  When the faulting page is registered
     // as DemandPaged or Cow in the software PageTable, this call handles
@@ -334,7 +334,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
                     fault_address,
                     frame.elr
                 );
-                // ── fault profiler: kernel fatal ──
+                // fault profiler: kernel fatal
                 if let Some(memory) = crate::memory::global_mut() {
                     memory.fault_profiler.inc_faults_kernel_fatal();
                 }
@@ -416,7 +416,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
             ) {
                 if let Some(reason) = lower_el_sync_termination_reason(frame) {
                     log_user_exception_termination(frame);
-                    // ── fault profiler: user exception termination ──
+                    // fault profiler: user exception termination
                     if let Some(memory) = crate::memory::global_mut() {
                         memory.fault_profiler.inc_faults_terminated();
                     }
@@ -573,14 +573,14 @@ fn deliver_lower_el_sync_user_exception(
         lower_el_sync_fault_address(frame),
     ) {
         Ok(true) => {
-            // ── fault profiler: delivered to user handler ──
+            // fault profiler: delivered to user handler
             if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_delivered_to_handler();
             }
             Ok(ExceptionRecoveryActionResult::Applied)
         }
         Ok(false) => {
-            // ── fault profiler: no user handler ──
+            // fault profiler: no user handler
             if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_no_handler();
             }
@@ -742,7 +742,7 @@ fn handle_irq(frame: &mut TrapFrame) {
         (0, None)
     };
 
-    // ── SGI (IPI) dispatch ─────────────────────────────────────────
+    // SGI (IPI) dispatch
     // SGIs arrive as interrupt IDs 0-15.  Handle them here before the
     // general IRQ disposition logic.
     if let Some(acknowledge) = acknowledge.as_ref() {
@@ -762,7 +762,7 @@ fn handle_irq(frame: &mut TrapFrame) {
         }
     }
 
-    // ── LPI (message-signalled) dispatch ───────────────────────────
+    // LPI (message-signalled) dispatch
     // A device signals by writing the address its MSI-X table entry names, and
     // what arrives is an LPI: an identity above the wire-driven range whose
     // handler was registered before the device was allowed to signal.  An
@@ -782,7 +782,7 @@ fn handle_irq(frame: &mut TrapFrame) {
         }
     }
 
-    // ── Wire-driven (SPI) dispatch ─────────────────────────────────
+    // Wire-driven (SPI) dispatch
     // A wired interrupt is an identity too, and the console UART claims its
     // own in the registry before it is armed.  An SPI nobody claimed falls
     // through to the disposition below, whose warn path names it.
@@ -1033,7 +1033,7 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     // Consume the signal.
     let _ = process.take_pending_signal();
 
-    // ── Build the SignalFrame on the user stack ────────────────────
+    // Build the SignalFrame on the user stack
     //
     // Stack layout (addresses descending, AArch64 stack grows down):
     //
@@ -1069,7 +1069,7 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
         return;
     }
 
-    // ── SA_RESTART ─────────────────────────────────────────────────
+    // SA_RESTART
     // On AArch64 (and RISC-V) an async signal is only ever delivered on
     // an IRQ frame returning to user mode, and the interrupted ELR there
     // is never an *executed* SVC: an SVC traps synchronously, so the IRQ
@@ -1096,7 +1096,7 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
         core::ptr::write(signal_frame_base as *mut AArch64SignalFrame, sig_frame);
     }
 
-    // ── Rewrite TrapFrame for handler entry ────────────────────────
+    // Rewrite TrapFrame for handler entry
     frame.elr = handler_addr;
     frame.stack_pointer = signal_frame_base;
     frame.x0 = signal_num as u64; // x0 = first argument (signal number)

@@ -35,7 +35,7 @@ use crate::Error;
 /// names the layer's own door instead of the kernel module underneath it.
 pub use crate::kernel::crypto::crc32;
 
-// ── ChecksumPolicy ─────────────────────────────────────────────────────────
+// ChecksumPolicy
 
 /// Controls how the system reacts to a checksum mismatch.
 ///
@@ -53,7 +53,7 @@ pub enum ChecksumPolicy {
     Off,
 }
 
-// ── ChecksumVerifier ───────────────────────────────────────────────────────
+// ChecksumVerifier
 
 /// Unified checksum verification interface for filesystem drivers.
 ///

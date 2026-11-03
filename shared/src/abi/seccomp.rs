@@ -9,17 +9,17 @@
 //! (ALLOW / KILL / TRAP).  Rules are evaluated in order; first match wins.
 //! If no rule matches, a configurable default action is applied.
 
-// ── Syscall number ─────────────────────────────────────────────────────────
+// Syscall number
 
 /// `Seccomp (#129)`: secure computing — set syscall filter rules.
 pub const SYS_SECCOMP: usize = 129;
 
-// ── Seccomp commands (passed as `operation` to the syscall) ───────────────
+// Seccomp commands (passed as `operation` to the syscall)
 
 /// Set the seccomp filter from a userspace rule array.
 pub const SECCOMP_SET_MODE_FILTER: i32 = 1;
 
-// ── Rule actions ──────────────────────────────────────────────────────────
+// Rule actions
 
 /// Allow the syscall to proceed normally.
 pub const SECCOMP_ACTION_ALLOW: u32 = 0;
@@ -28,7 +28,7 @@ pub const SECCOMP_ACTION_KILL: u32 = 1;
 /// Deliver SIGSYS to the calling process (trap).
 pub const SECCOMP_ACTION_TRAP: u32 = 2;
 
-// ── Filter rule types ─────────────────────────────────────────────────────
+// Filter rule types
 
 /// A single seccomp filter rule.
 ///
@@ -62,7 +62,7 @@ pub struct SeccompRuleHeader {
     pub flags: u32,
 }
 
-// ── Wire sizes ────────────────────────────────────────────────────────────
+// Wire sizes
 
 /// Wire size of a single filter rule.
 pub const SECCOMP_FILTER_RULE_SIZE: usize = 12;
@@ -73,7 +73,7 @@ pub const SECCOMP_RULE_HEADER_SIZE: usize = 12;
 /// Maximum number of filter rules per process.
 pub const SECCOMP_MAX_RULES: usize = 128;
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

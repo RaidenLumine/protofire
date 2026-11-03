@@ -274,7 +274,7 @@ pub fn write_mbr_partitions(sector: &mut [u8], partitions: &MbrPartitionTable) -
     Ok(())
 }
 
-// ── GPT ─────────────────────────────────────────────────────────────────
+// GPT
 
 /// The type byte a protective MBR's first entry carries: "the real table is the
 /// GPT, and this entry describes the whole disk so that a reader which knows

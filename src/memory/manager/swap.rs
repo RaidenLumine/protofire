@@ -221,7 +221,7 @@ impl MemoryManager {
             .count()
     }
 
-    // ── swap support ─────────────────────────────────────────────────────
+    // swap support
 
     /// Initialise a swap area on `device` starting at `start_lba` with
     /// capacity for `page_count` page slots (each 4096 bytes / 8 blocks).
@@ -256,7 +256,7 @@ impl MemoryManager {
         }
     }
 
-    // ── CoW frame reference counting ─────────────────────────────────────
+    // CoW frame reference counting
 
     /// Increment the reference count for a shared CoW frame.
     ///

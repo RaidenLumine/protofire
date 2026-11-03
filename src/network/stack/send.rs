@@ -40,7 +40,7 @@ impl NetworkStack {
     /// IP rather than the final destination.
     pub fn send_ipv4_packet(&self, dst_ip: Ipv4Addr, raw_ip: Vec<u8>) -> Result<()> {
         self.profiler.inc_ipv4_packets_tx();
-        // ── Packet filter: outbound check ──────────────────────────────
+        // Packet filter: outbound check
         // The filter sees the original (pre-encapsulation) packet.
         if let Ok(parsed) = ipv4::parse_packet(&raw_ip) {
             let mut filter = self.filter_table.lock();
@@ -54,7 +54,7 @@ impl NetworkStack {
                 return Ok(());
             }
         }
-        // ── IPsec outbound transform ───────────────────────────────────
+        // IPsec outbound transform
         // ESP/AH may wrap the packet and change its destination (tunnel
         // mode).  `None` means the packet was discarded by SPD policy.
         let (dst_ip, raw_ip) =
@@ -62,7 +62,7 @@ impl NetworkStack {
                 Some(transformed) => transformed,
                 None => return Ok(()),
             };
-        // ── NAT outbound translation (SNAT) ───────────────────────────
+        // NAT outbound translation (SNAT)
         let raw_ip = {
             let mut nat_table = self.nat_table.lock();
             let translated = nat_table.snat_ipv4(&raw_ip, self.current_tick());
@@ -111,7 +111,7 @@ impl NetworkStack {
     /// the packet in an Ethernet frame.
     pub fn send_ipv6_packet(&self, dst_ip: Ipv6Addr, raw_ip: Vec<u8>) -> Result<()> {
         self.profiler.inc_ipv6_packets_tx();
-        // ── IPsec outbound transform (IPv6) ───────────────────────────
+        // IPsec outbound transform (IPv6)
         let (dst_ip, raw_ip) =
             match crate::network::ipsec::transform::process_outbound_v6(self, dst_ip, raw_ip)? {
                 Some(transformed) => transformed,
@@ -125,7 +125,7 @@ impl NetworkStack {
             crate::network::internet::icmpv6::resolve_mac_v6(self, dst_ip)?
         };
 
-        // ── Path MTU / fragmentation (RFC 8201) ──────────────────────
+        // Path MTU / fragmentation (RFC 8201)
         // The effective MTU is the minimum of the device MTU, the link MTU
         // learned from Router Advertisements, and any cached per-destination
         // PMTU from an ICMPv6 Packet Too Big.  Oversized packets are

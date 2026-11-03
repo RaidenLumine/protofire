@@ -22,12 +22,12 @@ use crate::network::internet::ipv6::{self};
 use crate::Error;
 use crate::Result;
 
-// ─── UDP constants ───
+// UDP constants
 
 /// UDP header size in bytes.
 pub const UDP_HEADER_SIZE: usize = 8;
 
-// ─── UDP header ───
+// UDP header
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UdpHeader {
@@ -43,7 +43,7 @@ pub struct UdpDatagram {
     pub payload: Vec<u8>,
 }
 
-// ─── Parse / build ───
+// Parse / build
 
 /// Parse a UDP datagram from a byte slice.
 pub fn parse_datagram(data: &[u8]) -> Result<UdpDatagram> {
@@ -154,7 +154,7 @@ pub fn build_datagram_with_checksum(
     buf
 }
 
-// ─── UDP socket table ───
+// UDP socket table
 
 /// A bound UDP socket with a receive queue and a wait queue.
 pub struct UdpSocket {
@@ -555,7 +555,7 @@ impl UdpSocketTable {
     }
 }
 
-// ─── Integration helpers ───
+// Integration helpers
 
 /// Build an IPv4 packet containing a UDP datagram.
 pub fn build_udp_ipv4_packet(
@@ -683,7 +683,7 @@ pub fn send_to_v6(
     stack.send_ipv6_packet(dest_ip, raw)
 }
 
-// ─── tests ───
+// tests
 
 #[cfg(test)]
 mod tests {
@@ -924,7 +924,7 @@ mod tests {
         assert_eq!(&udp.payload, b"test");
     }
 
-    // ─── send_to tests (needs a NetworkStack with mock device) ───
+    // send_to tests (needs a NetworkStack with mock device)
 
     use crate::network::link::device::mock::MockNetworkDevice;
     use crate::network::link::ethernet::MacAddress;

@@ -11,7 +11,7 @@ use alloc::string::String;
 
 use crate::kernel::user;
 
-// ─── login / su ────────────────────────────────────────────────────────
+// login / su
 
 pub(crate) fn cmd_login(cwd: &str, argv: &[String]) -> String {
     let username = if argv.len() > 1 && !argv[1].starts_with('-') {

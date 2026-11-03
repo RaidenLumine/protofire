@@ -39,7 +39,7 @@ use core::sync::atomic::Ordering;
 
 pub use crate::drivers::nvme_protocol::*;
 
-// ─── Interrupts ───────────────────────────────────────────────────────
+// Interrupts
 //
 // The controller's completions are message-signalled like every other PCIe
 // device's: the driver claims one MSI-X table entry, the platform programs
@@ -217,7 +217,7 @@ pub fn driver() -> Arc<dyn Driver> {
     Arc::new(NvmeDriver)
 }
 
-// ─── NVMe controller ──────────────────────────────────────────────────
+// NVMe controller
 
 /// Per-I/O-queue mutable state that is protected by `io_state`.
 struct NvmeIoState {
@@ -321,7 +321,7 @@ impl NvmeController {
             use core::ptr::read_volatile;
             use core::ptr::write_volatile;
 
-            // ── 1. Read controller capabilities ──────────────────────────
+            // 1. Read controller capabilities
             let cap: u64 = read_volatile(bar0.add(NVME_REG_CAP) as *const u64);
             // CAP.MQES is a spec-defined 16-bit field (max 65535); +1 fits in
             // u32 (max 65536).  The CAP_MQES_MASK constant already extracts only
@@ -338,7 +338,7 @@ impl NvmeController {
             let iosq_entries = queue_entries;
             let iocq_entries = queue_entries;
 
-            // ── 2. Disable controller ────────────────────────────────────
+            // 2. Disable controller
             // CC.EN = 0
             write_volatile(bar0.add(NVME_REG_CC) as *mut u32, 0);
             // Wait for CSTS.RDY = 0
@@ -355,7 +355,7 @@ impl NvmeController {
                 core::hint::spin_loop();
             }
 
-            // ── 3. Allocate queue DMA buffers ────────────────────────────
+            // 3. Allocate queue DMA buffers
             let asq_frames = ((asq_entries as usize * SQ_ENTRY_SIZE)
                 .saturating_add(NVME_PAGE_SIZE - 1))
                 / NVME_PAGE_SIZE;
@@ -388,7 +388,7 @@ impl NvmeController {
                 });
             }
 
-            // ── 4. Configure admin queues ────────────────────────────────
+            // 4. Configure admin queues
             // AQA: ACQS (11:0) | ASQS (27:16)
             let aqa = ((acq_entries - 1) & 0xFFF) | (((asq_entries - 1) & 0xFFF) << 16);
             write_volatile(bar0.add(NVME_REG_AQA) as *mut u32, aqa);
@@ -396,7 +396,7 @@ impl NvmeController {
             write_volatile(bar0.add(NVME_REG_ASQ) as *mut u64, asq.phys_addr() as u64);
             write_volatile(bar0.add(NVME_REG_ACQ) as *mut u64, acq.phys_addr() as u64);
 
-            // ── 5. Enable controller ─────────────────────────────────────
+            // 5. Enable controller
             let cc = CC_EN | ((6_u32) << 16) | ((4_u32) << 20); // IOSQES=6 (64 B), IOCQES=4 (16 B)
             write_volatile(bar0.add(NVME_REG_CC) as *mut u32, cc);
             // Wait for CSTS.RDY = 1
@@ -413,7 +413,7 @@ impl NvmeController {
                 core::hint::spin_loop();
             }
 
-            // ── 6. Identify controller & namespace ───────────────────────
+            // 6. Identify controller & namespace
             // Use a temporary DMA buffer for the 4 KiB identify response.
             let identify_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
             let mut ctrl = Self {
@@ -478,7 +478,7 @@ impl NvmeController {
             // drop the temporary identify buffer
             drop(identify_buf);
 
-            // ── 7. Create I/O queue pair ─────────────────────────────────
+            // 7. Create I/O queue pair
             // Create I/O CQ (qid=1, vector=0, contiguous)
             let iocq_phys = ctrl.iocq.phys_addr() as u64;
             let mut sqe = NvmeSqe::zeroed();
@@ -831,7 +831,7 @@ impl NvmeController {
     }
 }
 
-// ─── BlockDevice implementation ───────────────────────────────────────
+// BlockDevice implementation
 
 impl BlockDevice for NvmeController {
     fn name(&self) -> &str {
@@ -1021,7 +1021,7 @@ impl BlockDevice for NvmeController {
     }
 }
 
-// ─── Probe and boot-disk selection ────────────────────────────────────
+// Probe and boot-disk selection
 
 /// Ask the platform for an NVMe function and keep its registers for
 /// `probe_boot_disk` to initialise.

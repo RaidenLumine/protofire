@@ -4,7 +4,7 @@
 //! across the user-program loader, catalog resolution, and ELF-image planning
 //! layers.
 
-// ── catalog / app paths ───────────────────────────────────────────────
+// catalog / app paths
 
 // Shell paths are kept ungated because the kernel-resident shell module
 // needs them for re-spawn and argv0 matching.
@@ -83,7 +83,7 @@ pub const DEMO_VIRGL_CURRENT_PATH: &str = "/apps/current/demo-launcher-virgl.tom
 #[cfg(any(feature = "demo-disk", test))]
 pub const DEMO_VIRGL_PROGRAM_PATH: &str = "/apps/packages/demo-launcher-virgl/bin/demo.elf";
 
-// ── demo data paths ───────────────────────────────────────────────────
+// demo data paths
 
 #[cfg(any(feature = "demo-disk", test))]
 pub const DEMO_DATA_PATH: &str = "/data/users/guest/documents/readme.txt";
@@ -118,7 +118,7 @@ pub(crate) const DEMO_RUST_IO_CHILD_ENV0: &str = "PROTOFIRE_APP_ID=demo-launcher
 #[cfg(any(feature = "demo-disk", test))]
 pub(crate) const DEMO_RUST_IO_CHILD_ENV1: &str = "PROTOFIRE_PARENT=demo-launcher-rust-io";
 
-// ── installed-app roots ───────────────────────────────────────────────
+// installed-app roots
 
 // Installed applications live under `/apps` with versioned catalogs in
 // `/apps/catalog`, active redirects in `/apps/current`, and package payloads
@@ -128,7 +128,7 @@ pub(crate) const INSTALLED_CURRENT_ROOT: &str = "/apps/current";
 pub(crate) const INSTALLED_PACKAGE_ROOT: &str = "/apps/packages";
 pub(crate) const MAX_CATALOG_REDIRECT_DEPTH: usize = 8;
 
-// ── ELF / page-size constants ─────────────────────────────────────────
+// ELF / page-size constants
 
 // Keep the demo ELF well above the low kernel image/heap window so the
 // bare-metal combined process root can map it without colliding with the
@@ -147,7 +147,7 @@ pub const USER_EXCEPTION_STACK_SIZE: usize = 64 * 1024;
 pub const USER_IMAGE_STACK_GAP: usize = 64 * 1024;
 pub const X86_64_USER_STACK_TOP: usize = 0x0000_7FFF_FFFF_F000;
 
-// ── ASLR constants ──────────────────────────────────────────────────────────
+// ASLR constants
 // Random slides applied at ELF load time to randomize the process address
 // space.  Only active on bare metal (`target_os = "none"`); host tests get
 // zero slide for deterministic behaviour.
@@ -160,13 +160,13 @@ pub const ASLR_ELF_SLIDE_MAX: usize = 256 * USER_PAGE_SIZE; // 1 MiB
 /// 256 KiB = 64 pages of entropy.
 pub const ASLR_STACK_SLIDE_MAX: usize = 64 * USER_PAGE_SIZE; // 256 KiB
 
-// ── const fns ─────────────────────────────────────────────────────────
+// const fns
 
 pub(crate) const fn default_user_stack_top() -> usize {
     X86_64_USER_STACK_TOP
 }
 
-// ── alignment / range utilities ───────────────────────────────────────
+// alignment / range utilities
 
 pub(crate) const fn align_down(value: usize, align: usize) -> usize {
     value & !(align - 1)

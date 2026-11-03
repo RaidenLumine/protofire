@@ -20,7 +20,7 @@ use super::types::COMPRESSION_ZSTD;
 use super::types::METADATA_UNCOMPRESSED;
 use super::types::SUPERBLOCK_SIZE;
 
-// ── Superblock ────────────────────────────────────────────────────────────
+// Superblock
 
 pub fn read_superblock(device: &Arc<dyn BlockDevice>) -> Result<Superblock, Error> {
     let mut buf = [0u8; SUPERBLOCK_SIZE];
@@ -28,7 +28,7 @@ pub fn read_superblock(device: &Arc<dyn BlockDevice>) -> Result<Superblock, Erro
     Superblock::parse(&buf).ok_or(Error::InvalidArgument)
 }
 
-// ── Inode table loading ───────────────────────────────────────────────────
+// Inode table loading
 
 /// Load and decompress the entire inode table.
 ///
@@ -40,7 +40,7 @@ pub fn load_inode_table(device: &Arc<dyn BlockDevice>, sb: &Superblock) -> Resul
     read_metadata(device, sb, SUPERBLOCK_SIZE as u64)
 }
 
-// ── Directory reading ─────────────────────────────────────────────────────
+// Directory reading
 
 /// Read directory entries from a directory inode.
 pub fn read_dir_entries(
@@ -62,7 +62,7 @@ pub fn read_dir_entries(
     Ok(parse_dir_entries(&data))
 }
 
-// ── File data reading ─────────────────────────────────────────────────────
+// File data reading
 
 /// Read file data at an arbitrary offset + length.
 ///
@@ -115,7 +115,7 @@ pub fn read_file(
     Ok(actual)
 }
 
-// ── Metadata block reading ────────────────────────────────────────────────
+// Metadata block reading
 
 /// Size of one uncompressed SquashFS metadata block.
 const METADATA_BLOCK_SIZE: usize = 8192;
@@ -251,7 +251,7 @@ pub fn read_metadata(
     Ok(output)
 }
 
-// ── LZ4 block decompressor ────────────────────────────────────────────────
+// LZ4 block decompressor
 
 /// Decompress an LZ4-compressed block into `out`. Returns the number of
 /// uncompressed bytes written.
@@ -344,7 +344,7 @@ pub fn lz4_decompress(input: &[u8], out: &mut [u8]) -> Result<usize, Error> {
     Ok(dst)
 }
 
-// ── Block-device byte I/O ─────────────────────────────────────────────────
+// Block-device byte I/O
 
 fn read_device_bytes(
     device: &Arc<dyn BlockDevice>,

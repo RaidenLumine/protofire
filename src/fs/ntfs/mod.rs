@@ -29,7 +29,7 @@ mod lznt1;
 mod tests;
 pub(crate) mod types;
 
-// ── NTFS filesystem handle ──────────────────────────────────────────────
+// NTFS filesystem handle
 
 /// The root directory's record, which the standard fixes at the fifth.
 const ROOT_RECORD: u64 = 5;
@@ -5013,7 +5013,7 @@ impl NtfsFs {
     }
 }
 
-// ── NTFS vnode ─────────────────────────────────────────────────────────
+// NTFS vnode
 
 pub struct NtfsVnode {
     /// The name its parent's index gives it.

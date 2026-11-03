@@ -53,7 +53,7 @@ use types::RootItem;
 use types::Superblock;
 use types::FS_TREE_OBJECTID;
 
-// ── BtrfsVolume ─────────────────────────────────────────────────────────
+// BtrfsVolume
 
 pub struct BtrfsVolume {
     devices: Vec<Arc<dyn BlockDevice>>,
@@ -298,7 +298,7 @@ impl VfsFileSystem for BtrfsVolume {
     }
 }
 
-// ── BtrfsVNode ──────────────────────────────────────────────────────────
+// BtrfsVNode
 
 struct BtrfsVNode {
     name: String,
@@ -384,7 +384,7 @@ impl VNode for BtrfsVNode {
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+// Helpers
 
 fn clean_path(path: &str) -> String {
     if path.is_empty() || path == "/" {

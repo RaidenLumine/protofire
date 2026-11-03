@@ -426,7 +426,7 @@ impl Process {
         self.program_break.store(addr as u64, Ordering::Relaxed);
     }
 
-    // ── Shared memory attachment tracking ──────────────────────────────
+    // Shared memory attachment tracking
 
     /// Return the next hint address for shm mappings.
     pub fn shm_va_hint(&self) -> usize {
@@ -1029,7 +1029,7 @@ mod tests {
         assert_eq!(SIGNAL_SA_FLAGS_KNOWN, SA_RESTART);
     }
 
-    // ── Signal queue (FIFO ordering, peek, capacity) ────────────────────
+    // Signal queue (FIFO ordering, peek, capacity)
 
     #[test]
     fn enqueue_signal_preserves_fifo_order() {
@@ -1114,7 +1114,7 @@ mod tests {
         assert_eq!(process.pending_signal_count(), capacity);
     }
 
-    // ── Signal mask (block / unblock / atomic swap) ─────────────────────
+    // Signal mask (block / unblock / atomic swap)
 
     #[test]
     fn signal_mask_block_unblock_roundtrip() {
@@ -1153,7 +1153,7 @@ mod tests {
         assert_eq!(process.pending_signal_count(), 1);
     }
 
-    // ── POSIX default actions ───────────────────────────────────────────
+    // POSIX default actions
 
     #[test]
     fn sigterm_without_handler_terminates_process() {
@@ -1196,7 +1196,7 @@ mod tests {
         assert_eq!((sig.signal, sig.payload), (crate::abi::process::SIGTERM, 7));
     }
 
-    // ── Signal handler registry ─────────────────────────────────────────
+    // Signal handler registry
 
     #[test]
     fn signal_handler_install_remove_roundtrip() {
@@ -1217,7 +1217,7 @@ mod tests {
         );
     }
 
-    // ── Thread bookkeeping ──────────────────────────────────────────────
+    // Thread bookkeeping
 
     #[test]
     fn allocate_tid_is_monotonic() {
@@ -1276,7 +1276,7 @@ mod tests {
         assert_eq!(process.state(), ProcessState::New);
     }
 
-    // ── Termination / reap ──────────────────────────────────────────────
+    // Termination / reap
 
     #[test]
     fn reap_termination_reason_rejects_non_terminated() {
@@ -1310,7 +1310,7 @@ mod tests {
         assert_eq!(process.pending_signal_count(), 0);
     }
 
-    // ── Wait-for-signal (requires a scheduler) ──────────────────────────
+    // Wait-for-signal (requires a scheduler)
 
     #[test]
     fn wait_for_signal_with_pending_does_not_block() {
@@ -1349,7 +1349,7 @@ mod tests {
         assert_eq!(process.signal_waiter_count(), 1);
     }
 
-    // ── Wait-for-termination ────────────────────────────────────────────
+    // Wait-for-termination
 
     #[test]
     fn wait_for_termination_blocks_then_wakes_on_last_thread_exit() {
@@ -1381,7 +1381,7 @@ mod tests {
         assert_eq!(process.termination_waiter_count(), 0);
     }
 
-    // ── Fork ────────────────────────────────────────────────────────────
+    // Fork
 
     /// The fork tests run wherever `Process::fork` exists, which is every
     /// machine the kernel builds for; the one test that reaches into x86_64's

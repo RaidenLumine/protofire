@@ -19,7 +19,7 @@ use crate::user::elf::ElfImage;
 use crate::user::elf::ElfLoadSegment;
 use crate::user::elf::ElfSegmentFlags;
 
-// ── ELF → UserImageLoadPlan ──────────────────────────────────────────
+// ELF → UserImageLoadPlan
 
 pub fn plan_user_image_load(elf: &ElfImage<'_>) -> Result<Option<UserImageLoadPlan>> {
     let load_segments = elf.load_segments()?;
@@ -111,7 +111,7 @@ pub fn plan_user_image_load(elf: &ElfImage<'_>) -> Result<Option<UserImageLoadPl
     }))
 }
 
-// ── runtime preparation ───────────────────────────────────────────────
+// runtime preparation
 
 pub(crate) fn prepare_loaded_program_runtime(
     image: &[u8],
@@ -158,7 +158,7 @@ pub(crate) fn prepare_loaded_program_runtime(
     })
 }
 
-// ── one segment ───────────────────────────────────────────────────────
+// one segment
 
 /// Turn one ELF load segment into the page-aligned plan the loader maps.
 ///

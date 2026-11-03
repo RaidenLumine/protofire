@@ -29,7 +29,7 @@ use super::types::TCP_OPT_KIND_TIMESTAMP;
 use super::types::TCP_OPT_KIND_WINDOW_SCALE;
 use super::types::TCP_OPT_LEN_TIMESTAMP;
 
-// ─── Header parse / build ─────────────────────────────────────────────
+// Header parse / build
 
 /// Parse a TCP header from a raw byte slice. Returns the header and the data
 /// payload.
@@ -185,7 +185,7 @@ pub fn build_tcp_segment_v6(
     buf
 }
 
-// ─── Send helpers ─────────────────────────────────────────────────────
+// Send helpers
 
 pub(crate) fn send_tcp_segment(
     stack: &NetworkStack,
@@ -235,7 +235,7 @@ pub(crate) fn send_tcp_segment_v6(
     stack.send_ipv6_packet(dst_ip, raw_ip)
 }
 
-// ─── Option parsing / building ────────────────────────────────────────
+// Option parsing / building
 
 /// Parse the Maximum Segment Size from TCP options.
 pub(crate) fn parse_mss_option(options: &[u8]) -> usize {

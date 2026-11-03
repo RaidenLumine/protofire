@@ -15,7 +15,7 @@ use super::ipv4::Ipv4Header;
 use super::ipv4::Ipv4Packet;
 use super::ipv4::IPV4_MIN_HEADER_SIZE;
 
-// ─── Fragment reassembly timeout ────────────────────────────────────────
+// Fragment reassembly timeout
 
 /// Fragment reassembly timeout in ticks (30 seconds at 100 Hz).
 const FRAGMENT_TIMEOUT_TICKS: u64 = 3000;
@@ -27,7 +27,7 @@ const MAX_REASSEMBLY_ENTRIES: usize = 16;
 /// Maximum size of a reassembled datagram (64 KiB).
 const MAX_DATAGRAM_SIZE: usize = 65535;
 
-// ─── Fragment key ───────────────────────────────────────────────────────
+// Fragment key
 
 /// Uniquely identifies a packet being reassembled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -38,7 +38,7 @@ struct FragmentKey {
     destination: Ipv4Addr,
 }
 
-// ─── Reassembly buffer ──────────────────────────────────────────────────
+// Reassembly buffer
 
 /// State for one in-progress reassembly.
 struct ReassemblyEntry {
@@ -126,7 +126,7 @@ impl ReassemblyEntry {
     }
 }
 
-// ─── Fragment cache ─────────────────────────────────────────────────────
+// Fragment cache
 
 pub struct FragmentCache {
     entries: BTreeMap<FragmentKey, ReassemblyEntry>,
@@ -156,7 +156,7 @@ impl FragmentCache {
     }
 }
 
-// ─── Fragment processing ────────────────────────────────────────────────
+// Fragment processing
 
 /// Process a received IPv4 fragment.
 ///
@@ -279,7 +279,7 @@ pub fn evict_expired_fragments(cache: &mut FragmentCache, current_tick: u64) {
     }
 }
 
-// ─── IPv6 fragment reassembly ───────────────────────────────────────────────
+// IPv6 fragment reassembly
 
 /// Key for IPv6 fragment reassembly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -500,7 +500,7 @@ pub fn evict_expired_ipv6_fragments(cache: &mut Ipv6FragmentCache, current_tick:
     }
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {
@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
-    // ─── IPv6 fragment tests ─────────────────────────────────────────
+    // IPv6 fragment tests
 
     fn make_ipv6_frag_header(
         id: u32,

@@ -363,7 +363,7 @@ pub fn build_fdt_numa_topology() -> Option<crate::kernel::topology::Topology> {
         return None;
     }
 
-    // ── Collect unique node IDs from CPU and memory entries ──
+    // Collect unique node IDs from CPU and memory entries
     let mut node_ids: [NodeId; MAX_NUMA_NODES] = [0xFF; MAX_NUMA_NODES];
     let mut unique_count = 0usize;
 
@@ -403,7 +403,7 @@ pub fn build_fdt_numa_topology() -> Option<crate::kernel::topology::Topology> {
         return None;
     }
 
-    // ── Build NumaNode list ──
+    // Build NumaNode list
     let mut nodes: alloc::vec::Vec<NumaNode> = alloc::vec::Vec::with_capacity(unique_count);
     for &nid in node_ids[..unique_count].iter() {
         nodes.push(NumaNode {
@@ -437,7 +437,7 @@ pub fn build_fdt_numa_topology() -> Option<crate::kernel::topology::Topology> {
         }
     }
 
-    // ── Build cpu_to_node Vec ──
+    // Build cpu_to_node Vec
     // Determine the maximum CPU ID to size the Vec.
     let max_cpu_id = numa
         .cpu_to_node
@@ -454,7 +454,7 @@ pub fn build_fdt_numa_topology() -> Option<crate::kernel::topology::Topology> {
         }
     }
 
-    // ── Distance matrix ──
+    // Distance matrix
     let dn = numa.distance_node_count as usize;
     let distance_matrix = if dn > 0 {
         let mut mat: alloc::vec::Vec<alloc::vec::Vec<u8>> = alloc::vec::Vec::with_capacity(dn);

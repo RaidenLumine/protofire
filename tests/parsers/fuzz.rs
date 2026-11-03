@@ -19,7 +19,7 @@ use protofire::network::tls::record::TrafficKeys;
 use protofire::user::elf::parse_elf64;
 use protofire::user::program::plan_user_image_load;
 
-// ── Simple PRNG ─────────────────────────────────────────────────────────────
+// Simple PRNG
 // Same LCG used by tests/syscall/fuzz.rs, kept local so this binary is
 // self-contained.
 
@@ -83,7 +83,7 @@ fn build_dhcp_seed(rng: &mut Lcg) -> Vec<u8> {
     msg
 }
 
-// ── ELF loader ──────────────────────────────────────────────────────────────
+// ELF loader
 
 /// Build a minimal valid ELF64 (ET_DYN) image with one executable PT_LOAD
 /// segment.  Used as the seed for structure-aware mutation fuzzing so that
@@ -165,7 +165,7 @@ fn fuzz_elf_loader_structure_aware_mutations() {
     }
 }
 
-// ── LUKS2 metadata scanners ────────────────────────────────────────────────
+// LUKS2 metadata scanners
 
 #[test]
 fn fuzz_luks2_scanners() {
@@ -262,7 +262,7 @@ fn fuzz_luks2_open_structure_aware() {
     }
 }
 
-// ── Network packet parsers ─────────────────────────────────────────────────
+// Network packet parsers
 
 /// Exercise a plain `&[u8] -> ...` parser over a batch of random buffers.
 fn fuzz_byte_parser<F>(seed: u64, iterations: usize, max_len: usize, mut parser: F)
@@ -438,7 +438,7 @@ fn fuzz_dhcp_options_structure_aware() {
     }
 }
 
-// ── Filesystem image parsers ───────────────────────────────────────────────
+// Filesystem image parsers
 
 #[test]
 fn fuzz_fs_volume_opens() {

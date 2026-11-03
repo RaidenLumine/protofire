@@ -27,7 +27,7 @@ use super::decode::EXEC_LAUNCH_DECODE_PROFILE;
 use super::decode::SPAWN_LAUNCH_DECODE_PROFILE;
 use super::MAX_LAUNCH_REFERENCE_BYTES;
 
-// ── Standard handle specs ─────────────────────────────────────────────
+// Standard handle specs
 
 const STANDARD_HANDLE_SPECS: [(usize, usize); 3] = [
     (STDIN_FD, process_abi::PROCESS_SPAWN_FLAG_INHERIT_STDIN),
@@ -35,7 +35,7 @@ const STANDARD_HANDLE_SPECS: [(usize, usize); 3] = [
     (STDERR_FD, process_abi::PROCESS_SPAWN_FLAG_INHERIT_STDERR),
 ];
 
-// ── Launch input ──────────────────────────────────────────────────────
+// Launch input
 
 pub(super) struct LaunchInput {
     launch_reference: String,
@@ -58,7 +58,7 @@ impl LaunchInput {
     }
 }
 
-// ── Launch target ─────────────────────────────────────────────────────
+// Launch target
 
 enum ProcessLaunchTarget {
     Spawn {
@@ -130,7 +130,7 @@ impl ProcessLaunchTarget {
     }
 }
 
-// ── Launch request types ──────────────────────────────────────────────
+// Launch request types
 
 struct ProcessLaunchRequest {
     input: LaunchInput,
@@ -159,7 +159,7 @@ impl LoadedProcessLaunchRequest {
     }
 }
 
-// ── Exec install transaction ──────────────────────────────────────────
+// Exec install transaction
 
 struct ExecInstallTransaction<'a> {
     process: &'a Process,
@@ -213,7 +213,7 @@ impl<'a> ExecInstallTransaction<'a> {
     }
 }
 
-// ── SpawnProcessStandardHandleOverrides ───────────────────────────────
+// SpawnProcessStandardHandleOverrides
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct SpawnProcessStandardHandleOverrides {
@@ -334,7 +334,7 @@ fn ignore_not_found(result: Result<()>) -> Result<()> {
     }
 }
 
-// ── Syscall entry points ──────────────────────────────────────────────
+// Syscall entry points
 
 pub(crate) fn spawn(
     context: &mut super::super::SyscallContext,
@@ -348,7 +348,7 @@ pub(crate) fn exec(
     dispatch_process_launch(process_launch_request_exec(context)?)
 }
 
-// ── Fork syscall handler ──────────────────────────────────────────────
+// Fork syscall handler
 
 pub(crate) fn fork(
     context: &mut super::super::SyscallContext,
@@ -383,7 +383,7 @@ pub(crate) fn fork(
     Ok(super::super::SyscallDispatch::complete(child.pid() as usize))
 }
 
-// ── Launch request building ───────────────────────────────────────────
+// Launch request building
 
 fn launch_request(context: &super::super::SyscallContext) -> Result<(String, *const u8, usize)> {
     super::super::validate_zeroed_args(context, 4)?;
@@ -455,7 +455,7 @@ fn dispatch_process_launch(request: ProcessLaunchRequest) -> Result<super::super
     request.load()?.dispatch()
 }
 
-// ── Spawn dispatch ────────────────────────────────────────────────────
+// Spawn dispatch
 
 fn spawn_process_dispatch(
     loaded: crate::user::program::LoadedProgram,
@@ -509,7 +509,7 @@ fn install_spawn_standard_handles(
     }
 }
 
-// ── Exec installation ─────────────────────────────────────────────────
+// Exec installation
 
 pub(super) fn install_exec_loaded_program_with<Activate, InstallThreadImage>(
     mut loaded: crate::user::program::LoadedProgram,

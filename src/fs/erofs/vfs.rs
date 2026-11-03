@@ -29,7 +29,7 @@ use super::super::vfs::ROOT_OWNER_ID;
 use super::fs::EroFs;
 use super::types::*;
 
-// ─── EroFsVolume ───────────────────────────────────────────────────────
+// EroFsVolume
 
 /// A mounted EROFS volume that implements [`VfsFileSystem`].
 ///
@@ -54,7 +54,7 @@ impl EroFsVolume {
     }
 }
 
-// ─── VfsFileSystem implementation ─────────────────────────────────────
+// VfsFileSystem implementation
 
 impl VfsFileSystem for EroFsVolume {
     fn name(&self) -> &str {
@@ -115,7 +115,7 @@ impl VfsFileSystem for EroFsVolume {
         ))
     }
 
-    // ── Mutating operations — all return PermissionDenied ──────────
+    // Mutating operations — all return PermissionDenied
 
     fn rename(&self, _old_path: &str, _new_path: &str) -> Result<()> {
         Err(Error::PermissionDenied)
@@ -159,7 +159,7 @@ impl VfsFileSystem for EroFsVolume {
     }
 }
 
-// ─── VNode implementation ─────────────────────────────────────────────
+// VNode implementation
 
 struct EroVNode {
     name: String,
@@ -219,7 +219,7 @@ impl VNode for EroVNode {
     }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────
+// Helpers
 
 fn metadata_from_inode(inode: &ErofsInodeCompact) -> Metadata {
     let kind = erofs_mode_to_kind(inode.mode());

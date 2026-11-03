@@ -132,7 +132,7 @@ fn ptrace_regs_to_context(
     }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────
+// Tests
 
 /// The register layout only exists on x86_64, so the round trip is only
 /// meaningful in that build.

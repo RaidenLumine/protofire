@@ -23,7 +23,7 @@ use super::types::SchedulerStats;
 use super::Scheduler;
 use crate::kernel::sync::Mutex;
 
-// ── Construction ──
+// Construction
 
 impl Default for Scheduler {
     fn default() -> Self {
@@ -121,7 +121,7 @@ impl Scheduler {
     }
 }
 
-// ── Drop ──
+// Drop
 
 impl Drop for Scheduler {
     fn drop(&mut self) {

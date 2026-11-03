@@ -23,11 +23,11 @@ use crate::path_util::resolve_path;
 use crate::syscall;
 use crate::types::CmdResult;
 
-// ── Buffer size for file reads ─────────────────────────────────────────
+// Buffer size for file reads
 
 const CAT_BUF_SIZE: usize = 4096;
 
-// ── Error message helper ────────────────────────────────────────────────
+// Error message helper
 // Error codes match crate::Error discriminant encoding (see syscall_bridge.rs):
 //   InvalidArgument(0)→-1  NotFound(1)→-2  AlreadyExists(2)→-3
 //   PermissionDenied(3)→-4  etc.
@@ -50,7 +50,7 @@ fn errno_msg(code: isize) -> &'static str {
     }
 }
 
-// ── Shared helpers ──────────────────────────────────────────────────────
+// Shared helpers
 
 /// Read a file line-by-line via syscalls.
 fn read_file_lines(path: &str) -> Result<Vec<String>, isize> {
@@ -147,7 +147,7 @@ pub fn parse_head_tail_args(argv: &[String]) -> (usize, Option<&str>) {
     (count, path)
 }
 
-// ── grep ────────────────────────────────────────────────────────────────
+// grep
 
 pub fn cmd_grep(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     let pattern = match argv.get(1) {
@@ -182,7 +182,7 @@ pub fn cmd_grep(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── find ────────────────────────────────────────────────────────────────
+// find
 
 /// Recursively collect entries whose name contains `pattern`.
 fn find_recursive(dir: &str, pattern: &str, out: &mut String) {
@@ -247,7 +247,7 @@ pub fn cmd_find(cwd: &str, argv: &[String]) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── head ────────────────────────────────────────────────────────────────
+// head
 
 pub fn cmd_head(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     let (count, path_arg) = parse_head_tail_args(argv);
@@ -271,7 +271,7 @@ pub fn cmd_head(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── tail ────────────────────────────────────────────────────────────────
+// tail
 
 pub fn cmd_tail(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     let (count, path_arg) = parse_head_tail_args(argv);
@@ -298,7 +298,7 @@ pub fn cmd_tail(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── wc ──────────────────────────────────────────────────────────────────
+// wc
 
 pub fn cmd_wc(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     if stdin.is_none() && argv.len() < 2 {
@@ -342,7 +342,7 @@ pub fn cmd_wc(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     CmdResult::from_output(format!("{lines:>6} {words:>6} {bytes:>6} {name}\n"))
 }
 
-// ── sort ────────────────────────────────────────────────────────────────
+// sort
 
 pub fn cmd_sort(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     let mut reverse = false;
@@ -412,7 +412,7 @@ pub fn cmd_sort(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── uniq ────────────────────────────────────────────────────────────────
+// uniq
 
 pub fn cmd_uniq(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     let mut show_count = false;
@@ -472,7 +472,7 @@ pub fn cmd_uniq(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── diff ────────────────────────────────────────────────────────────────
+// diff
 
 /// Longest Common Subsequence — returns indices of matching lines in `a` and
 /// `b`.
@@ -557,7 +557,7 @@ pub fn cmd_diff(cwd: &str, argv: &[String]) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ── hexdump ─────────────────────────────────────────────────────────────
+// hexdump
 
 /// Display a file as hexadecimal bytes with an ASCII sidebar.
 ///
@@ -676,7 +676,7 @@ fn parse_hexdump_args(argv: &[String]) -> (usize, &str) {
     (max_bytes, path_arg)
 }
 
-// ── edit (minimal line editor) ──────────────────────────────────────────
+// edit (minimal line editor)
 
 /// Minimal line-oriented file editor.
 ///

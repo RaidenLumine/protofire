@@ -36,7 +36,7 @@ use crate::kernel::process::SecurityToken;
 
 /// Execute a single command or conditional chain.
 pub(crate) fn run_shell_command(line: &str, cwd: &mut String) -> CmdResult {
-    // ── Background task detection ──
+    // Background task detection
     if is_background(line) {
         let cmd = line.trim_end().trim_end_matches('&').trim().to_string();
         if cmd.is_empty() {
@@ -65,7 +65,7 @@ pub(crate) fn run_shell_command(line: &str, cwd: &mut String) -> CmdResult {
         );
     }
 
-    // ── Conditional chaining (&& / ||) ──
+    // Conditional chaining (&& / ||)
     let cond_tokens = tokenize_conditionals(line);
 
     if cond_tokens.len() > 1
@@ -97,7 +97,7 @@ pub(crate) fn run_shell_command(line: &str, cwd: &mut String) -> CmdResult {
         return last_result;
     }
 
-    // ── Pipeline & redirect (no conditionals) ──
+    // Pipeline & redirect (no conditionals)
     execute_single_or_pipeline(line, cwd)
 }
 
@@ -123,7 +123,7 @@ pub(crate) fn execute_single_or_pipeline(cmd_line: &str, cwd: &mut String) -> Cm
 
         let (cmd_str, redirect_out, redirect_in) = parse_redirects(trimmed);
 
-        // ── Input redirect ──
+        // Input redirect
         if let Some(ref in_file) = redirect_in {
             let path = resolve_path(cwd, in_file);
             let fd = match syscall::sys_open(&path, OPEN_FLAG_READ) {
@@ -152,12 +152,12 @@ pub(crate) fn execute_single_or_pipeline(cmd_line: &str, cwd: &mut String) -> Cm
             next_stdin = Some(String::from_utf8_lossy(&buf).into_owned());
         }
 
-        // ── Dispatch ──
+        // Dispatch
         let result = dispatch_single_command(&cmd_str, cwd, next_stdin.as_deref());
         last_exit_code = result.exit_code;
         let stage_output = strip_trailing_newline(result.output);
 
-        // ── Output redirect ──
+        // Output redirect
         if let Some(ref out_file) = redirect_out {
             let path = resolve_path(cwd, out_file);
             let fd = match syscall::sys_open(&path, OPEN_FLAG_WRITE | OPEN_FLAG_CREATE) {
@@ -212,7 +212,7 @@ pub(crate) fn dispatch_single_command(
         return CmdResult::empty();
     }
 
-    // ── Alias expansion (with recursion guard) ──
+    // Alias expansion (with recursion guard)
     {
         let mut alias_depth = 0u32;
         const MAX_ALIAS_DEPTH: u32 = 10;
@@ -239,7 +239,7 @@ pub(crate) fn dispatch_single_command(
         }
     }
 
-    // ── Glob expansion on arguments (skip command name, index 0) ──
+    // Glob expansion on arguments (skip command name, index 0)
     tokens = expand_globs_in_tokens(&tokens, cwd);
 
     // Pipeline/redirect stdin is NOT appended to argv — commands that consume
@@ -248,7 +248,7 @@ pub(crate) fn dispatch_single_command(
     let command = tokens[0].as_str();
     let argv = &tokens;
 
-    // ── Kernel-only commands (fast path, no extra locking) ──
+    // Kernel-only commands (fast path, no extra locking)
     // Also handles `exit` and `source` which need special kernel treatment.
     match command {
         // Ring3 network utilities → /system/netutil.elf
@@ -284,7 +284,7 @@ pub(crate) fn dispatch_single_command(
         _ => {}
     }
 
-    // ── Shared commands: delegate to crate::user::shared::dispatch_tokens ──
+    // Shared commands: delegate to crate::user::shared::dispatch_tokens
     // All state is plumbed as explicit parameters so ring3-common doesn't
     // depend on kernel Mutex statics.  The same dispatch_tokens runs in
     // ring3-shell with local variables instead.
@@ -314,7 +314,7 @@ pub(crate) fn dispatch_single_command(
         return result;
     }
 
-    // ── External command spawn fallback ──
+    // External command spawn fallback
     // Try to spawn the command as an external ring3 ELF program.
     // Only works on bare-metal; host-side tests skip this path.
     if let Some(ext_result) = try_spawn_external(cwd, command, argv) {
@@ -325,7 +325,7 @@ pub(crate) fn dispatch_single_command(
     result
 }
 
-// ── External command spawning ──────────────────────────────────────────────
+// External command spawning
 
 /// Spawn a ring3 utility ELF by its absolute filesystem path, passing `argv`
 /// through as the subprocess arguments.  The utility writes directly to the
@@ -462,7 +462,7 @@ fn try_spawn_external(cwd: &str, command: &str, _argv: &[String]) -> Option<CmdR
 fn resolve_external_command_path(cwd: &str, command: &str) -> Option<String> {
     use crate::fs::path::normalize_path;
 
-    // ── Direct path (absolute or relative to cwd) ──
+    // Direct path (absolute or relative to cwd)
     if command.starts_with('/') || command.starts_with("./") || command.starts_with("../") {
         let base = normalize_path(command, cwd).ok()?;
         if path_is_regular_file(&base) {
@@ -475,7 +475,7 @@ fn resolve_external_command_path(cwd: &str, command: &str) -> Option<String> {
         return None;
     }
 
-    // ── PATH lookup ──
+    // PATH lookup
     let path_var = {
         let env = ENV_VARS.lock();
         env.iter()

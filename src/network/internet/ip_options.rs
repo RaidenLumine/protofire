@@ -22,7 +22,7 @@
 
 use alloc::vec::Vec;
 
-// ─── IPv4 option type constants (RFC 791) ──────────────────────────────────
+// IPv4 option type constants (RFC 791)
 
 /// End of Options List — terminates parsing.
 pub const IPOPT_END: u8 = 0;
@@ -37,7 +37,7 @@ pub const IPOPT_SSR: u8 = 137;
 /// Timestamp.
 pub const IPOPT_TS: u8 = 68;
 
-// ─── Parsed options ────────────────────────────────────────────────────────
+// Parsed options
 
 /// A decoded IPv4 option.
 ///
@@ -84,7 +84,7 @@ pub enum Ipv4Option {
     Unknown { option_type: u8, data: Vec<u8> },
 }
 
-// ─── Parser ────────────────────────────────────────────────────────────────
+// Parser
 
 /// Parse the option area of an IPv4 header into its decoded options.
 ///
@@ -202,7 +202,7 @@ fn parse_route_option(opt_type: u8, body: &[u8]) -> Ipv4Option {
     }
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

@@ -177,7 +177,7 @@ pub const SVR_APIC_ENABLE: u32 = 1 << 8;
 /// Spurious-interrupt vector number (bit 8 set → 0xFF | 0x100).
 pub const SPURIOUS_VECTOR: u32 = 0xFF;
 
-// ─── ICR low-DWORD field constants ────────────────────────────────────
+// ICR low-DWORD field constants
 
 /// Delivery mode: FIXED.
 pub const ICR_DELIVERY_FIXED: u32 = 0x000;
@@ -192,7 +192,7 @@ pub const ICR_LEVEL_ASSERT: u32 = 1 << 14;
 /// Trigger mode: level (used for INIT).
 pub const ICR_TRIGGER_LEVEL: u32 = 1 << 15;
 
-// ─── LAPIC register access ─────────────────────────────────────────────
+// LAPIC register access
 
 /// Read a 32-bit LAPIC register at `offset` (bytes from the MMIO base).
 ///
@@ -237,7 +237,7 @@ pub fn lapic_id() -> u32 {
     unsafe { lapic_read(LAPIC_ID as u32) >> 24 }
 }
 
-// ─── LAPIC initialisation ──────────────────────────────────────────────
+// LAPIC initialisation
 
 /// Initialise the local APIC on the BSP: enable it via SVR, clear the TPR,
 /// and mask the LVT entries that are not otherwise configured.

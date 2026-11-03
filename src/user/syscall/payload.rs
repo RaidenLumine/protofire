@@ -288,7 +288,7 @@ macro_rules! define_aarch64_payload_runtime {
             }
         }
 
-        // ── ring3 identity / chdir / console line stubs (AArch64) ─────
+        // ring3 identity / chdir / console line stubs (AArch64)
 
         #[inline(never)]
         #[allow(dead_code)]
@@ -1436,7 +1436,7 @@ macro_rules! define_x86_64_payload_runtime {
             }
         }
 
-        // ── ring3 identity / chdir / console line stubs ────────────────
+        // ring3 identity / chdir / console line stubs
 
         #[inline(never)]
         #[allow(dead_code)]

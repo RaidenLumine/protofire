@@ -223,7 +223,7 @@ impl PreparedProcessAddressSpace {
     ) -> Option<crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>> {
         use alloc::collections::BTreeMap;
 
-        // ── First pass: collect user PTE groups and record shared pages ──
+        // First pass: collect user PTE groups and record shared pages
         let mut user_windows: BTreeMap<(usize, usize, usize), Vec<(usize, u64)>> = BTreeMap::new();
         let mut shared_pages: Vec<(usize, usize, PagePermissions)> = Vec::new();
         let mut all_child_pages: Vec<(usize, usize, PagePermissions)> = Vec::new();
@@ -305,7 +305,7 @@ impl PreparedProcessAddressSpace {
             }
         }
 
-        // ── Second pass: clear WRITE bit in parent's combined hierarchy ──
+        // Second pass: clear WRITE bit in parent's combined hierarchy
         for pt in &mut self.pts {
             for pte_index in 0..PAGE_TABLE_ENTRY_COUNT {
                 let entry = pt.table.0[pte_index];
@@ -317,7 +317,7 @@ impl PreparedProcessAddressSpace {
             }
         }
 
-        // ── Third pass: clear WRITE bit in parent's user-only hierarchy ──
+        // Third pass: clear WRITE bit in parent's user-only hierarchy
         for pt in &mut self.user_address_space.pts {
             for pte_index in 0..PAGE_TABLE_ENTRY_COUNT {
                 let entry = pt.table.0[pte_index];
@@ -367,7 +367,7 @@ impl PreparedProcessAddressSpace {
         // call returns the pages it did that for.
         let _demoted_pages = demote_and_invalidate(&shared_pages);
 
-        // ── Build child address space ────────────────────────────────────
+        // Build child address space
 
         // --- Child combined hierarchy ---
         let mut child_pml4 = RawPageTable::new_boxed_zeroed();
@@ -743,7 +743,7 @@ pub(crate) fn validate_prepared_process_address_space(
     pts: &[PreparedUserPt],
     user_address_space: &PreparedUserAddressSpace,
 ) -> Option<()> {
-    // ── 1. Global-bit check across all merged PT entries ──────────────
+    // 1. Global-bit check across all merged PT entries
     for pt in pts {
         for &entry in &pt.table.0 {
             if entry & PAGE_ENTRY_PRESENT == 0 {
@@ -755,7 +755,7 @@ pub(crate) fn validate_prepared_process_address_space(
         }
     }
 
-    // ── 2. User virtual-address canonical-range check ────────────────
+    // 2. User virtual-address canonical-range check
     for page in &user_address_space.pages {
         if page.virtual_address >= X86_64_USER_CANONICAL_END {
             return None;
@@ -1034,7 +1034,7 @@ pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
         .map(|aligned| align_down(aligned, align))
 }
 
-// ── The address space a process holds ────────────────────────────────────
+// The address space a process holds
 
 /// The address space a process holds, in whichever of the two shapes x86_64
 /// prepared it.

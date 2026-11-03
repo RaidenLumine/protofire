@@ -4,7 +4,7 @@
 
 use core::mem::size_of;
 
-// ── AllocProfilerRecord ──
+// AllocProfilerRecord
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -29,7 +29,7 @@ pub struct AllocProfilerRecord {
 
 pub const ALLOC_PROFILER_RECORD_SIZE: usize = size_of::<AllocProfilerRecord>();
 
-// ── FaultProfilerRecord ──
+// FaultProfilerRecord
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -55,7 +55,7 @@ pub struct FaultProfilerRecord {
 
 pub const FAULT_PROFILER_RECORD_SIZE: usize = size_of::<FaultProfilerRecord>();
 
-// ── FsProfilerRecord ──
+// FsProfilerRecord
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -73,7 +73,7 @@ pub struct FsProfilerRecord {
 
 pub const FS_PROFILER_RECORD_SIZE: usize = size_of::<FsProfilerRecord>();
 
-// ── NetProfilerRecord ──
+// NetProfilerRecord
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -109,7 +109,7 @@ pub struct NetProfilerRecord {
 
 pub const NET_PROFILER_RECORD_SIZE: usize = size_of::<NetProfilerRecord>();
 
-// ── PerCpuRecord ──
+// PerCpuRecord
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -121,7 +121,7 @@ pub struct PerCpuRecord {
 
 pub const PER_CPU_RECORD_SIZE: usize = size_of::<PerCpuRecord>();
 
-// ── IrqProfilerRecord ──
+// IrqProfilerRecord
 
 /// Snapshot of the interrupt profiler: per-vector and per-CPU interrupt
 /// counts, plus the load-balancer state.
@@ -178,7 +178,7 @@ impl Default for IrqProfilerRecord {
     }
 }
 
-// ── BootReportRecord ──
+// BootReportRecord
 
 /// Subsystem init outcome.
 pub const SUBSYSTEM_STATUS_NOT_STARTED: u64 = 0;
@@ -246,7 +246,7 @@ impl BootReportRecord {
     }
 }
 
-// ── ProcessInfoRecord ──
+// ProcessInfoRecord
 
 /// Maximum length of a process name in [`ProcessInfoRecord`].
 pub const PROCESS_INFO_NAME_MAX: usize = 32;
@@ -266,7 +266,7 @@ pub struct ProcessInfoRecord {
 
 pub const PROCESS_INFO_RECORD_SIZE: usize = size_of::<ProcessInfoRecord>();
 
-// ── ThreadInfoRecord ──
+// ThreadInfoRecord
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -291,7 +291,7 @@ impl ThreadInfoRecord {
 
 pub const THREAD_INFO_RECORD_SIZE: usize = size_of::<ThreadInfoRecord>();
 
-// ── SystemInfoRecord (SystemInfo selector 0) ──
+// SystemInfoRecord (SystemInfo selector 0)
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -310,7 +310,7 @@ pub struct SystemInfoRecord {
 
 pub const SYSTEM_INFO_RECORD_SIZE: usize = size_of::<SystemInfoRecord>();
 
-// ── SystemHealthRecord (SystemInfo selector 4) ──
+// SystemHealthRecord (SystemInfo selector 4)
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -333,7 +333,7 @@ pub struct SystemHealthRecord {
 
 pub const SYSTEM_HEALTH_RECORD_SIZE: usize = size_of::<SystemHealthRecord>();
 
-// ── FaultRecordAbi (ListProcessFaults) ──
+// FaultRecordAbi (ListProcessFaults)
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -347,7 +347,7 @@ pub struct FaultRecordAbi {
 
 pub const FAULT_RECORD_ABI_SIZE: usize = size_of::<FaultRecordAbi>();
 
-// ── SystemInfo selectors ──
+// SystemInfo selectors
 
 pub const SYSTEM_INFO_SCHEDULER: u64 = 0;
 pub const SYSTEM_INFO_ALLOC_PROFILER: u64 = 1;
@@ -360,7 +360,7 @@ pub const SYSTEM_INFO_REAL_TIME: u64 = 7;
 pub const SYSTEM_INFO_PER_CPU: u64 = 8;
 pub const SYSTEM_INFO_IRQ_PROFILER: u64 = 9;
 
-// ── Process state encodings ──
+// Process state encodings
 
 pub const PROCESS_STATE_NEW: u64 = 0;
 pub const PROCESS_STATE_READY: u64 = 1;
@@ -368,14 +368,14 @@ pub const PROCESS_STATE_RUNNING: u64 = 2;
 pub const PROCESS_STATE_WAITING: u64 = 3;
 pub const PROCESS_STATE_TERMINATED: u64 = 4;
 
-// ── Thread priority encodings ──
+// Thread priority encodings
 
 pub const THREAD_PRIORITY_IDLE: u64 = 0;
 pub const THREAD_PRIORITY_NORMAL: u64 = 1;
 pub const THREAD_PRIORITY_HIGH: u64 = 2;
 pub const THREAD_PRIORITY_REALTIME: u64 = 3;
 
-// ── Thread state encodings ──
+// Thread state encodings
 
 pub const THREAD_STATE_READY: u64 = 0;
 pub const THREAD_STATE_RUNNING: u64 = 1;

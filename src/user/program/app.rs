@@ -28,7 +28,7 @@ use super::constants::INSTALLED_CATALOG_ROOT;
 use super::constants::INSTALLED_CURRENT_ROOT;
 use super::constants::INSTALLED_PACKAGE_ROOT;
 
-// ── shared directory helpers ─────────────────────────────────────────
+// shared directory helpers
 
 struct DirChild {
     name: String,
@@ -122,7 +122,7 @@ fn catalog_versions(fs: &FileSystem, app_id: &str) -> Vec<String> {
     versions
 }
 
-// ── appctl ───────────────────────────────────────────────────────────
+// appctl
 
 /// Execute one `appctl` command against `fs`, returning its output text.
 pub(super) fn run_appctl_command(fs: &FileSystem, _cwd: &str, argv: &[String]) -> String {
@@ -373,7 +373,7 @@ fn appctl_cache_prune(fs: &FileSystem) -> String {
     }
 }
 
-// ── app-center ───────────────────────────────────────────────────────
+// app-center
 
 /// Execute one `app-center` command against `fs`, returning its output text.
 pub(super) fn run_app_center_command(fs: &FileSystem, _cwd: &str, argv: &[String]) -> String {
@@ -438,7 +438,7 @@ fn app_center_recover(fs: &FileSystem) -> String {
     appctl_recover(fs)
 }
 
-// ── lumina ───────────────────────────────────────────────────────────
+// lumina
 
 /// Execute one `lumina` command against `fs`, returning `(exit_code, output)`.
 pub(super) fn run_lumina_command(fs: &FileSystem, _cwd: &str, argv: &[String]) -> (i32, String) {

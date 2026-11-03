@@ -34,7 +34,7 @@ pub const fn run_prp(base: u64, bytes: usize) -> (u64, u64) {
 /// Default number of entries per queue.
 pub const DEFAULT_QUEUE_SIZE: usize = 64;
 
-// ─── NVMe register offsets (relative to BAR0) ──────────────────────────
+// NVMe register offsets (relative to BAR0)
 
 /// CAP (Controller Capabilities), 64-bit.
 pub const NVME_REG_CAP: usize = 0x0000;
@@ -51,7 +51,7 @@ pub const NVME_REG_ACQ: usize = 0x0030;
 /// Base offset of the doorbell region (SQyTDBL / CQyHDBL).
 pub const NVME_DOORBELL_BASE: usize = 0x1000;
 
-// ─── CAP / CC / CSTS bit fields ────────────────────────────────────────
+// CAP / CC / CSTS bit fields
 
 /// CAP.MQES: maximum queue entries supported (low 16 bits).
 pub const CAP_MQES_MASK: u64 = 0xFFFF;
@@ -63,7 +63,7 @@ pub const CC_EN: u32 = 1 << 0;
 /// Bounded spin-wait iterations for controller ready transitions.
 pub const COMPLETION_POLL_LIMIT: u32 = 1_000_000;
 
-// ─── Admin command opcodes ─────────────────────────────────────────────
+// Admin command opcodes
 
 pub const ADMIN_DELETE_IOSQ: u8 = 0x00;
 pub const ADMIN_CREATE_IOSQ: u8 = 0x01;
@@ -76,12 +76,12 @@ pub const ADMIN_DELETE_IOCQ: u8 = 0x04;
 pub const ADMIN_CREATE_IOCQ: u8 = 0x05;
 pub const ADMIN_IDENTIFY: u8 = 0x06;
 
-// ─── Identify CNS (CDW10 bits 7:0) ────────────────────────────────────
+// Identify CNS (CDW10 bits 7:0)
 
 pub const CNS_IDENTIFY_NAMESPACE: u32 = 0x00;
 pub const CNS_IDENTIFY_CONTROLLER: u32 = 0x01;
 
-// ─── NVM command opcodes ───────────────────────────────────────────────
+// NVM command opcodes
 
 pub const NVM_FLUSH: u8 = 0x00;
 pub const NVM_WRITE: u8 = 0x01;

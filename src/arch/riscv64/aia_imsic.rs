@@ -55,7 +55,7 @@ use crate::util::logger::log;
 use crate::util::logger::LogLevel;
 use crate::Error;
 
-// ── Platform geometry ──────────────────────────────────────────────────
+// Platform geometry
 //
 // With `-machine virt,aia=aplic-imsic` QEMU places two IMSIC groups: the
 // machine-mode file at 0x2400_0000 and the supervisor-mode one at
@@ -82,7 +82,7 @@ const IMSIC_SELF_TEST_IRQ: u32 = (IRQ_TABLE_LEN - 1) as u32;
 /// Highest identity a device may be assigned.
 pub const IMSIC_MAX_DEVICE_IRQ: u32 = IMSIC_SELF_TEST_IRQ - 1;
 
-// ── The interrupt file's registers, reached indirectly (AIA v1.0 §5) ───
+// The interrupt file's registers, reached indirectly (AIA v1.0 §5)
 //
 // The file's registers are *not* at fixed offsets in its page.  Supervisor
 // mode reaches them through the Smaia pair: write the register's number to
@@ -200,7 +200,7 @@ const SIE_SEIE: u64 = 1 << 9;
 /// from the external-interrupt path and must not block.
 pub use crate::arch::irq_handlers::IrqHandler;
 
-// ── Per-hart IMSIC geometry ────────────────────────────────────────────
+// Per-hart IMSIC geometry
 
 /// IMSIC file geometry captured at init.
 #[derive(Clone, Copy)]
@@ -248,7 +248,7 @@ fn set_bitset_bit(base: u64, irq: u32) -> u64 {
     imsic_csr_set(select_for(base, irq), 1 << (irq % 64))
 }
 
-// ── Global state ───────────────────────────────────────────────────────
+// Global state
 
 static IMSIC_LAYOUT: SpinLock<Option<ImsicLayout>> = SpinLock::new(None);
 static GLOBAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -390,7 +390,7 @@ pub fn claim_device_irqs_each(handlers: &[IrqHandler]) -> Result<u32, Error> {
     )
 }
 
-// ── External-interrupt dispatch ────────────────────────────────────────
+// External-interrupt dispatch
 
 /// Claim and dispatch the highest-priority pending external interrupt.
 ///
@@ -424,7 +424,7 @@ pub fn handle_pending_external() -> u32 {
     claimed
 }
 
-// ── MSI-X table programming ────────────────────────────────────────────
+// MSI-X table programming
 
 /// Walk the message path once, on this machine, at boot.
 ///
@@ -648,7 +648,7 @@ pub fn configure_msix(
     Ok(base_irq)
 }
 
-// ── InterruptController implementation ─────────────────────────────────
+// InterruptController implementation
 
 /// The IMSIC as the architecture's interrupt controller.
 pub struct AiaImsicController;

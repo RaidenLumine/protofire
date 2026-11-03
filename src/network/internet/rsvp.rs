@@ -23,7 +23,7 @@
 
 use alloc::vec::Vec;
 
-// ─── Token bucket ──────────────────────────────────────────────────────────
+// Token bucket
 
 /// A token-bucket traffic spec, matching the parameters of an RSVP TSPEC.
 ///
@@ -115,7 +115,7 @@ impl TokenBucket {
     }
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

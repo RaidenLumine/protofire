@@ -253,7 +253,7 @@ pub const X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize = 1 
 
 pub const X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 1 << 2;
 
-// ── RISC-V 64 user exception frame ──
+// RISC-V 64 user exception frame
 //
 // The vector this machine delivers is its `scause` exception code, and the
 // "error code" is `stval` — the faulting address for the faults that carry
@@ -336,7 +336,7 @@ pub const RISCV64_USER_EXCEPTION_FRAME_INSTRUCTION_POINTER_OFFSET: usize =
 pub const RISCV64_USER_EXCEPTION_FRAME_SAVED_PROGRAM_STATUS_OFFSET: usize =
     offset_of!(RiscV64UserExceptionFrame, saved_program_status);
 
-// ── The flags a user exception handler is installed with ────────────────
+// The flags a user exception handler is installed with
 //
 // One set of names for code that should not care which architecture it was
 // compiled for — the user-side syscall builders and the demo payloads.
@@ -440,7 +440,7 @@ impl X86_64PageFaultError {
     }
 }
 
-// ── General Protection Fault (#GP) error code decode ──
+// General Protection Fault (#GP) error code decode
 //
 // Bits 0-15: selector index of the faulting segment/interrupt gate
 // Bit  14:   table (LDT=0, IDT=1)
@@ -493,7 +493,7 @@ impl X86_64GeneralProtectionError {
     }
 }
 
-// ── Stack Segment Fault (#SS) error code decode ──
+// Stack Segment Fault (#SS) error code decode
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64StackSegmentError {
@@ -518,7 +518,7 @@ impl X86_64StackSegmentError {
     }
 }
 
-// ── Segment Not Present (#NP) error code decode ──
+// Segment Not Present (#NP) error code decode
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64SegmentNotPresentError {
@@ -543,7 +543,7 @@ impl X86_64SegmentNotPresentError {
     }
 }
 
-// ── Invalid TSS (#TS) error code decode ──
+// Invalid TSS (#TS) error code decode
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64InvalidTssError {
@@ -572,7 +572,7 @@ impl X86_64InvalidTssError {
     }
 }
 
-// ── User Exception Frame ──
+// User Exception Frame
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -991,7 +991,7 @@ mod tests {
         assert_eq!(syndrome.iss, 0x4d);
     }
 
-    // ── x86 error code decode tests ──
+    // x86 error code decode tests
 
     #[test]
     fn general_protection_error_decodes_gdt_selector() {

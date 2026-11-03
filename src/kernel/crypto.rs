@@ -10,7 +10,7 @@ use crate::Result;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// ── SHA-256 ────────────────────────────────────────────────────────────────
+// SHA-256
 
 /// Initial hash values (FIPS 180-4 Section 5.3.3).
 const H_INIT: [u32; 8] = [
@@ -178,7 +178,7 @@ const HEX_CHARS: [char; 16] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
-// ── CRC32C (Castagnoli) ───────────────────────────────────────────────────
+// CRC32C (Castagnoli)
 
 /// CRC32C (Castagnoli) lookup table — polynomial 0x1EDC6F41 (reflected).
 const CRC32C_TABLE: [u32; 256] = [
@@ -286,7 +286,7 @@ const CRC32_TABLE: [u32; 256] = [
     0xB3667A2E, 0xC4614AB8, 0x5D681B02, 0x2A6F2B94, 0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D,
 ];
 
-// ── ChaCha20 ─────────────────────────────────────────────────────────────────
+// ChaCha20
 // RFC 8439 implementation (256-bit key, 96-bit nonce, 32-bit counter).
 
 /// ChaCha20 quarter round: operates on four 32-bit state words in-place.
@@ -394,7 +394,7 @@ pub fn chacha20_keystream(key: &[u8; 32], nonce: &[u8; 12], counter: u32, out: &
     }
 }
 
-// ── Constant-time comparison ────────────────────────────────────────────────
+// Constant-time comparison
 
 /// Compare two 32-byte arrays in constant time to prevent timing side-channels.
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -408,7 +408,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     acc == 0
 }
 
-// ── HMAC-SHA256 ──────────────────────────────────────────────────────────────
+// HMAC-SHA256
 // RFC 2104 / NIST FIPS 198-1.
 
 const HMAC_IPAD: u8 = 0x36;
@@ -452,7 +452,7 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     sha256(&outer_input)
 }
 
-// ── HKDF-SHA256 ──────────────────────────────────────────────────────────────
+// HKDF-SHA256
 // RFC 5869 — HMAC-based Key Derivation Function.
 
 /// HKDF extract step: `HKDF-Extract(salt, IKM) -> PRK`.
@@ -495,7 +495,7 @@ pub fn hkdf_sha256_expand(prk: &[u8; 32], info: &[u8], output_len: usize) -> Vec
     okm
 }
 
-// ── Poly1305 ─────────────────────────────────────────────────────────────────
+// Poly1305
 // RFC 8439 §2.5 — one-time authenticator.
 
 /// Clamp the first 16 bytes of `r` per Poly1305 specification.
@@ -681,7 +681,7 @@ fn poly1305_mul_mod(a0: &mut u64, a1: &mut u64, a2: &mut u64, r: [u64; 2]) {
     *a2 = r2_acc as u64;
 }
 
-// ── ChaCha20-Poly1305 AEAD ───────────────────────────────────────────────────
+// ChaCha20-Poly1305 AEAD
 // RFC 8439 — AEAD construction.
 
 /// Encrypt `plaintext` with ChaCha20-Poly1305 AEAD.
@@ -778,7 +778,7 @@ fn chacha20_encrypt_inner(key: &[u8; 32], nonce: &[u8; 12], start_counter: u32, 
     }
 }
 
-// ── AES-128 ──────────────────────────────────────────────────────────────────
+// AES-128
 // NIST FIPS 197 implementation.
 
 /// AES-128 S-box (SubBytes substitution table).
@@ -1103,7 +1103,7 @@ fn aes256_decrypt_block(key: &[u8; 32], block: &mut [u8; 16]) {
     aes_add_round_key(block, &rk[0]);
 }
 
-// ── GCM (Galois/Counter Mode) ────────────────────────────────────────────────
+// GCM (Galois/Counter Mode)
 // NIST SP 800-38D.
 
 /// GF(2^128) multiplication used for GHASH.
@@ -1289,7 +1289,7 @@ pub fn aes128_gcm_decrypt(
     Ok(plaintext)
 }
 
-// ── AES-XTS (IEEE 1619) ─────────────────────────────────────────────────────
+// AES-XTS (IEEE 1619)
 // XTS-AES is used for full-disk encryption.  The 128-bit tweak is formed from
 // the sector id and encrypted with the tweak key; each 16-byte data block is
 // XORed with the running tweak, encrypted with the data key, and XORed with
@@ -1387,7 +1387,7 @@ pub fn aes_xts_decrypt(key: &[u8; 64], sector_id: u64, data: &mut [u8]) {
     }
 }
 
-// ── X25519 (Curve25519 ECDH) ─────────────────────────────────────────────────
+// X25519 (Curve25519 ECDH)
 // RFC 7748 — Elliptic-curve Diffie-Hellman key exchange.
 //
 // Montgomery form:  y^2 = x^3 + 486662·x^2 + x   over GF(2^255 - 19).
@@ -1812,7 +1812,7 @@ const X25519_BASE_POINT_BYTES: [u8; 32] = {
     b
 };
 
-// ── Salt generation ─────────────────────────────────────────────────────────
+// Salt generation
 
 /// Generate a 16-byte deterministic salt bound to `username`.
 ///
@@ -1831,8 +1831,8 @@ pub fn generate_salt(username: &str) -> [u8; 16] {
     salt
 }
 
-// ── RSA / Big-Integer Arithmetic
-// ────────────────────────────────────────────── Stack-allocated limb arrays
+// RSA / Big-Integer Arithmetic
+// Stack-allocated limb arrays
 // for RSA verification (2048-bit and 4096-bit keys). Uses Montgomery
 // multiplication for modular arithmetic — no division needed.
 
@@ -1882,7 +1882,7 @@ fn rsa_limbs_bitlen(limbs: &[u64; RSA_MAX_LIMBS], num_limbs: usize) -> usize {
     0
 }
 
-// ── Montgomery multiplication ────────────────────────────────────────────────
+// Montgomery multiplication
 
 /// Compute the modular inverse of an odd `a` modulo 2^64 via Newton iteration.
 fn rsa_modinv_u64(a: u64) -> u64 {
@@ -2237,7 +2237,7 @@ fn rsa_mod_pow(
     result[..num_limbs].copy_from_slice(&unmont[..num_limbs]);
 }
 
-// ── MGF1 ─────────────────────────────────────────────────────────────────────
+// MGF1
 
 /// MGF1 based on SHA-256 (RFC 8017 Appendix B.2.1).
 /// Fills `output` with mask bytes generated from `seed`.
@@ -2263,7 +2263,7 @@ fn mgf1_sha256(seed: &[u8], output: &mut [u8]) {
     }
 }
 
-// ── RSA-PSS Verification (RFC 8017 §8.1.2, §9.1.2) ───────────────────────────
+// RSA-PSS Verification (RFC 8017 §8.1.2, §9.1.2)
 
 /// Raw RSA public-key operation: compute `m = s^e mod n` and return the
 /// `k`-byte big-endian encoded message `EM` alongside the modulus length `k`.
@@ -2490,7 +2490,7 @@ pub fn rsa_pss_verify(
     constant_time_eq(&h_prime, &h_val.try_into().unwrap_or([0u8; 32]))
 }
 
-// ── RSASSA-PKCS1-v1_5 Verification (RFC 8017 §8.2, §9.2) ────────────────────
+// RSASSA-PKCS1-v1_5 Verification (RFC 8017 §8.2, §9.2)
 
 /// DER prefix of the SHA-256 `DigestInfo` value (RFC 8017 §9.2):
 ///
@@ -2566,8 +2566,8 @@ pub fn rsa_pkcs1v15_verify(
     )
 }
 
-// ── Salt generation ─────────────────────────────────────────────────────────
-// ── ECDSA P-256 (secp256r1) signature verification ─────────────────────────
+// Salt generation
+// ECDSA P-256 (secp256r1) signature verification
 // NIST FIPS 186-5 / SEC 2.
 //
 // Implements field arithmetic modulo the P-256 prime, point operations on
@@ -2646,7 +2646,7 @@ const P256_ORDER_C: [u64; 4] = [
     0x0000_0000_FFFF_FFFF,
 ];
 
-// ── 256-bit field element ──────────────────────────────────────────────────
+// 256-bit field element
 
 /// A 256-bit field element stored as four 64-bit limbs (little-endian).
 #[derive(Clone, Copy)]
@@ -2856,7 +2856,7 @@ fn barrett_reduce(s: &[u64; 8]) -> Fe256 {
     reduce_512_mod(s, &P256_C, &P256_PRIME)
 }
 
-// ── Curve points ───────────────────────────────────────────────────────────
+// Curve points
 
 /// Affine point on the P-256 curve, or the point at infinity.
 #[derive(Clone, Copy)]
@@ -2957,7 +2957,7 @@ fn p256_generator() -> P256Point {
     }
 }
 
-// ── ECDSA verification ─────────────────────────────────────────────────────
+// ECDSA verification
 
 /// Parse a big-endian integer from bytes into an Fe256 (reduced mod n).
 fn parse_ecdsa_int(bytes: &[u8]) -> Option<Fe256> {
@@ -3172,7 +3172,7 @@ pub fn parse_ecdsa_der_signature(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((r.to_vec(), s.to_vec()))
 }
 
-// ── PBKDF2-HMAC-SHA256 (RFC 8018 §5.2) ───────────────────────────────────────
+// PBKDF2-HMAC-SHA256 (RFC 8018 §5.2)
 
 /// Derive a key from a passphrase using PBKDF2-HMAC-SHA256.
 ///
@@ -3249,7 +3249,7 @@ mod tests {
         // Salts differ because the counter advances.
     }
 
-    // ── ChaCha20 test vectors (RFC 8439 §2.4.2) ──
+    // ChaCha20 test vectors (RFC 8439 §2.4.2)
 
     #[test]
     fn chacha20_block_quarter_round_vector() {
@@ -3344,7 +3344,7 @@ mod tests {
         assert_eq!(out1, out2);
     }
 
-    // ── HMAC-SHA256 test vectors (RFC 4231) ──
+    // HMAC-SHA256 test vectors (RFC 4231)
 
     #[test]
     fn hmac_sha256_rfc4231_tc1() {
@@ -3388,7 +3388,7 @@ mod tests {
         assert_eq!(mac1, mac2);
     }
 
-    // ── HKDF-SHA256 test vectors (RFC 5869 Appendix A.1) ──
+    // HKDF-SHA256 test vectors (RFC 5869 Appendix A.1)
 
     #[test]
     fn hkdf_sha256_extract_rfc5869() {
@@ -3441,7 +3441,7 @@ mod tests {
         assert_ne!(&okm[..32], &ikm[..]);
     }
 
-    // ── Poly1305 test vectors (RFC 8439 §2.5.2) ──
+    // Poly1305 test vectors (RFC 8439 §2.5.2)
 
     #[test]
     fn poly1305_rfc8439_test_vector() {
@@ -3498,7 +3498,7 @@ mod tests {
         let mut a1: u64 = 0;
         let mut a2: u64 = 0;
 
-        // ── Block 0: bytes 0..16 ──
+        // Block 0: bytes 0..16
         {
             let mut block = [0u8; 17];
             block[..16].copy_from_slice(&msg[..16]);
@@ -3555,7 +3555,7 @@ mod tests {
             assert_eq!(a2, 0x2, "blk0 after mul a2");
         }
 
-        // ── Block 1: bytes 16..32 ──
+        // Block 1: bytes 16..32
         {
             let mut block = [0u8; 17];
             block[..16].copy_from_slice(&msg[16..32]);
@@ -3580,7 +3580,7 @@ mod tests {
             assert_eq!(a2, 0x2, "blk1 after mul a2");
         }
 
-        // ── Block 2 (partial): bytes 32..34 ──
+        // Block 2 (partial): bytes 32..34
         {
             let remainder = &msg[32..];
             let mut block = [0u8; 17];
@@ -3612,7 +3612,7 @@ mod tests {
             assert_eq!(a2, 0x2, "blk2 after mul a2");
         }
 
-        // ── Final: add s modulo 2^128 (no reduce needed). ──
+        // Final: add s modulo 2^128 (no reduce needed).
         let t0 = a0 as u128 + s0 as u128;
         let carry0 = t0 >> 64;
         a0 = t0 as u64;
@@ -3632,7 +3632,7 @@ mod tests {
         );
     }
 
-    // ── ChaCha20-Poly1305 AEAD test vectors (RFC 8439 §2.8.2) ──
+    // ChaCha20-Poly1305 AEAD test vectors (RFC 8439 §2.8.2)
 
     #[test]
     fn chacha20_poly1305_rfc8439_aead_vector() {
@@ -3728,7 +3728,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── AES-128 test vectors (NIST FIPS 197 Appendix B) ──
+    // AES-128 test vectors (NIST FIPS 197 Appendix B)
 
     #[test]
     fn aes128_encrypt_block_known_vector() {
@@ -3811,7 +3811,7 @@ mod tests {
         }
     }
 
-    // ── AES-128-GCM test vectors ──
+    // AES-128-GCM test vectors
 
     #[test]
     fn aes128_gcm_encrypt_decrypt_round_trip() {
@@ -3903,7 +3903,7 @@ mod tests {
         assert!(super::aes128_gcm_decrypt(&key, &nonce, &aad, &ciphertext, &bad_tag).is_err());
     }
 
-    // ── CRC-32 test vectors ──
+    // CRC-32 test vectors
 
     #[test]
     fn crc32_known_vector() {
@@ -3967,7 +3967,7 @@ mod tests {
         assert_eq!(super::crc32c(b"123456789"), 0xE306_9283);
     }
 
-    // ── AES-XTS test vectors (IEEE 1619) ──
+    // AES-XTS test vectors (IEEE 1619)
 
     #[test]
     fn aes_xts_encrypt_decrypt_round_trip() {
@@ -4219,9 +4219,9 @@ mod tests {
         assert!(!super::rsa_pkcs1v15_verify(&n, &e, &bad_msg, &signature));
     }
 
-    // ── X25519 test vectors (RFC 7748 §5.2) ──
+    // X25519 test vectors (RFC 7748 §5.2)
 
-    // ── Field arithmetic sanity tests ──
+    // Field arithmetic sanity tests
 
     #[test]
     fn fe25519_add_sub_identity() {

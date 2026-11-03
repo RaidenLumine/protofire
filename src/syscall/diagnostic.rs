@@ -11,7 +11,7 @@ use crate::memory;
 use crate::Error;
 use crate::Result;
 
-// ── Sleep (slot 49) ──────────────────────────────────────────────────────
+// Sleep (slot 49)
 
 pub(super) fn sleep(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let ticks = context.arg(0) as u64;
@@ -20,7 +20,7 @@ pub(super) fn sleep(context: &mut super::SyscallContext) -> Result<super::Syscal
     Ok(super::SyscallDispatch::complete(0))
 }
 
-// ── ListProcesses (slot 50) ─────────────────────────────────────────────
+// ListProcesses (slot 50)
 
 pub(super) fn list_processes(
     context: &mut super::SyscallContext,
@@ -56,7 +56,7 @@ pub(super) fn list_processes(
     write_record_slice_to_user(&records, buffer_ptr, buffer_len)
 }
 
-// ── ListThreads (slot 51) ───────────────────────────────────────────────
+// ListThreads (slot 51)
 
 pub(super) fn list_threads(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let pid = super::user_memory::process_pid_arg(context.arg(0))?;
@@ -80,7 +80,7 @@ pub(super) fn list_threads(context: &mut super::SyscallContext) -> Result<super:
     write_record_slice_to_user(&records, buffer_ptr, buffer_len)
 }
 
-// ── KernelLog (slot 52) ─────────────────────────────────────────────────
+// KernelLog (slot 52)
 
 pub(super) fn kernel_log(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let offset = context.arg(0) as u64;
@@ -104,7 +104,7 @@ pub(super) fn kernel_log(context: &mut super::SyscallContext) -> Result<super::S
         .map(super::SyscallDispatch::complete)
 }
 
-// ── SystemInfo (slot 53) ────────────────────────────────────────────────
+// SystemInfo (slot 53)
 
 pub(super) fn system_info(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let info_type = context.arg(0) as u64;
@@ -204,7 +204,7 @@ fn system_info_fault_profiler(
         .map(super::SyscallDispatch::complete)
 }
 
-// ── SystemInfo: BootReport (type 3) ────────────────────────────────────
+// SystemInfo: BootReport (type 3)
 
 fn system_info_boot_report(
     buffer_ptr: *mut u8,
@@ -217,7 +217,7 @@ fn system_info_boot_report(
         .map(super::SyscallDispatch::complete)
 }
 
-// ── SystemInfo: SystemHealth (type 4) ───────────────────────────────────
+// SystemInfo: SystemHealth (type 4)
 
 fn system_info_system_health(
     buffer_ptr: *mut u8,
@@ -275,7 +275,7 @@ fn system_info_real_time(buffer_ptr: *mut u8, buffer_len: usize) -> Result<super
         .map(super::SyscallDispatch::complete)
 }
 
-// ── SystemInfo: FsProfiler (type 5) ─────────────────────────────────────
+// SystemInfo: FsProfiler (type 5)
 
 fn system_info_fs_profiler(
     buffer_ptr: *mut u8,
@@ -299,7 +299,7 @@ fn system_info_fs_profiler(
         .map(super::SyscallDispatch::complete)
 }
 
-// ── SystemInfo: NetProfiler (type 6) ────────────────────────────────────
+// SystemInfo: NetProfiler (type 6)
 
 fn system_info_net_profiler(
     buffer_ptr: *mut u8,
@@ -341,7 +341,7 @@ fn system_info_net_profiler(
         .map(super::SyscallDispatch::complete)
 }
 
-// ── SystemInfo: PerCpu (type 8) ─────────────────────────────────────────
+// SystemInfo: PerCpu (type 8)
 
 fn system_info_per_cpu(buffer_ptr: *mut u8, buffer_len: usize) -> Result<super::SyscallDispatch> {
     let percpu = crate::kernel::percpu::get();
@@ -354,7 +354,7 @@ fn system_info_per_cpu(buffer_ptr: *mut u8, buffer_len: usize) -> Result<super::
         .map(super::SyscallDispatch::complete)
 }
 
-// ── SystemInfo: IrqProfiler (type 9) ──────────────────────────────────
+// SystemInfo: IrqProfiler (type 9)
 
 fn system_info_irq_profiler(
     buffer_ptr: *mut u8,
@@ -369,7 +369,7 @@ fn system_info_irq_profiler(
         .map(super::SyscallDispatch::complete)
 }
 
-// ── ListProcessFaults (slot 61) ───────────────────────────────────────────
+// ListProcessFaults (slot 61)
 
 pub(super) fn list_process_faults(
     context: &mut super::SyscallContext,
@@ -400,7 +400,7 @@ pub(super) fn list_process_faults(
     write_record_slice_to_user(&records, buffer_ptr, buffer_len)
 }
 
-// ── ReclaimPages (slot 63) ─────────────────────────────────────────────────
+// ReclaimPages (slot 63)
 
 /// Trigger page reclamation: try to reclaim up to `target` anonymous user
 /// pages, freeing their physical frames while preserving page content for
@@ -423,7 +423,7 @@ pub(super) fn reclaim_pages(context: &mut super::SyscallContext) -> Result<super
     Ok(super::SyscallDispatch::complete(reclaimed))
 }
 
-// ── CompactMemory (slot 150) ─────────────────────────────────────────────
+// CompactMemory (slot 150)
 
 /// Trigger memory defragmentation: relocate movable user frames so the
 /// physical frame pool's free ranges coalesce into one contiguous block.
@@ -446,7 +446,7 @@ pub(super) fn compact_memory(
     Ok(super::SyscallDispatch::complete(moved))
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// Helpers
 
 fn process_state_to_u64(state: crate::kernel::process::ProcessState) -> u64 {
     use crate::kernel::process::ProcessState;
@@ -536,7 +536,7 @@ mod tests {
     use crate::abi::diagnostic as diag;
     use crate::syscall::table::SyscallNumber;
 
-    // ── Sleep tests ────────────────────────────────────────────────────
+    // Sleep tests
 
     #[test]
     fn sleep_rejects_non_zero_reserved_args() {
@@ -557,7 +557,7 @@ mod tests {
         );
     }
 
-    // ── ListProcesses tests ────────────────────────────────────────────
+    // ListProcesses tests
 
     #[test]
     fn list_processes_rejects_non_zero_reserved_args() {
@@ -598,7 +598,7 @@ mod tests {
         assert!(first_pid > 0);
     }
 
-    // ── ListThreads tests ──────────────────────────────────────────────
+    // ListThreads tests
 
     #[test]
     fn list_threads_rejects_non_zero_reserved_args() {
@@ -638,7 +638,7 @@ mod tests {
         assert_eq!(result.value, 0);
     }
 
-    // ── KernelLog tests ────────────────────────────────────────────────
+    // KernelLog tests
 
     #[test]
     fn kernel_log_rejects_non_zero_reserved_args() {
@@ -675,7 +675,7 @@ mod tests {
         assert!(result.value >= 16);
     }
 
-    // ── SystemInfo tests ───────────────────────────────────────────────
+    // SystemInfo tests
 
     #[test]
     fn system_info_rejects_non_zero_reserved_args() {
@@ -840,7 +840,7 @@ mod tests {
         assert_eq!(result.value, diag::IRQ_PROFILER_RECORD_SIZE);
     }
 
-    // ── write_record_slice_to_user tests ───────────────────────────────
+    // write_record_slice_to_user tests
 
     #[test]
     fn write_record_slice_probe_returns_total_size() {
@@ -867,7 +867,7 @@ mod tests {
         assert_eq!(result, Err(Error::InvalidArgument));
     }
 
-    // ── Encoding helpers ───────────────────────────────────────────────
+    // Encoding helpers
 
     #[test]
     fn process_state_encoding_are_distinct() {

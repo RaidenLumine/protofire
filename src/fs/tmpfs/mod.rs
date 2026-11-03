@@ -30,14 +30,14 @@ use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 /// Current Unix timestamp in seconds (0 if RTC is unavailable).
 fn now_unix() -> u64 {
     crate::arch::timer::rtc_now_unix().unwrap_or(0)
 }
 
-// ── Inode data ────────────────────────────────────────────────────────────
+// Inode data
 
 enum InodeData {
     File(Vec<u8>),
@@ -59,7 +59,7 @@ struct Inode {
     xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
-// ── Inner state ───────────────────────────────────────────────────────────
+// Inner state
 
 struct TmpFsInner {
     inodes: BTreeMap<u64, Inode>,
@@ -100,7 +100,7 @@ impl TmpFsInner {
     }
 }
 
-// ── Volume ────────────────────────────────────────────────────────────────
+// Volume
 
 pub struct TmpFsVolume {
     name: String,
@@ -671,7 +671,7 @@ impl VfsFileSystem for TmpFsVolume {
     }
 }
 
-// ── VNode ─────────────────────────────────────────────────────────────────
+// VNode
 
 struct TmpFsVNode {
     name: String,
@@ -891,7 +891,7 @@ impl VNode for TmpFsVNode {
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// Helpers
 
 fn clean_path(path: &str) -> String {
     if path.is_empty() || path == "/" {
@@ -958,7 +958,7 @@ fn subtree_contains(inner: &TmpFsInner, ancestor: u64, needle: u64) -> bool {
     false
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

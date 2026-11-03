@@ -21,7 +21,7 @@ use crate::kernel::crypto::sha256;
 use crate::Error;
 use crate::Result;
 
-// ── LUKS2 magic constants ──────────────────────────────────────────────
+// LUKS2 magic constants
 
 /// LUKS2 magic: "LUKS\xBA\xBE"
 ///
@@ -32,7 +32,7 @@ pub const LUKS2_MAGIC: [u8; 6] = [0x4C, 0x55, 0x4B, 0x53, 0xBA, 0xBE];
 /// Expected LUKS2 version number (big-endian).
 const LUKS2_VERSION: u16 = 2;
 
-// ── Base64 decoder ─────────────────────────────────────────────────────
+// Base64 decoder
 
 const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -109,7 +109,7 @@ pub fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     Some(output)
 }
 
-// ── Minimal JSON string scanner ────────────────────────────────────────
+// Minimal JSON string scanner
 
 /// Find the value of a quoted string key in a JSON-like text.
 ///
@@ -212,7 +212,7 @@ pub fn parse_decimal(s: &[u8]) -> Option<u64> {
     }
 }
 
-// ── LUKS2 header reading ───────────────────────────────────────────────
+// LUKS2 header reading
 
 /// Parsed LUKS2 binary header.
 struct Luks2Header {
@@ -273,7 +273,7 @@ fn get_payload_offset_from_json(json: &[u8]) -> Option<u64> {
     parse_decimal(offset_str)
 }
 
-// ── Keyslot parameters ─────────────────────────────────────────────────
+// Keyslot parameters
 
 /// Parameters extracted from a LUKS2 keyslot.
 struct KeyslotParams {
@@ -355,7 +355,7 @@ fn parse_keyslot(json: &[u8]) -> Option<KeyslotParams> {
     }
 }
 
-// ── Digest verification ────────────────────────────────────────────────
+// Digest verification
 
 /// Digest parameters for verifying the recovered master key.
 struct DigestParams {
@@ -405,7 +405,7 @@ fn parse_digest(json: &[u8]) -> Option<DigestParams> {
     }
 }
 
-// ── AF merge (anti-forensic split merge) ───────────────────────────────
+// AF merge (anti-forensic split merge)
 
 /// Decrypt a keyslot area with AES-256-XTS and the derived key.
 ///
@@ -522,7 +522,7 @@ fn af_merge(af_data: &[u8], stripes: u32, key_size: usize) -> Vec<u8> {
     key
 }
 
-// ── Main LUKS2 open function ──────────────────────────────────────────
+// Main LUKS2 open function
 
 /// Open a LUKS2-encrypted block device using a passphrase.
 ///

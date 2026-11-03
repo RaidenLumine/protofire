@@ -40,7 +40,7 @@ use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 use crate::Error;
 use crate::Result;
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// Constants
 
 /// Protocol construction identifier (custom SHA-256 variant).
 const CONSTRUCTION: &[u8] = b"Noise_IKpsk2_25519_ChaChaPoly_SHA256";
@@ -106,7 +106,7 @@ const ZERO_NONCE: [u8; 12] = [0u8; 12];
 /// Message-count limit before a keypair must be retired.
 const REKEY_AFTER_MESSAGES: u64 = u64::MAX - 0x1000;
 
-// ─── Noise HKDF helpers (Noise spec, not RFC HKDF) ──────────────────────────
+// Noise HKDF helpers (Noise spec, not RFC HKDF)
 
 /// Noise-spec HKDF with 2 outputs.
 ///
@@ -145,7 +145,7 @@ fn noise_hkdf3(ck: &[u8; 32], dh_input: &[u8]) -> ([u8; 32], [u8; 32], [u8; 32])
     (out1, out2, out3)
 }
 
-// ─── Noise state helpers ────────────────────────────────────────────────────
+// Noise state helpers
 
 /// MixHash: h = SHA256(h || data)
 fn mix_hash(h: &[u8; 32], data: &[u8]) -> [u8; 32] {
@@ -234,7 +234,7 @@ pub fn counter_to_nonce(counter: u64) -> [u8; 12] {
     nonce
 }
 
-// ─── Handshake message structs ──────────────────────────────────────────────
+// Handshake message structs
 
 /// WireGuard handshake initiation message.
 #[derive(Debug, Clone, Copy)]
@@ -391,7 +391,7 @@ impl CookieReply {
     }
 }
 
-// ─── Session management ─────────────────────────────────────────────────────
+// Session management
 
 /// A transport keypair with independent send/recv nonce counters.
 #[derive(Debug, Clone)]
@@ -580,7 +580,7 @@ impl Default for SessionTable {
     }
 }
 
-// ─── Handshake state machines ───────────────────────────────────────────────
+// Handshake state machines
 
 /// Initiator-side Noise_IKpsk2 handshake state.
 pub struct InitiatorHandshake {
@@ -871,7 +871,7 @@ impl ResponderHandshake {
     }
 }
 
-// ─── Transport data encryption ──────────────────────────────────────────────
+// Transport data encryption
 
 /// Encrypt a plaintext IP packet into a transport data message.
 ///
@@ -975,7 +975,7 @@ pub fn parse_receiver_idx(data: &[u8]) -> Result<u32> {
     Ok(u32::from_le_bytes([data[4], data[5], data[6], data[7]]))
 }
 
-// ─── WgDevice ───────────────────────────────────────────────────────────────
+// WgDevice
 
 /// Virtual WireGuard network device.
 ///

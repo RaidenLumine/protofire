@@ -13,7 +13,7 @@ use crate::network::link::device::mock::MockNetworkDevice;
 use crate::network::stack::NetworkStack;
 use crate::Error;
 
-// ── unit tests (pure functions, no stack needed) ──
+// unit tests (pure functions, no stack needed)
 
 #[test]
 fn hosts_lookup_known_entries() {
@@ -161,7 +161,7 @@ fn parse_a_record_rejects_truncated_response() {
     assert_eq!(parse_a_record(&[0u8; 4]), Err(Error::DeviceError));
 }
 
-// ── AAAA record tests ──────────────────────────────────────────────
+// AAAA record tests
 
 #[test]
 fn build_query_aaaa_has_correct_qtype() {
@@ -213,7 +213,7 @@ fn parse_aaaa_record_skips_a_records_to_find_aaaa() {
     );
 }
 
-// ── TTL extraction tests ──────────────────────────────────────────
+// TTL extraction tests
 
 #[test]
 fn parse_a_record_with_ttl_extracts_ttl_from_response() {
@@ -235,7 +235,7 @@ fn parse_a_record_discards_ttl_for_backward_compat() {
     assert_eq!(addr, [10, 0, 2, 2]);
 }
 
-// ── DNS cache logic tests ─────────────────────────────────────────
+// DNS cache logic tests
 
 #[test]
 fn dns_cache_insert_and_lookup() {
@@ -270,7 +270,7 @@ fn dns_cache_ttl_clamping() {
     assert_eq!(ttl, 10); // Raw TTL is returned; clamping is in cache_insert.
 }
 
-// ── integration test (requires NetworkStack) ──
+// integration test (requires NetworkStack)
 
 #[cfg(not(target_os = "none"))]
 #[test]
@@ -770,7 +770,7 @@ fn await_aaaa_takes_a_queued_answer() {
     }
 }
 
-// ── test helpers ──
+// test helpers
 
 /// Build an Ethernet frame carrying an IPv4 payload.
 fn build_eth_ip_frame(
@@ -887,7 +887,7 @@ fn build_test_dns_response_aaaa(
     buf
 }
 
-// ── EDNS0 tests ────────────────────────────────────────────────────
+// EDNS0 tests
 
 #[test]
 fn build_query_edns0_adds_opt_record() {
@@ -913,7 +913,7 @@ fn build_query_edns0_has_larger_packet() {
     assert_eq!(edns0.len(), standard.len() + 11);
 }
 
-// ── PTR tests ─────────────────────────────────────────────────────
+// PTR tests
 
 #[test]
 fn build_query_ptr_v4_produces_arpa_name() {

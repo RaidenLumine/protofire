@@ -8,7 +8,7 @@
 //! this file re-exports the public surface.  Regression tests live in
 //! [`tests`](tests).
 
-// ── submodules ───────────────────────────────────────────────────────
+// submodules
 //
 // The user-facing complete-OS surfaces (interactive shell, appctl/app-center
 // CLI, install-management recovery) belong out of the kernel per the purity
@@ -32,8 +32,8 @@ mod shell;
 pub(crate) mod signature;
 mod spawn;
 
-// ── re-export public types so external callers and the test suite see
-//    them unchanged from the original flat layout ──────────────────────
+// re-export public types so external callers and the test suite see
+//    them unchanged from the original flat layout
 
 pub use self::constants::*;
 
@@ -116,7 +116,7 @@ pub use self::spawn::spawn_demo_rust_io_program;
 #[cfg(any(feature = "demo-disk", test))]
 pub use self::spawn::spawn_demo_rust_program;
 
-// ── host-proxy dispatch helpers ──────────────────────────────────────
+// host-proxy dispatch helpers
 // Called by the demo host proxies (and, on bare metal, the ring3 service
 // bridge) to execute the lumina package-manager CLI against the global
 // filesystem.  The wrapper acquires the global filesystem so the ring3

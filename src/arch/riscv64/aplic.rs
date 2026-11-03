@@ -40,8 +40,8 @@ use super::read_volatile;
 use super::write_volatile;
 use crate::Error;
 
-// ── The supervisor domain's registers (AIA v1.0 §4.8, "MSI configuration
-// registers" and the source registers before them) ──────────────────────
+// The supervisor domain's registers (AIA v1.0 §4.8, "MSI configuration
+// registers" and the source registers before them)
 
 /// `domaincfg`: bit 8 is `IE`, the domain's delivery enable; bits 2 (`DM`)
 /// and 31 are read-only, and a read reports the mode the domain is in.
@@ -72,7 +72,7 @@ const TARGET_EIID_MASK: u32 = 0x7ff;
 /// against.
 const TARGET_IPRIO_MASK: u32 = 0xff;
 
-// ── The priority policy ─────────────────────────────────────────────────
+// The priority policy
 //
 // Direct-mode delivery arbitrates by one number per source, and the
 // specification is explicit about its direction: "Smaller priority numbers
@@ -113,7 +113,7 @@ const _: () = assert!(PRIORITY_CONSOLE < PRIORITY_DEVICE);
 const _: () = assert!(PRIORITY_CONSOLE >= 1);
 const _: () = assert!(PRIORITY_DEVICE <= TARGET_IPRIO_MASK);
 
-// ── Direct mode (`domaincfg.DM == 0`, `-machine virt,aia=aplic`) ────────
+// Direct mode (`domaincfg.DM == 0`, `-machine virt,aia=aplic`)
 //
 // A direct-mode domain does not compose messages at all: it raises the
 // receiving hart's supervisor external interrupt, and the hart claims the

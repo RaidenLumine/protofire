@@ -33,7 +33,7 @@ use crate::kernel::process::thread::types::is_canonical_user_address;
 use crate::kernel::process::thread::types::UserThreadStart;
 use crate::kernel::process::thread::Thread;
 
-// ── x86_64 user-thread context & exception handling ─────────────────
+// x86_64 user-thread context & exception handling
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64UserThreadContext {
     pub rax: u64,
@@ -271,7 +271,7 @@ impl X86_64UserExceptionFrame {
     }
 }
 
-// ── Thread: x86_64 context & exception delivery ─────────────────────
+// Thread: x86_64 context & exception delivery
 
 /// Write the user-mode exception frame into the user stack at `frame_pointer`.
 ///

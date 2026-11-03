@@ -11,14 +11,14 @@ use super::ipv4::{self};
 use crate::Error;
 use crate::Result;
 
-// ─── ICMP type constants ───
+// ICMP type constants
 
 pub const ICMP_TYPE_ECHO_REPLY: u8 = 0;
 pub const ICMP_TYPE_ECHO_REQUEST: u8 = 8;
 pub const ICMP_TYPE_DEST_UNREACHABLE: u8 = 3;
 pub const ICMP_CODE_PORT_UNREACHABLE: u8 = 3;
 
-// ─── ICMP header ───
+// ICMP header
 
 /// ICMP header fields common to all message types.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,11 +36,11 @@ pub struct IcmpPacket {
     pub payload: Vec<u8>,
 }
 
-// ─── ICMP header size ───
+// ICMP header size
 
 pub const ICMP_HEADER_SIZE: usize = 8; // type(1) + code(1) + checksum(2) + rest(4)
 
-// ─── Parse / build ───
+// Parse / build
 
 /// Parse an ICMP header from a byte slice.
 pub fn parse_icmp_header(data: &[u8]) -> Result<IcmpHeader> {
@@ -129,7 +129,7 @@ pub fn build_dest_unreachable(original_ip_header: &Ipv4Header, original_payload:
     build_icmp_message(&header, &embedded[..20 + prefix_len])
 }
 
-// ─── Pending ping tracking ───
+// Pending ping tracking
 
 /// In-flight ICMP Echo Request tracked by the ping builtin.
 pub struct PendingPing {
@@ -164,7 +164,7 @@ pub fn dispatch_echo_reply(src_ip: Ipv4Addr, rest_of_header: u32, recv_tick: u64
     }
 }
 
-// ─── ICMP processing ───
+// ICMP processing
 
 /// Process an incoming ICMP packet embedded in an IPv4 datagram.
 ///
@@ -212,7 +212,7 @@ pub fn process_icmp_packet(
     }
 }
 
-// ─── ICMP error-message inspection ───
+// ICMP error-message inspection
 
 /// Information about the original packet embedded in an ICMP error message.
 ///
@@ -274,7 +274,7 @@ pub fn parse_icmp_error_info(data: &[u8]) -> Option<IcmpErrorInfo> {
     })
 }
 
-// ─── tests ───
+// tests
 
 #[cfg(test)]
 mod tests {

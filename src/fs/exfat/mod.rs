@@ -36,12 +36,12 @@ use crate::fs::filesystem::profiler::FsProfiler;
 
 use types::ExfatBootRegion;
 
-// ─── re-exports ────────────────────────────────────────────────────────────
+// re-exports
 
 #[allow(unused_imports)]
 pub(crate) use types::*;
 
-// ─── public volume wrapper ─────────────────────────────────────────────────
+// public volume wrapper
 
 /// A mounted exFAT volume that implements [`VfsFileSystem`].
 ///
@@ -52,7 +52,7 @@ pub struct ExfatVolume {
     fs: Arc<crate::kernel::sync::Mutex<ExfatFs>>,
 }
 
-// ─── internal filesystem state ─────────────────────────────────────────────
+// internal filesystem state
 
 /// Internal exFAT filesystem state, shared between [`ExfatVolume`] and
 /// every [`ExfatVNode`] it hands out.

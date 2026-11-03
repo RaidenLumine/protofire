@@ -12,7 +12,7 @@ use crate::Result;
 use alloc::string::String;
 use alloc::string::ToString;
 
-// ── Header serialisation ─────────────────────────────────────────────────
+// Header serialisation
 
 /// Serialise a [`FuseHeader`] into its 24-byte little-endian wire format.
 pub fn serialize_header(header: &FuseHeader) -> [u8; 24] {
@@ -34,7 +34,7 @@ pub fn deserialize_header(bytes: &[u8; 24]) -> FuseHeader {
     }
 }
 
-// ── Request helpers ──────────────────────────────────────────────────────
+// Request helpers
 
 /// Build a [`FuseRequest`] from its parts.
 pub fn build_request(seq: u64, opcode: FuseOpcode, ino: u64, payload: &[u8]) -> FuseRequest {
@@ -50,7 +50,7 @@ pub fn build_request(seq: u64, opcode: FuseOpcode, ino: u64, payload: &[u8]) -> 
     }
 }
 
-// ── NodeInfo helpers ─────────────────────────────────────────────────────
+// NodeInfo helpers
 
 /// Wire format of a NodeInfo response.
 ///
@@ -85,7 +85,7 @@ pub fn kind_from_wire(kind: u32) -> NodeKind {
     }
 }
 
-// ── DirEntry helpers ─────────────────────────────────────────────────────
+// DirEntry helpers
 
 /// Parse a DirEntry payload from a READDIR response.
 pub fn parse_readdir_entry_payload(data: &[u8]) -> Result<(u64, u32, u64, String)> {

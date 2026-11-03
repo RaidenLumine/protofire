@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 const JBD2_FLAG_ESCAPE: u32 = 0x01;
 const JBD2_FLAG_LAST_TAG: u32 = 0x04;
 const JBD2_FLAG_CHECKSUM: u32 = 0x08; // v3 checksum tag (CRC32C after data block)
-                                      // ─── journal (jbd2) constants ────────────────────────────────────────────────
+                                      // journal (jbd2) constants
 /// jbd2 magic value.
 pub(crate) const JBD2_MAGIC: u32 = 0xC03B_3998;
 /// Journal block types.
@@ -492,7 +492,7 @@ impl JournalWriter {
         if self.offset == 0 {
             self.offset = 1;
         }
-        // ── descriptor block ──────────────────────────────────────────
+        // descriptor block
         let desc_offset = self.offset;
         let mut desc_buf = vec![0u8; jb_size];
         // Header (12 bytes).
@@ -506,7 +506,7 @@ impl JournalWriter {
         // zero from vec! initialisation.
         self.write_journal_block(cache, desc_offset, &desc_buf)?;
         self.advance();
-        // ── data block ────────────────────────────────────────────────
+        // data block
         let data_offset = self.offset;
         self.write_journal_block(cache, data_offset, data)?;
         self.advance();
@@ -516,7 +516,7 @@ impl JournalWriter {
     /// the journal superblock clean.
     pub(crate) fn commit_tx(&mut self, cache: &BlockCache) -> Result<()> {
         let jb_size = self.block_size as usize;
-        // ── commit block ──────────────────────────────────────────────
+        // commit block
         if self.offset == 0 {
             self.offset = 1;
         }
@@ -526,7 +526,7 @@ impl JournalWriter {
         write_u32_be(&mut commit_buf, 8, self.sequence);
         self.write_journal_block(cache, self.offset, &commit_buf)?;
         self.advance();
-        // ── mark clean ────────────────────────────────────────────────
+        // mark clean
         self.sequence = self.sequence.wrapping_add(1);
         write_u32_be(&mut self.jsb_buf, J_S_ERRNO, 0);
         write_u32_be(&mut self.jsb_buf, J_S_SEQUENCE, self.sequence);
@@ -563,4 +563,4 @@ impl JournalWriter {
         Ok(())
     }
 }
-// ─── end journal write support ───────────────────────────────────────────
+// end journal write support

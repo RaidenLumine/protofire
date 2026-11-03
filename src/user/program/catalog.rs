@@ -30,7 +30,7 @@ use super::metadata::parse_catalog_entry;
 use super::metadata::parse_launch_manifest;
 use super::signature;
 
-// ── public catalog / manifest types ───────────────────────────────────
+// public catalog / manifest types
 
 #[derive(Debug, PartialEq)]
 pub struct CatalogEntry {
@@ -63,7 +63,7 @@ pub struct SpawnProcessOverrides {
     pub working_dir: Option<String>,
 }
 
-// ── private resolution types ──────────────────────────────────────────
+// private resolution types
 
 pub(crate) struct ResolvedCatalogLaunch {
     pub catalog_path: String,
@@ -99,7 +99,7 @@ struct ResolvedCatalogEntry {
     catalog: CatalogEntry,
 }
 
-// ── ResolvedCatalogEntry impl ─────────────────────────────────────────
+// ResolvedCatalogEntry impl
 
 impl ResolvedCatalogEntry {
     fn load(fs: &FileSystem, cwd: &str, catalog_path: &str) -> Result<Self> {
@@ -225,7 +225,7 @@ impl ResolvedCatalogEntry {
     }
 }
 
-// ── ResolvedCatalogLaunchArtifacts impl ───────────────────────────────
+// ResolvedCatalogLaunchArtifacts impl
 
 impl ResolvedCatalogLaunchArtifacts {
     fn resolve_from_manifest(
@@ -262,7 +262,7 @@ impl ResolvedCatalogLaunchArtifacts {
     }
 }
 
-// ── ResolvedCatalogLaunchContent impl ─────────────────────────────────
+// ResolvedCatalogLaunchContent impl
 
 impl ResolvedCatalogLaunchContent {
     fn resolve_from_manifest(
@@ -305,7 +305,7 @@ impl ResolvedCatalogLaunchContent {
     }
 }
 
-// ── catalog resolution entry point ────────────────────────────────────
+// catalog resolution entry point
 
 pub fn resolve_catalog_launch_with_appended_arguments_at_depth(
     fs: &FileSystem,
@@ -319,7 +319,7 @@ pub fn resolve_catalog_launch_with_appended_arguments_at_depth(
     entry.resolve_launch_at_depth(fs, overrides, appended_arguments, redirect_depth)
 }
 
-// ── file I/O helpers ──────────────────────────────────────────────────
+// file I/O helpers
 
 pub fn read_program_image(fs: &FileSystem, cwd: &str, path: &str) -> Result<Vec<u8>> {
     let mut file =
@@ -392,7 +392,7 @@ pub fn normalize_path_pair_from_root(first: &str, second: &str) -> Result<(Strin
     ))
 }
 
-// ── FS mutation helpers (used by the appctl/lumina CLI surface) ───────
+// FS mutation helpers (used by the appctl/lumina CLI surface)
 // These are user-facing complete-OS operations that belong out of the kernel;
 // they are reachable only through the demo disk / tests, and by the install
 // path (`user::program::install::package`), which is gated the same way.
@@ -424,7 +424,7 @@ pub fn write_entire_text_file(fs: &FileSystem, path: &str, text: &str) -> Result
     write_entire_file(fs, path, text.as_bytes())
 }
 
-// ── validation helpers ────────────────────────────────────────────────
+// validation helpers
 
 fn validate_catalog_redirect_target(
     normalized_catalog_path: &str,

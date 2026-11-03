@@ -50,7 +50,7 @@ use crate::kernel::process::thread::exception::UserExceptionDeliverySelection;
 #[cfg(target_arch = "aarch64")]
 use crate::kernel::process::thread::exception::UserExceptionHandlerInstallProfile;
 
-// ── AArch64 user-thread context & exception handling ─────────────────
+// AArch64 user-thread context & exception handling
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -421,7 +421,7 @@ impl AArch64UserExceptionFrame {
     }
 }
 
-// ── Thread: aarch64 context & exception delivery ───────────────────
+// Thread: aarch64 context & exception delivery
 
 impl Thread {
     /// Return a snapshot of the threadʼs last-known AArch64 user-mode register
@@ -942,7 +942,7 @@ impl crate::kernel::process::thread::types::UserForkContext for AArch64UserThrea
     }
 }
 
-// ── Exception vectors and handler flags ─────────────────────────────────
+// Exception vectors and handler flags
 
 #[cfg(target_arch = "aarch64")]
 fn is_supported_aarch64_user_exception_vector(vector: u8) -> bool {

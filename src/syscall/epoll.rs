@@ -30,7 +30,7 @@ use crate::Result;
 use super::runtime;
 use super::user_memory;
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// Constants
 
 /// epoll_ctl operations.
 pub(crate) const EPOLL_CTL_ADD: u32 = 1;
@@ -43,7 +43,7 @@ const EPOLLOUT: u32 = 0x004;
 // const EPOLLERR: u32 = 0x008;
 // const EPOLLHUP: u32 = 0x010;
 
-// ── Epoll state ───────────────────────────────────────────────────────────
+// Epoll state
 
 /// Size of the epoll event record returned to userspace.
 const EPOLL_EVENT_SIZE: usize = 12; // u32 events + u64 data
@@ -111,7 +111,7 @@ impl EpollState {
     }
 }
 
-// ── Syscall handlers ───────────────────────────────────────────────────────
+// Syscall handlers
 
 /// EpollCreate (#118): Create an epoll instance.
 ///

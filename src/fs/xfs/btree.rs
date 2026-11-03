@@ -106,7 +106,7 @@ impl BtreeReader {
     }
 }
 
-// ── 64-bit-key extent B+tree reader ──────────────────────────────────────
+// 64-bit-key extent B+tree reader
 
 /// Parse BMAP leaf records (24 bytes each) into Extent structs.
 pub(crate) fn parse_bmap_leaf(data: &[u8], num_recs: usize) -> Vec<Extent> {
@@ -143,7 +143,7 @@ pub(crate) fn parse_bmap_internal(data: &[u8], num_recs: usize) -> Vec<(u64, u64
     recs
 }
 
-// ── Directory hash ─────────────────────────────────────────────────────────
+// Directory hash
 
 /// XFS directory name hash (xfs_da_hashname).
 ///
@@ -172,7 +172,7 @@ pub(crate) fn xfs_dir_hash(name: &[u8]) -> u32 {
     hash
 }
 
-// ── 64-bit-key B+tree reader ──────────────────────────────────────────────
+// 64-bit-key B+tree reader
 
 /// A generic B+tree reader for XFS 64-bit-key btrees.
 ///
@@ -387,7 +387,7 @@ pub fn read_extent_btree(
     reader.collect_extents(buf, fork_off)
 }
 
-// ── Node-format directory B+tree traversal ─────────────────────────────────
+// Node-format directory B+tree traversal
 
 /// Map a directory logical block number to a physical byte offset on disk.
 ///
@@ -513,7 +513,7 @@ pub(crate) fn read_node_dir_entries(
     Ok(entries)
 }
 
-// ── Hash-indexed directory lookup ─────────────────────────────────────────
+// Hash-indexed directory lookup
 
 /// Map a byte offset within a directory's data area to a physical disk byte
 /// offset and the offset within that block.
@@ -712,7 +712,7 @@ pub(crate) fn lookup_node_dir_by_hash(
     }
 }
 
-// ── Extended attribute parsing ──────────────────────────────────────────────
+// Extended attribute parsing
 
 /// Parse shortform (inline) attribute entries from the attribute fork.
 ///
@@ -893,7 +893,7 @@ pub(crate) fn read_device_bytes(
     Ok(())
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

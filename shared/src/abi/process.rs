@@ -52,7 +52,7 @@ pub const PROCESS_SIGNAL_FLAG_NONE: usize = 0;
 pub const PROCESS_SIGNAL_KNOWN_FLAGS: usize = PROCESS_SIGNAL_FLAG_NONE;
 pub const WAIT_SIGNAL_BLOCK_INDEFINITELY_TICKS: usize = WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS;
 
-// ── POSIX well-known signal numbers ──────────────────────────────────────
+// POSIX well-known signal numbers
 
 pub const SIGHUP: usize = 1;
 pub const SIGINT: usize = 2;

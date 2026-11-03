@@ -19,7 +19,7 @@ use super::parse::parse_aaaa_record;
 use super::query::build_query_aaaa_with_id;
 use super::query::build_query_with_id;
 
-// ── Operational constants ──
+// Operational constants
 
 /// Well-known DNS port.
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
@@ -52,7 +52,7 @@ pub(crate) static DNS_PARK_COUNT: core::sync::atomic::AtomicU64 =
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub(crate) const DNS_BACKGROUND_TIMEOUT_TICKS: u64 = 20;
 
-// ── Resolution ──
+// Resolution
 
 /// Resolve a hostname to an IPv4 address.
 ///

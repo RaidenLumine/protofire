@@ -20,7 +20,7 @@ pub mod ops;
 pub mod options;
 pub mod table;
 
-// ─── Public re-exports ─────────────────────────────────────────────────────
+// Public re-exports
 
 pub use header::parse_segment;
 pub use header::DccpHeader;

@@ -19,7 +19,7 @@ use crate::types::CmdResult;
 
 const CAT_BUF_SIZE: usize = 4096;
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+// Helpers
 
 /// Look up an environment variable by name.
 fn get_env(name: &str, env_vars: &[(String, String)]) -> Option<String> {
@@ -38,7 +38,7 @@ fn set_env(name: &str, val: &str, env_vars: &mut Vec<(String, String)>) {
     }
 }
 
-// ─── export ─────────────────────────────────────────────────────────────
+// export
 
 pub fn cmd_export(argv: &[String], env_vars: &mut Vec<(String, String)>) -> CmdResult {
     if argv.len() < 2 {
@@ -70,7 +70,7 @@ pub fn cmd_export(argv: &[String], env_vars: &mut Vec<(String, String)>) -> CmdR
     }
 }
 
-// ─── alias ──────────────────────────────────────────────────────────────
+// alias
 
 pub fn cmd_alias(argv: &[String], aliases: &mut Vec<(String, String)>) -> CmdResult {
     if argv.len() < 2 {
@@ -109,7 +109,7 @@ pub fn cmd_alias(argv: &[String], aliases: &mut Vec<(String, String)>) -> CmdRes
     CmdResult::error(1, format!("alias: {arg}: not found\n"))
 }
 
-// ─── history ────────────────────────────────────────────────────────────
+// history
 
 pub fn cmd_history(history: &[String]) -> CmdResult {
     if history.is_empty() {
@@ -122,7 +122,7 @@ pub fn cmd_history(history: &[String]) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ─── shift ──────────────────────────────────────────────────────────────
+// shift
 
 pub fn cmd_shift(argv: &[String], positional_params: &mut Vec<String>) -> CmdResult {
     let n: usize = if argv.len() > 1 {
@@ -142,7 +142,7 @@ pub fn cmd_shift(argv: &[String], positional_params: &mut Vec<String>) -> CmdRes
     CmdResult::empty()
 }
 
-// ─── read ───────────────────────────────────────────────────────────────
+// read
 
 /// `read <variable>` — read a line from stdin into an environment variable.
 ///
@@ -167,7 +167,7 @@ pub fn cmd_read(
     }
 }
 
-// ─── source ─────────────────────────────────────────────────────────────
+// source
 
 /// `source <file> [args...]` — execute commands from a file.
 ///

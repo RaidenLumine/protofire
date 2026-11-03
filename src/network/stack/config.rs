@@ -169,7 +169,7 @@ impl NetworkStack {
         }
     }
 
-    // ─── IPv6 address accessors ─────────────────────────────────────
+    // IPv6 address accessors
 
     /// Return our IPv6 link-local address (derived from MAC at init).
     pub fn local_ip_v6(&self) -> Ipv6Addr {
@@ -256,7 +256,7 @@ impl NetworkStack {
         self.dad_conflict.store(true, Ordering::Relaxed);
     }
 
-    // ─── Protocol tables and Phase-4 state ─────────────────────────
+    // Protocol tables and Phase-4 state
 
     /// Return a reference to the DCCP connection table.
     pub fn dccp_table(&self) -> &Mutex<DccpConnectionTable> {

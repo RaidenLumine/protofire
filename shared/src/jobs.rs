@@ -12,12 +12,12 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// ── Signal constants ──────────────────────────────────────────────────────
+// Signal constants
 
 /// POSIX SIGCONT — continue a stopped process.
 pub const SIGCONT: usize = 18;
 
-// ── Job state ─────────────────────────────────────────────────────────────
+// Job state
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobState {
@@ -36,7 +36,7 @@ impl core::fmt::Display for JobState {
     }
 }
 
-// ── Job ───────────────────────────────────────────────────────────────────
+// Job
 
 #[derive(Clone, Debug)]
 pub struct Job {
@@ -47,7 +47,7 @@ pub struct Job {
     pub command: String,
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// Helpers
 
 /// Parse a job ID from an argument, stripping an optional `%` prefix.
 ///
@@ -96,7 +96,7 @@ pub fn format_and_sweep_jobs(jobs: &mut Vec<Job>) -> String {
     out
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

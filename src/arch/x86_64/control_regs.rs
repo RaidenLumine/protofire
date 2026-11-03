@@ -9,7 +9,7 @@
 
 use core::arch::asm;
 
-// ── CR0 bits ────────────────────────────────────────────────────────────────
+// CR0 bits
 
 /// CR0 bit 1: Monitor co-processor.  Controls the WAIT/FWAIT behaviour
 /// relative to CR0.TS.
@@ -137,7 +137,7 @@ pub unsafe fn write_cr4(value: u64) {
     }
 }
 
-// ── CR4 bits ────────────────────────────────────────────────────────────────
+// CR4 bits
 
 /// CR4 bit 9: OS FXSAVE/FXRSTOR support.  **Required** for SSE
 /// instructions (`movdqu`, etc.) – without this bit they raise #UD.

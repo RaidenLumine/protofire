@@ -111,7 +111,7 @@ impl EthernetFrame {
     }
 }
 
-// ─── Parse / build ───
+// Parse / build
 
 /// Parse a raw byte slice into an `EthernetFrame`.
 ///

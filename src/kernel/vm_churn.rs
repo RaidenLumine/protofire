@@ -132,7 +132,7 @@ fn churn() {
     let ticks_before = tick();
     let posted_before = crate::kernel::smp::posted_invalidation_stats();
 
-    // ── More kernel stacks than the window can hold ────────────────────
+    // More kernel stacks than the window can hold
     let mut held: Vec<KernelStack> = Vec::with_capacity(CHURN_STACKS);
     let mut window_backed = 0usize;
     let mut fallbacks = 0usize;
@@ -171,7 +171,7 @@ fn churn() {
         );
     }
 
-    // ── Hand them all back, then overfill the invalidation log ─────────
+    // Hand them all back, then overfill the invalidation log
     //
     // Retiring the stacks posts their ranges; dropping the last reference is
     // what does it.  The burst afterwards is on purpose: whether the log is

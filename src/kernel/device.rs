@@ -413,7 +413,7 @@ pub fn device_descriptor(name: &str) -> Option<&'static DeviceDescriptor> {
         .find(|descriptor| descriptor.name == name)
 }
 
-// ── The devices a driver bound, as `/dev` reports them ──────────────────────
+// The devices a driver bound, as `/dev` reports them
 //
 // The descriptors above are the kernel's *own* devices: fixed names, handlers
 // known at compile time.  What a probe finds is a different thing — a device

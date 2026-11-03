@@ -691,7 +691,7 @@ fn validate_user_buffer_layout(
     validate_user_pointer_range(buffer_ptr, required_length)
 }
 
-// ── Centralized syscall-pointer pre-validation ──────────────────────────
+// Centralized syscall-pointer pre-validation
 //
 // Each syscall that accepts user-memory pointers registers a concise
 // descriptor in the static table below.  The trap dispatcher calls
@@ -1570,7 +1570,7 @@ mod tests {
         );
     }
 
-    // ── kernel address range rejection ──
+    // kernel address range rejection
 
     #[test]
     fn validate_user_input_buffer_rejects_x86_64_kernel_address() {
@@ -1609,7 +1609,7 @@ mod tests {
         );
     }
 
-    // ── pointer-spec table completeness ──
+    // pointer-spec table completeness
 
     #[test]
     fn pointer_spec_table_covers_every_syscall() {

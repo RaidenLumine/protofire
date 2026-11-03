@@ -53,7 +53,7 @@ impl ChecksumVerifier for Ext4FsVolume {
     }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
+// Helpers
 
 /// Split a path into `(parent_path, leaf_name)`.
 ///
@@ -101,7 +101,7 @@ fn file_type_code(kind: NodeKind) -> u8 {
     }
 }
 
-// ─── VfsFileSystem implementation ──────────────────────────────────────────
+// VfsFileSystem implementation
 
 impl VfsFileSystem for Ext4FsVolume {
     fn name(&self) -> &str {
@@ -349,7 +349,7 @@ impl VfsFileSystem for Ext4FsVolume {
     }
 }
 
-// ─── Ext4VNode ─────────────────────────────────────────────────────────────
+// Ext4VNode
 
 /// A VFS node backed by an ext2/ext4 inode.
 ///

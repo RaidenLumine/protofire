@@ -12,12 +12,10 @@ pub mod block_cache;
 pub mod btrfs;
 pub mod crypt_device;
 pub mod luks2;
-// ═══════════════════════════════════════════════════════════════════════
 // Legacy demo disk builder — kept for the fs.init() boot path and
 // kernel-side MBR tests.  New code that just needs a PyroFs image
 // should call `PyroFs::build_image` directly.
 // The canonical distribution copy lives in protofire-os/demo-disk.
-// ═══════════════════════════════════════════════════════════════════════
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
 pub mod demo;
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
@@ -58,7 +56,7 @@ pub mod vfs;
 pub mod write_locations;
 pub mod xfs;
 
-// ── FileSystem implementation modules ──
+// FileSystem implementation modules
 pub(crate) mod filesystem;
 pub(crate) mod handle;
 
@@ -89,7 +87,7 @@ pub use vfs::NodeKind;
 /// node.  Sharing the mapping keeps the two answers the same answer.
 pub(crate) use filesystem::access_helpers::required_open_access;
 
-// ── Re-exports from submodules ──
+// Re-exports from submodules
 pub use filesystem::types::MountInfo;
 pub use handle::FileHandle;
 
@@ -97,7 +95,7 @@ pub(crate) use filesystem::types::StorageInitReport;
 
 use filesystem::types::MountPoint;
 
-// ── Global filesystem singleton ──
+// Global filesystem singleton
 static GLOBAL_FS: AtomicPtr<Mutex<FileSystem>> = AtomicPtr::new(ptr::null_mut());
 
 /// Projection of the mount table, for readers that run *inside* the filesystem
@@ -123,7 +121,7 @@ pub(crate) fn publish_mount_snapshot(entries: Vec<MountInfo>) {
     *MOUNT_SNAPSHOT.lock() = entries;
 }
 
-// ── Public constants ──
+// Public constants
 // The `whence` values `lseek` takes are the shared ABI record's, since a
 // program passes them; this is the one definition of them.
 pub use crate::abi::fs::SEEK_CUR;
@@ -135,7 +133,7 @@ pub const OPEN_EXISTING: u32 = 0;
 pub const CREATE_NEW: u32 = 1;
 pub const OPEN_ALWAYS: u32 = 2;
 
-// ── Internal constants (used across submodules) ──
+// Internal constants (used across submodules)
 pub(crate) const VIRTUAL_DEVICE_FS_NAME: &str = "virtual-devices";
 pub(crate) const VIRTUAL_DEVICE_MOUNT_DEVICE: &str = "/dev/protofire-virtual-devices";
 pub(crate) const VIRTUAL_DEVICE_MOUNT_PATH: &str = "/system/dev";
@@ -172,7 +170,7 @@ pub(crate) const ACCESS_READ_BIT: u16 = 0b100;
 pub(crate) const ACCESS_WRITE_BIT: u16 = 0b010;
 pub(crate) const ACCESS_EXECUTE_BIT: u16 = 0b001;
 
-// ── Public struct ──
+// Public struct
 pub struct FileSystem {
     pub(crate) root: Arc<dyn VNode>,
     pub(crate) filesystems: BTreeMap<String, Arc<dyn VfsTrait>>,
@@ -208,7 +206,7 @@ impl Default for FileSystem {
     }
 }
 
-// ── Global singleton helpers ──
+// Global singleton helpers
 pub fn install_global(fs: &'static Mutex<FileSystem>) {
     GLOBAL_FS.store(fs as *const _ as *mut _, Ordering::SeqCst);
 }

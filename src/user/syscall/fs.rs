@@ -6,7 +6,7 @@ use crate::syscall::SyscallContext;
 use crate::syscall::SyscallNumber;
 
 impl super::UserSyscall {
-    // ── Filesystem syscalls ─────────────────────────────────────────
+    // Filesystem syscalls
 
     /// Open `path` (pointer + length) with `flags`, returning a file
     /// descriptor.

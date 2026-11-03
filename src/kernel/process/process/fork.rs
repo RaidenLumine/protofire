@@ -179,7 +179,7 @@ impl Process {
         }
     }
 
-    // ── Fork ────────────────────────────────────────────────────────────
+    // Fork
 
     /// Fork this process: create a child with a cloned address space where
     /// writable pages become Copy-on-Write (shared read-only).
@@ -208,7 +208,7 @@ impl Process {
             return Err(Error::Busy);
         }
 
-        // ── 1. Create child process ──────────────────────────────────
+        // 1. Create child process
         let child_name = {
             let mut name = self.name.lock().clone();
             name.push_str("-fork");
@@ -217,7 +217,7 @@ impl Process {
         let child =
             Process::new_with_security_token(child_pid, &child_name, *self.security_token.lock());
 
-        // ── 2. Clone FDs ─────────────────────────────────────────────
+        // 2. Clone FDs
         {
             let parent_fd_table = self.fd_table.lock();
             let parent_fd_flags = self.fd_flags.lock();
@@ -248,7 +248,7 @@ impl Process {
         child.set_current_working_dir(&self.current_working_dir());
         *child.home_dir.lock() = self.home_dir.lock().clone();
 
-        // ── 3. Fork address space ────────────────────────────────────
+        // 3. Fork address space
         let forked = {
             let mut parent_addr_space = self.user_address_space.lock();
             let parent_space = parent_addr_space.as_mut().ok_or(Error::InvalidArgument)?;
@@ -261,7 +261,7 @@ impl Process {
         let shared_pages = forked.shared_pages;
         let all_child_pages = forked.child_pages;
 
-        // ── 4. Register in software page table ───────────────────────
+        // 4. Register in software page table
         // Two different address spaces are involved from here on, and every
         // process maps its image and stack at the same virtual addresses, so
         // each registration has to name whose it is: the parent's entries are
@@ -331,7 +331,7 @@ impl Process {
         // Register CoW entries.
         memory.register_user_pages(child_owner, &child_cow_entries);
 
-        // ── 5. Install child address space ───────────────────────────
+        // 5. Install child address space
         let child_user_addr_space = ProcessUserAddressSpace::from_prepared(
             crate::arch::mmu::ProcessAddressSpace::from_prepared_process(child_addr_space),
         );

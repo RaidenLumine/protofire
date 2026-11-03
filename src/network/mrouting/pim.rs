@@ -99,7 +99,7 @@ impl PimState {
     }
 }
 
-// ─── Checksum ───────────────────────────────────────────────────────────
+// Checksum
 
 /// Whether the PIM checksum in `payload` (bytes 2-3, one's-complement over
 /// the whole message) is correct.  A valid message folds to zero exactly as
@@ -117,7 +117,7 @@ fn set_pim_checksum(msg: &mut [u8]) {
     msg[3] = cs as u8;
 }
 
-// ─── Control-plane API ──────────────────────────────────────────────────
+// Control-plane API
 
 /// Whether the PIM-DM control plane is active.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -367,7 +367,7 @@ pub fn tick(state: &mut MrtState, tick: u64, stack: &NetworkStack) {
     }
 }
 
-// ─── Message builders ───────────────────────────────────────────────────
+// Message builders
 
 /// Build a PIM Hello message (version 2, type 0) with a valid checksum.
 pub fn build_hello() -> Vec<u8> {

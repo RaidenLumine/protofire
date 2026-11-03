@@ -134,14 +134,14 @@ pub const DIRECTORY_ENTRY_RECORD_NAME_OFFSET_OFFSET: usize =
 pub const DIRECTORY_ENTRY_RECORD_NAME_LEN_OFFSET: usize =
     offset_of!(DirectoryEntryRecord, name_len);
 
-// ── Extended attribute (xattr) limits ─────────────────────────────────
+// Extended attribute (xattr) limits
 
 /// Maximum byte length of an xattr name.
 pub const XATTR_NAME_MAX: usize = 64;
 /// Maximum byte length of an xattr value.
 pub const XATTR_VALUE_MAX: usize = 256;
 
-// ── fcntl command constants (Linux-compatible values) ──────────────────
+// fcntl command constants (Linux-compatible values)
 
 /// Duplicate `fd` to the lowest free descriptor `>= arg`.
 pub const F_DUPFD: usize = 0;
@@ -164,14 +164,14 @@ pub const FD_CLOEXEC: usize = 1;
 /// Non-blocking I/O status flag (Linux `O_NONBLOCK` value 0o4000).
 pub const O_NONBLOCK: usize = 0o4000;
 
-// ── fallocate modes ─────────────────────────────────────────────────
+// fallocate modes
 
 /// The range reads as zeros, and the clusters behind it go back to the volume.
 pub const FALLOC_FL_PUNCH_HOLE: usize = 0x02;
 /// The length of the file does not change.
 pub const FALLOC_FL_KEEP_SIZE: usize = 0x01;
 
-// ── lseek whence values ─────────────────────────────────────────────
+// lseek whence values
 
 /// The offset is absolute.
 pub const SEEK_SET: usize = 0;
@@ -190,7 +190,7 @@ pub const SEEK_DATA: usize = 3;
 /// or after it.
 pub const SEEK_HOLE: usize = 4;
 
-// ── File flags (SetFileFlags / GetFileFlags) ─────────────────────────
+// File flags (SetFileFlags / GetFileFlags)
 
 /// Per-file transparent compression (PyroFs V4+).
 pub const FILE_FLAG_COMPRESSED: u32 = 1 << 0;
@@ -215,7 +215,7 @@ impl FileFlagsRecord {
 pub const FILE_FLAGS_RECORD_SIZE: usize = size_of::<FileFlagsRecord>();
 pub const FILE_FLAGS_RECORD_FLAGS_OFFSET: usize = offset_of!(FileFlagsRecord, flags);
 
-// ── Security descriptor update flags ──────────────────────────────────
+// Security descriptor update flags
 
 /// Update file mode bits.
 pub const SECURITY_DESCRIPTOR_UPDATE_MODE: usize = 1 << 0;
@@ -228,7 +228,7 @@ pub const SECURITY_DESCRIPTOR_UPDATE_KNOWN_FLAGS: usize = SECURITY_DESCRIPTOR_UP
     | SECURITY_DESCRIPTOR_UPDATE_OWNER_UID
     | SECURITY_DESCRIPTOR_UPDATE_OWNER_GID;
 
-// ── Mount / block-device enumeration constants ─────────────────────────
+// Mount / block-device enumeration constants
 
 /// Maximum length of a block device name (not including NUL terminator).
 pub const BLOCK_DEVICE_NAME_MAX: usize = 63;
@@ -239,7 +239,7 @@ pub const MOUNT_FS_NAME_MAX: usize = 31;
 /// Maximum length of a mount-point path.
 pub const MOUNT_PATH_MAX: usize = 255;
 
-// ── Mount / block-device enumeration records ───────────────────────────
+// Mount / block-device enumeration records
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

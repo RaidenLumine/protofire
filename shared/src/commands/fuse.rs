@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use crate::syscall;
 use crate::types::CmdResult;
 
-// ── Wire-format constants (match kernel/fuse/mod.rs) ──────────────────────
+// Wire-format constants (match kernel/fuse/mod.rs)
 
 const FUSE_HEADER_SIZE: usize = 24;
 
@@ -40,7 +40,7 @@ const FUSE_ERROR: u32 = 0xFF;
 /// Unlimited wait for reads.
 const WAIT_FOREVER: u64 = u64::MAX;
 
-// ── In-memory filesystem types ───────────────────────────────────────────
+// In-memory filesystem types
 
 #[derive(Clone)]
 struct Inode {
@@ -88,7 +88,7 @@ impl FuseDaemon {
         ino
     }
 
-    // ── I/O helpers ────────────────────────────────────────────────────
+    // I/O helpers
 
     fn read_exact(&self, fd: usize, buf: &mut [u8]) -> Result<(), isize> {
         let mut offset = 0;
@@ -114,7 +114,7 @@ impl FuseDaemon {
         Ok(())
     }
 
-    // ── Request/response helpers ────────────────────────────────────────
+    // Request/response helpers
 
     /// Read a complete FUSE request from the request pipe.
     fn read_request(&self) -> Result<(u64, u32, u64, Vec<u8>), isize> {
@@ -156,7 +156,7 @@ impl FuseDaemon {
         self.write_response(seq, FUSE_ERROR, 0, &payload)
     }
 
-    // ── NodeInfo serialisation ─────────────────────────────────────────
+    // NodeInfo serialisation
 
     /// Build a NodeInfo payload from inode metadata.
     fn build_node_info(&self, ino: u64) -> Vec<u8> {
@@ -182,7 +182,7 @@ impl FuseDaemon {
         buf
     }
 
-    // ── Request handlers ────────────────────────────────────────────────
+    // Request handlers
 
     /// Handle a LOOKUP request.
     ///
@@ -423,7 +423,7 @@ impl FuseDaemon {
         self.write_response(seq, FUSE_FLUSH, ino, &[])
     }
 
-    // ── Main dispatch loop ──────────────────────────────────────────────
+    // Main dispatch loop
 
     /// Run the daemon loop forever (or until the pipe breaks).
     fn run(&mut self) -> Result<(), isize> {
@@ -455,7 +455,7 @@ impl FuseDaemon {
     }
 }
 
-// ── Shell command ─────────────────────────────────────────────────────────
+// Shell command
 
 /// FUSE shell command.
 ///
@@ -523,7 +523,7 @@ fn cmd_fuse_umount(argv: &[String]) -> CmdResult {
     }
 }
 
-// ── Error message helper ──────────────────────────────────────────────────
+// Error message helper
 
 fn errno_msg(code: isize) -> &'static str {
     match code {

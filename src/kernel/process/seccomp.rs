@@ -20,7 +20,7 @@ use crate::kernel::process::Process;
 use crate::Error;
 use crate::Result;
 
-// ── Per-process filter state ──────────────────────────────────────────────
+// Per-process filter state
 
 /// Seccomp filter state stored inside `Process`.
 pub struct SeccompFilterState {
@@ -91,7 +91,7 @@ impl SeccompFilterState {
     }
 }
 
-// ── Dispatch hook ─────────────────────────────────────────────────────────
+// Dispatch hook
 
 /// Check the seccomp filter for `process` about to execute `syscall_number`.
 ///
@@ -124,7 +124,7 @@ pub fn disable_filter(process: &Process) {
     filter.rules.clear();
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

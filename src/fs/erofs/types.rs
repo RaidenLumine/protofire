@@ -10,7 +10,7 @@
 //!
 //! All multi-byte fields are little-endian unless noted otherwise.
 
-// ── Constants ──────────────────────────────────────────────────────────
+// Constants
 
 /// EROFS magic number ("\xE2\xF5\xE1\xE0" stored little-endian).
 pub const EROFS_MAGIC: u32 = 0xE0F5E1E2;
@@ -52,7 +52,7 @@ pub const EROFS_FEATURE_INCOMPAT_NID_TABLE: u32 = 1 << 2;
 /// Feature flag: device uses data mapping in `i_frags` (chunk index).
 pub const EROFS_FEATURE_INCOMPAT_CHUNKED_FILE: u32 = 1 << 5;
 
-// ── On-disk Superblock ─────────────────────────────────────────────────
+// On-disk Superblock
 
 /// EROFS superblock, always at byte offset 1024 of the device.
 ///
@@ -165,7 +165,7 @@ impl ErofsSuperblock {
     }
 }
 
-// ── On-disk Inode (compact, 32-byte) ───────────────────────────────────
+// On-disk Inode (compact, 32-byte)
 
 /// Compact EROFS inode (32 bytes).
 ///
@@ -273,7 +273,7 @@ impl ErofsSuperblock {
     }
 }
 
-// ── On-disk Directory Entry ────────────────────────────────────────────
+// On-disk Directory Entry
 
 /// An EROFS directory entry (like ext2 `ext2_dir_entry_2`).
 ///
@@ -361,7 +361,7 @@ pub(crate) fn parse_erofs_dir_entries(
     entries
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

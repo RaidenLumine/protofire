@@ -60,7 +60,7 @@ const DEFAULT_PROFILE_CONTENT: &[u8] = b"\
 # Place personal configuration below.
 ";
 
-// ── Shadow (password) database ──────────────────────────────────────────
+// Shadow (password) database
 
 /// Path to the shadow password file on the writable Data zone.
 const SHADOW_PATH: &str = "/data/etc/shadow";
@@ -80,7 +80,7 @@ const DEFAULT_ROOT_PASSWORD: &str = "root";
 /// Sentinel hash — all zeros means the account is locked from password login.
 const LOCKED_HASH: [u8; 32] = [0u8; 32];
 
-// ── Data types ──────────────────────────────────────────────────────────
+// Data types
 
 /// A single user record parsed from the passwd file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,7 +109,7 @@ pub(crate) struct ShadowDatabase {
     entries: Vec<ShadowEntry>,
 }
 
-// ── Global storage ──────────────────────────────────────────────────────
+// Global storage
 
 static USER_DATABASE: Mutex<Option<UserDatabase>> = Mutex::new(None);
 static USER_DB_INITIALISED: AtomicBool = AtomicBool::new(false);
@@ -128,7 +128,7 @@ fn with_database<T, F: FnOnce(&UserDatabase) -> T>(f: F) -> Option<T> {
     slot.as_ref().map(f)
 }
 
-// ── UserDatabase methods ────────────────────────────────────────────────
+// UserDatabase methods
 
 impl UserDatabase {
     /// Parse the passwd file content into a `UserDatabase`.
@@ -268,7 +268,7 @@ impl UserDatabase {
     }
 }
 
-// ── ShadowDatabase methods ──────────────────────────────────────────────
+// ShadowDatabase methods
 
 impl ShadowDatabase {
     /// Parse shadow file content into a `ShadowDatabase`.
@@ -412,7 +412,7 @@ impl ShadowDatabase {
     }
 }
 
-// ── Shadow helpers ──────────────────────────────────────────────────────
+// Shadow helpers
 
 const HEX_CHARS: [char; 16] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -460,7 +460,7 @@ const fn hex_nibble(b: u8) -> Option<u8> {
     }
 }
 
-// ── Shadow global storage helpers ───────────────────────────────────────
+// Shadow global storage helpers
 
 fn store_shadow_database(db: ShadowDatabase) {
     let mut slot = SHADOW_DATABASE.lock();
@@ -468,7 +468,7 @@ fn store_shadow_database(db: ShadowDatabase) {
     SHADOW_DB_INITIALISED.store(true, Ordering::Release);
 }
 
-// ── Public authentication API ───────────────────────────────────────────
+// Public authentication API
 
 /// Verify a username/password pair against the shadow database and return
 /// the corresponding user record on success.  Returns `None` when the
@@ -524,7 +524,7 @@ pub fn remove_user(uid: UserId, fs: &FileSystem) -> Result<UserRecord> {
     Ok(record)
 }
 
-// ── Public convenience functions ────────────────────────────────────────
+// Public convenience functions
 
 /// Look up the home directory for `uid` from the user database, falling back
 /// to the pure-function [`home_dir_for_uid`] when the database is unavailable
@@ -571,7 +571,7 @@ pub fn global_user_database() -> Option<&'static Mutex<Option<UserDatabase>>> {
     }
 }
 
-// ── Boot-time initialisation ────────────────────────────────────────────
+// Boot-time initialisation
 
 /// Create intermediate directories needed for a path (mkdir -p style).
 /// The path must already be normalized.  This is intentionally simple: it
@@ -785,7 +785,7 @@ pub fn init_user_database(fs: &FileSystem) {
         }
     };
 
-    // ── Shadow database init ──────────────────────────────────────────
+    // Shadow database init
     // The demo distribution seeds a root password on first boot; a pure
     // kernel build starts with an empty shadow database (all accounts locked
     // until a password is set).
@@ -934,7 +934,7 @@ pub fn init_user_database(fs: &FileSystem) {
     store_shadow_database(shadow);
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {
@@ -1128,7 +1128,7 @@ root:0:0:/root-override
         USER_DB_INITIALISED.store(false, Ordering::Release);
     }
 
-    // ── Shadow database tests ───────────────────────────────────────────
+    // Shadow database tests
 
     #[test]
     fn shadow_parse_valid() {

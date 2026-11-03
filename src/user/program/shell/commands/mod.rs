@@ -12,7 +12,7 @@ mod network;
 mod process;
 mod user;
 
-// ── Active kernel-only commands ─────────────────────────────────────────
+// Active kernel-only commands
 // These stay kernel-side because they depend on kernel internals (ICMP
 // packet construction, SecurityToken, Scheduler, JOBS globals).
 // The former builtins fetch, nslookup, whoami, id, users, useradd, userdel,

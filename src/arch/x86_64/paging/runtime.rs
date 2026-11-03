@@ -1171,7 +1171,7 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     unsafe {
         let va = virtual_address;
 
-        // ── Walk CR3 → PML4 → PDPT → PD → PT ──────────────────────
+        // Walk CR3 → PML4 → PDPT → PD → PT
         let root = match current_root_table_address_impl() {
             Some(r) => r,
             None => return false,

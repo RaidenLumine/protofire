@@ -2,7 +2,7 @@
 //!
 //! ext4 on-disk constants and feature flags.
 
-// ─── ext4 on-disk constants ────────────────────────────────────────────────
+// ext4 on-disk constants
 
 pub(crate) const EXT4_MAGIC: u16 = 0xEF53;
 pub(crate) const SUPERBLOCK_BYTE_OFFSET: u64 = 1024;

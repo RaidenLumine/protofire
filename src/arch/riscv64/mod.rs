@@ -137,7 +137,7 @@ pub mod interrupt_controller {
             .unwrap_or(PLIC_QEMU_VIRT_BASE)
     }
 
-    // ── Per-CPU PLIC context support ──────────────────────────────────
+    // Per-CPU PLIC context support
     //
     // The RISC-V PLIC assigns one S-mode context per hart.  On QEMU virt
     // the context number for hart N's S-mode is N * 2 + 1.
@@ -172,7 +172,7 @@ pub mod interrupt_controller {
         plic_base() + 0x200004 + context as usize * 0x1000
     }
 
-    // ── Legacy helpers (used during boot before percpu is available) ──
+    // Legacy helpers (used during boot before percpu is available)
     // These default to the BSP's S-mode context (hart 0, context 1).
 
     fn plic_priority_base() -> usize {

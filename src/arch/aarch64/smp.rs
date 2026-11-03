@@ -16,7 +16,7 @@ use crate::arch::aarch64::interrupt_controller::gicd_base;
 use crate::arch::aarch64::interrupt_controller::GICD_TYPER;
 use crate::arch::aarch64::interrupt_controller::GICV2_CPU_INTERFACES;
 
-// ── Constants ───────────────────────────────────────────────────────────
+// Constants
 
 pub(crate) const MAX_APS: usize = crate::kernel::MAX_APS;
 #[allow(dead_code)]
@@ -26,7 +26,7 @@ pub(crate) const AP_STACK_SIZE: usize = 65536;
 pub(crate) const SGI_RESCHEDULE: u8 = 0;
 pub(crate) const SGI_TLB_SHOOTDOWN: u8 = 1;
 
-// ── Spin table (shared with boot.S) ────────────────────────────────────
+// Spin table (shared with boot.S)
 
 /// Per-CPU spin-table entry (matched in boot.S):
 ///   +0: entry_addr (u64) — 0 = spin; non-zero = entry point
@@ -50,7 +50,7 @@ static aarch64_spin_table: crate::util::sync_unsafe_cell::SyncUnsafeCell<
     }; MAX_APS],
 );
 
-// ── Per-CPU AP stacks ──────────────────────────────────────────────────
+// Per-CPU AP stacks
 
 /// Which PE each logical CPU id runs on, as the MPIDR-shaped value
 /// [`crate::arch::aarch64::gicv3`] keeps everywhere.
@@ -143,7 +143,7 @@ struct ApStack([u8; AP_STACK_SIZE]);
 static AP_STACKS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[ApStack; MAX_APS]> =
     crate::util::sync_unsafe_cell::SyncUnsafeCell::new([ApStack([0; AP_STACK_SIZE]); MAX_APS]);
 
-// ── Boot MMU config (saved by BSP, read by AP assembly with MMU off) ───
+// Boot MMU config (saved by BSP, read by AP assembly with MMU off)
 
 #[no_mangle]
 pub(crate) static AARCH64_BOOT_TTBR0: AtomicU64 = AtomicU64::new(0);
@@ -158,7 +158,7 @@ pub(crate) static AARCH64_BOOT_SCTLR: AtomicU64 = AtomicU64::new(0);
 #[no_mangle]
 pub(crate) static AARCH64_VBAR_ADDR: AtomicU64 = AtomicU64::new(0);
 
-// ── AP startup assembly ─────────────────────────────────────────────────
+// AP startup assembly
 
 // `.text` rather than `.section .text`: the latter is the ELF spelling,
 // and the Mach-O assembler rejects it (`unexpected token in '.section'
@@ -227,13 +227,13 @@ aarch64_ap_startup:
 "#
 );
 
-// ── Assembly symbol declarations ───────────────────────────────────────
+// Assembly symbol declarations
 
 unsafe extern "C" {
     fn aarch64_ap_startup();
 }
 
-// ── Rust AP entry point ────────────────────────────────────────────────
+// Rust AP entry point
 
 #[no_mangle]
 unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
@@ -303,7 +303,7 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
 
     crate::println!("[smp   ] AP cpu_id={} online", cpu_id);
 
-    // ── Enter scheduler dispatch loop ──
+    // Enter scheduler dispatch loop
     crate::arch::interrupts::enable();
     loop {
         // SAFETY: `sched_ptr` is this core's own scheduler, handed to it by the
@@ -321,7 +321,7 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
     }
 }
 
-// ── AP bring-up ────────────────────────────────────────────────────────
+// AP bring-up
 
 pub(crate) fn bring_up_aps() {
     // The conduit has to be chosen before it is used: an `smc` or `hvc` this
@@ -440,7 +440,7 @@ fn bring_up_one(cpu_id: u32, mpidr: u64, idx: usize) -> bool {
     }
 }
 
-// ── AP discovery ───────────────────────────────────────────────────────
+// AP discovery
 
 fn discover_aps() -> Vec<(u32, u64)> {
     // Two authorities with two different answers: the device tree says which
@@ -534,7 +534,7 @@ fn gicd_cpu_count() -> Option<u32> {
     Some((((typer >> 5) & 0x7) + 1).min(GICV2_CPU_INTERFACES))
 }
 
-// ── GIC SGI (IPI) delivery ─────────────────────────────────────────────
+// GIC SGI (IPI) delivery
 
 /// Ask one core to look at its run queue again, as a software-generated
 /// interrupt.
@@ -597,7 +597,7 @@ pub(crate) fn handle_tlb_shootdown_sgi() {
     crate::kernel::smp::apply_remote_tlb_invalidations();
 }
 
-// ── AP PerCpuData allocation ───────────────────────────────────────────
+// AP PerCpuData allocation
 
 /// Raw pointers so we avoid non-Copy-array issues with `Option<Box<..>>`.
 static AP_PERCPU: crate::util::sync_unsafe_cell::SyncUnsafeCell<[*mut PerCpuData; MAX_APS]> =
@@ -629,7 +629,7 @@ fn ap_percpu_data(cpu_id: u32) -> *mut PerCpuData {
     unsafe { (*AP_PERCPU.get())[idx] }
 }
 
-// ── Boot MMU config save ───────────────────────────────────────────────
+// Boot MMU config save
 
 pub(crate) fn save_boot_mmu_config() {
     let (ttbr0, ttbr1, tcr, mair, sctlr): (u64, u64, u64, u64, u64);

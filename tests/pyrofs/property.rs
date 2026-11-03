@@ -16,7 +16,7 @@ use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::fs::vfs::NodeKind;
 
-// ── Simple LCG PRNG (Numerical Recipes parameters) ─────────────────────────
+// Simple LCG PRNG (Numerical Recipes parameters)
 
 struct Lcg {
     state: u64,
@@ -41,7 +41,7 @@ impl Lcg {
     }
 }
 
-// ── Action types ────────────────────────────────────────────────────────────
+// Action types
 
 #[derive(Debug, Clone)]
 enum FsAction {
@@ -59,7 +59,7 @@ enum FsAction {
     ListDir { path: String },
 }
 
-// ── Test oracle tracks expected filesystem state ────────────────────────────
+// Test oracle tracks expected filesystem state
 
 struct FsOracle {
     files: BTreeMap<String, Vec<u8>>,
@@ -95,7 +95,7 @@ impl FsOracle {
     }
 }
 
-// ── Action generation ───────────────────────────────────────────────────────
+// Action generation
 
 fn generate_actions(seed: u64, count: usize) -> Vec<FsAction> {
     let mut rng = Lcg::new(seed);
@@ -155,7 +155,7 @@ fn generate_actions(seed: u64, count: usize) -> Vec<FsAction> {
     actions
 }
 
-// ── Action executor ─────────────────────────────────────────────────────────
+// Action executor
 
 fn execute_actions(volume: &PyroFsVolume, actions: &[FsAction]) -> FsOracle {
     let mut oracle = FsOracle::new();
@@ -237,7 +237,7 @@ fn execute_actions(volume: &PyroFsVolume, actions: &[FsAction]) -> FsOracle {
     oracle
 }
 
-// ── Invariant checks ────────────────────────────────────────────────────────
+// Invariant checks
 
 fn verify_invariants(volume: &PyroFsVolume) {
     // Root must always exist and be a directory.
@@ -275,7 +275,7 @@ fn verify_invariants(volume: &PyroFsVolume) {
     );
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[test]
 fn property_small_random_sequence_seed_1() {

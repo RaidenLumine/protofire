@@ -210,7 +210,7 @@ pub enum ProcessResult {
     Response(Vec<u8>),
 }
 
-// ─── Server-side association creation helper ─────────────────────────────────
+// Server-side association creation helper
 
 /// Create a server-side association after receiving an INIT.
 ///

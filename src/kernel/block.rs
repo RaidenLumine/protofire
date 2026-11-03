@@ -744,7 +744,7 @@ impl BlockDevice for BlockSliceDevice {
     }
 }
 
-// ── Device publication ──────────────────────────────────────────────────
+// Device publication
 
 /// The sink a found device is handed to, installed once at boot.
 ///

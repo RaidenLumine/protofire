@@ -16,7 +16,7 @@ use super::*;
 use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
 use crate::user::shared::syscall;
 
-// ─── Keyword counting ─────────────────────────────────────────────────
+// Keyword counting
 
 /// Count the number of keyword occurrences in `line` that begin a command.
 ///
@@ -89,7 +89,7 @@ pub(crate) fn needs_continuation(line: &str) -> bool {
     openers > closers
 }
 
-// ─── Control-flow execution ───────────────────────────────────────────
+// Control-flow execution
 
 /// Execute a control-flow block (`if … fi`, `for … done`, `while … done`).
 ///
@@ -109,7 +109,7 @@ pub(crate) fn execute_control_flow_block(block: &str, cwd: &mut String) -> CmdRe
     CmdResult::error(2, format!("shell: unrecognized control flow: `{block}`\n"))
 }
 
-// ── if … then … [else …] fi ───────────────────────────────────────────
+// if … then … [else …] fi
 
 struct IfBlock {
     condition: String,
@@ -164,7 +164,7 @@ fn execute_if(block: IfBlock, cwd: &mut String) -> CmdResult {
     }
 }
 
-// ── for var [in words] do … done ──────────────────────────────────────
+// for var [in words] do … done
 
 struct ForBlock {
     var: String,
@@ -233,7 +233,7 @@ fn execute_for(block: ForBlock, cwd: &mut String) -> CmdResult {
     CmdResult::success(output)
 }
 
-// ── while condition do … done ─────────────────────────────────────────
+// while condition do … done
 
 struct WhileBlock {
     condition: String,
@@ -293,7 +293,7 @@ fn execute_while(block: WhileBlock, cwd: &mut String) -> CmdResult {
 /// `while` body.
 const MAX_LOOP_ITERATIONS: usize = 10_000;
 
-// ── filesystem iteration helpers ──────────────────────────────────────
+// filesystem iteration helpers
 
 /// Expand a glob pattern (which may include a directory prefix) against the
 /// filesystem, returning the matching names.
@@ -363,7 +363,7 @@ fn split_glob_path(cwd: &str, pattern: &str) -> (String, String) {
     }
 }
 
-// ── shell tokenizer ───────────────────────────────────────────────────
+// shell tokenizer
 
 /// Split a line into tokens, honouring single/double quotes and treating
 /// `;` as a token separator.
@@ -402,7 +402,7 @@ fn tokenize(line: &str) -> Vec<String> {
     tokens
 }
 
-// ── tests ─────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

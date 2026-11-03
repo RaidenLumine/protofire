@@ -19,7 +19,7 @@
 //! - `commands` — All builtin command handlers
 //! - `tests`    — Unit and integration tests
 
-// ── sub-modules ───────────────────────────────────────────────────────
+// sub-modules
 
 /// Copy the directory-entry header a successful `sys_read_dir` wrote at the
 /// start of `buf`.
@@ -58,11 +58,11 @@ pub(crate) mod syscall_bridge;
 mod tests;
 pub(crate) mod tokenizer;
 
-// ── public re-exports ─────────────────────────────────────────────────
+// public re-exports
 
 pub use entry::shell_user_main;
 
-// ── shared imports ────────────────────────────────────────────────────
+// shared imports
 
 use alloc::format;
 use alloc::string::String;
@@ -76,7 +76,7 @@ use crate::kernel::process::Scheduler;
 use crate::kernel::process::STDOUT_FD;
 use crate::kernel::sync::Mutex;
 
-// ─── Shell constants ──────────────────────────────────────────────────
+// Shell constants
 
 /// Shell prompt prefix.
 pub(crate) const SHELL_PROMPT: &str = "protofire";
@@ -93,7 +93,7 @@ pub(crate) const HISTORY_MAX: usize = 32;
 /// Maximum nesting depth for `source` commands.
 pub(crate) const SOURCE_MAX_DEPTH: u32 = 16;
 
-// ─── Shell state ──────────────────────────────────────────────────────
+// Shell state
 
 /// Environment variables set via `export VAR=value`.
 pub(crate) static ENV_VARS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
@@ -130,7 +130,7 @@ pub(crate) static CONTINUATION_BUF: Mutex<String> = Mutex::new(String::new());
 /// as a complete line yet.
 pub(crate) static STDIN_REMAINDER: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
-// ─── Job control ──────────────────────────────────────────────────────
+// Job control
 // Types and formatting helpers are shared with shared.
 
 pub(crate) use crate::user::shared::jobs::Job;
@@ -142,7 +142,7 @@ pub(crate) static JOBS: Mutex<Vec<Job>> = Mutex::new(Vec::new());
 /// Job ID currently in the foreground, if any (for Ctrl-Z / Ctrl-C targeting).
 pub(crate) static FOREGROUND_JOB_ID: Mutex<Option<u32>> = Mutex::new(None);
 
-// ─── Structured command result ────────────────────────────────────────
+// Structured command result
 //
 // Re-exported from shared so that the kernel shell and ring3-shell
 // share a single CmdResult definition.  The shared type is identical
@@ -157,7 +157,7 @@ pub(crate) static LAST_EXIT_CODE: core::sync::atomic::AtomicI32 =
 /// Current source nesting depth (guards against infinite recursion).
 pub(crate) static SOURCE_DEPTH: Mutex<u32> = Mutex::new(0);
 
-// ─── Shared utility functions ─────────────────────────────────────────
+// Shared utility functions
 
 /// Resolve a user-supplied path against the current working directory.
 pub(crate) fn resolve_path(cwd: &str, path: &str) -> String {

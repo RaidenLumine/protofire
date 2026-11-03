@@ -31,12 +31,12 @@ use crate::Result;
 use super::runtime;
 use super::user_memory;
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// Constants
 
 /// Maximum length of a message queue name (including NUL).
 pub(crate) const MQ_NAME_MAX: usize = 256;
 
-// ── Global named queue registry ────────────────────────────────────────────
+// Global named queue registry
 
 /// Global mapping from queue name to shared queue state.
 static MQ_QUEUES: Mutex<BTreeMap<String, Arc<Mutex<MqState>>>> = Mutex::new(BTreeMap::new());
@@ -84,7 +84,7 @@ fn unlink_queue(name: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Syscall handlers ───────────────────────────────────────────────────────
+// Syscall handlers
 
 /// MqOpen (#112): Open or create a named message queue.
 ///

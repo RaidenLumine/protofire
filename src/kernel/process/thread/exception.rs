@@ -10,7 +10,7 @@ use super::types::is_canonical_user_address;
 use crate::Error;
 use crate::Result;
 
-// ── Shared exception-frame stack (aarch64 + x86_64) ─────────────────────
+// Shared exception-frame stack (aarch64 + x86_64)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UserPendingExceptionFrame {
@@ -102,9 +102,9 @@ impl<const CAPACITY: usize> PendingExceptionFrameStack<CAPACITY> {
     }
 }
 
-// ── Arch-specific delivery builders ─────────────────────────────────────
+// Arch-specific delivery builders
 
-// ── Generic delivery helpers ────────────────────────────────────────────
+// Generic delivery helpers
 
 pub(crate) const fn align_down(value: usize, align: usize) -> usize {
     value & !(align - 1)

@@ -91,7 +91,7 @@ pub fn record_spurious() {
     }
 }
 
-// ── Queries (used by the load balancer and the profiler snapshot) ────────
+// Queries (used by the load balancer and the profiler snapshot)
 
 /// Total IRQ deliveries on `cpu` (sum over all vectors).
 pub fn irq_total_for_cpu(cpu: u32) -> u64 {
@@ -220,7 +220,7 @@ pub fn snapshot() -> IrqProfilerRecord {
     record
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────
+// Tests
 
 /// Serialise counter-mutating tests: the counters are process-global, so
 /// parallel test threads would otherwise race on the shared cells.

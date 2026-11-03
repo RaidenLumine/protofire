@@ -172,7 +172,7 @@ impl ConsoleState {
     fn feed_char(&mut self, character: char) -> ConsoleFeedResult {
         let byte = character as u32 as u8;
 
-        // ── ANSI escape sequence parsing ──
+        // ANSI escape sequence parsing
         match self.escape_state {
             EscapeState::SawEsc => {
                 if character == '[' {
@@ -207,7 +207,7 @@ impl ConsoleState {
             EscapeState::None => {}
         }
 
-        // ── Start of an escape sequence ──
+        // Start of an escape sequence
         if character == '\x1b' {
             self.escape_state = EscapeState::SawEsc;
             return ConsoleFeedResult::default();

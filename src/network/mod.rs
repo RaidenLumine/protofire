@@ -552,7 +552,7 @@ pub fn accept_tcp(listener: &TcpListener) -> Result<TcpConnection> {
     active_kernel_tcp_backend().accept_tcp(listener)
 }
 
-// ─── UDP public API ──────────────────────────────────────────────────────
+// UDP public API
 
 /// Bind a UDP socket to `port` and return a handle.
 ///
@@ -698,7 +698,7 @@ fn recv_from_udp_v6_impl(
     Err(Error::Unsupported)
 }
 
-// ─── DCCP public API ─────────────────────────────────────────────────────
+// DCCP public API
 
 /// A DCCP socket handle (RFC 4340).  DCCP is a connection-oriented datagram
 /// protocol: a handshake establishes the connection, then unreliable
@@ -965,7 +965,7 @@ fn connect_native_tcp(host: &str, port: u16) -> Result<TcpConnection> {
     }
 }
 
-// ─── listen / accept implementations ───
+// listen / accept implementations
 
 #[cfg(not(target_os = "none"))]
 fn listen_host_tcp(port: u16, _backlog: u16) -> Result<TcpListener> {
@@ -1166,7 +1166,7 @@ fn timeout_duration_from_ticks(timeout_ticks: u64) -> Duration {
     Duration::from_millis(timeout_ticks.saturating_mul(NETWORK_TIMEOUT_TICK_MILLIS))
 }
 
-// ── Hostname ─────────────────────────────────────────────────────────
+// Hostname
 
 /// Maximum hostname length (including NUL terminator).
 pub const HOSTNAME_MAX: usize = 256;
@@ -1200,7 +1200,7 @@ pub fn sethostname(name: &[u8]) {
     hostname[copy_len] = 0; // NUL terminator
 }
 
-// ── Socket address ───────────────────────────────────────────────────
+// Socket address
 
 /// IPv4 socket address (POSIX `struct sockaddr_in` layout, 16 bytes).
 #[repr(C)]
@@ -1363,7 +1363,7 @@ impl UdpSocket {
     }
 }
 
-// ─── Raw socket public API ────────────────────────────────────────────
+// Raw socket public API
 
 use crate::network::internet::ip::IpAddress;
 
@@ -1696,7 +1696,7 @@ mod tests {
         server.join().expect("join loopback server");
     }
 
-    // ─── UDP tests ──────────────────────────────────────────────────────
+    // UDP tests
 
     use crate::network::link::device::mock::MockNetworkDevice;
     use crate::network::stack::NetworkStack;

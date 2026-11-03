@@ -194,7 +194,7 @@ impl core::ops::BitOrAssign for PagePermissions {
     }
 }
 
-// ── Rules a fork shares, whatever the page-table format ─────────────────
+// Rules a fork shares, whatever the page-table format
 //
 // The three things below were written three times — once in each
 // architecture's MMU, byte for byte — and each time with its own copy of the

@@ -8,7 +8,7 @@ use crate::network::internet::ipv4::Ipv4Addr;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 
-// ── TTL clamping constants (bare-metal scheduler ticks at 100 Hz) ──
+// TTL clamping constants (bare-metal scheduler ticks at 100 Hz)
 
 /// Minimum TTL to honour from a DNS response (60 seconds).
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
@@ -18,7 +18,7 @@ const DNS_CACHE_MIN_TTL_TICKS: u64 = 60 * 100; // 60 s at 100 Hz
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const DNS_CACHE_MAX_TTL_TICKS: u64 = 3600 * 100; // 3600 s at 100 Hz
 
-// ── Static hosts table ──
+// Static hosts table
 
 /// A static hostname-to-IPv4 mapping, analogous to `/etc/hosts`.
 ///
@@ -45,7 +45,7 @@ pub(crate) fn lookup_hosts(hostname: &str) -> Option<Ipv4Addr> {
     None
 }
 
-// ── DNS response cache ──
+// DNS response cache
 
 /// A cached DNS A-record result with an expiration tick.
 #[derive(Debug, Clone)]

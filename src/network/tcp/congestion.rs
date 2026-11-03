@@ -32,7 +32,7 @@ const INITIAL_SSTHRESH: u32 = u32::MAX;
 /// Dup-ACK threshold for Fast Retransmit / Fast Recovery (RFC 5681 §3.2).
 const DUP_ACK_THRESH: u8 = 3;
 
-// ── Congestion state ────────────────────────────────────────────────────────
+// Congestion state
 
 /// Per-connection congestion control state.
 #[derive(Debug, Clone)]
@@ -93,7 +93,7 @@ impl CongestionState {
         bytes_in_flight < cwnd_bytes
     }
 
-    // ── Event handlers ───────────────────────────────────────────────────
+    // Event handlers
 
     /// Called when a new (non-duplicate) ACK is received.
     ///
@@ -181,7 +181,7 @@ impl CongestionState {
     }
 }
 
-// ── Algorithm enum ──────────────────────────────────────────────────────────
+// Algorithm enum
 
 /// TCP congestion control algorithm variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +201,7 @@ impl fmt::Display for CongestionAlgorithm {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

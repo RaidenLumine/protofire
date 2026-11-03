@@ -13,7 +13,7 @@ use super::mac::MAC_TYPE_SYSTEM;
 use super::mac::MAC_TYPE_UNTRUSTED;
 use super::mac::MAC_TYPE_USER;
 
-// ── Identities ──────────────────────────────────────────────────────────
+// Identities
 
 pub type UserId = u32;
 pub type GroupId = u32;

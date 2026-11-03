@@ -77,7 +77,7 @@ fn mtu_ok(stack: &NetworkStack, packet_len: usize, overhead: usize) -> bool {
     packet_len + overhead <= mtu
 }
 
-// ─── Outbound (apply ESP/AH) ─────────────────────────────────────────────
+// Outbound (apply ESP/AH)
 
 /// Apply the outbound IPv4 IPsec transform.  Returns the (possibly changed)
 /// destination and packet, or `None` when the packet is discarded by
@@ -406,7 +406,7 @@ fn apply_ah_outbound_v6(
     }
 }
 
-// ─── Inbound (decrypt / verify) ──────────────────────────────────────────
+// Inbound (decrypt / verify)
 
 /// Process an inbound IPv4 packet: if it is ESP/AH, decrypt/verify it and
 /// return the transformed packet.  Non-IPsec packets pass through.

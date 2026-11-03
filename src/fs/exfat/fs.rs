@@ -237,7 +237,7 @@ impl ExfatFs {
         Err(Error::NotFound)
     }
 
-    // ─── Write helpers ─────────────────────────────────────────────────
+    // Write helpers
 
     /// Write a sector through the block cache, making it dirty.
     pub(crate) fn write_block_cached(&mut self, lba: u64, data: &[u8; BLOCK_SIZE]) -> Result<()> {
@@ -251,7 +251,7 @@ impl ExfatFs {
         self.cache.flush().map_err(|_| Error::DeviceError)
     }
 
-    // ─── Bitmap operations ────────────────────────────────────────────
+    // Bitmap operations
 
     /// Read a single bit from the allocation bitmap for `cluster`.
     ///
@@ -333,7 +333,7 @@ impl ExfatFs {
         Err(Error::OutOfMemory)
     }
 
-    // ─── FAT write operations ─────────────────────────────────────────
+    // FAT write operations
 
     /// Write a 32-bit FAT entry for the given cluster.
     pub(crate) fn write_fat_entry(&mut self, cluster: u32, value: u32) -> Result<()> {
@@ -388,7 +388,7 @@ impl ExfatFs {
         Ok(())
     }
 
-    // ─── Cluster data writing ─────────────────────────────────────────
+    // Cluster data writing
 
     /// Write data to a cluster chain, extending as needed.
     ///
@@ -511,7 +511,7 @@ impl ExfatFs {
         Ok(bytes_written)
     }
 
-    // ─── Directory entry set builder ──────────────────────────────────
+    // Directory entry set builder
 
     /// Build a raw directory entry set for a file or directory.
     ///

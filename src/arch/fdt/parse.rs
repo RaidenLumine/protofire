@@ -617,7 +617,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     // node ends.  Four is more than any node this kernel names declares.
     let mut current_regs: [(u64, u64); 4] = [(0, 0); 4];
     let mut current_reg_count: usize = 0;
-    // ── NUMA tracking ──────────────────────────────────────────────────
+    // NUMA tracking
     let mut fdt_numa = FdtNumaInfo::empty();
     // Index of the current CPU node (-1 = not in a CPU node).
     let mut cpu_node_idx: isize = -1;
@@ -629,7 +629,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut node_pending_memory_size: u64 = 0;
     let mut node_has_memory_reg: bool = false;
 
-    // ── OPP (Operating Performance Points) CPU frequency tracking ──────
+    // OPP (Operating Performance Points) CPU frequency tracking
     // CPU frequency ranges discovered from device-tree OPP tables
     // (`operating-points-v2` phandles) and legacy `operating-points`
     // frequency/voltage tuples.
@@ -651,7 +651,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut opp_node_hz: Option<u64> = None;
     let mut opp_node_disabled: bool = false;
 
-    // ── Clock-controller tracking ───────────────────────────────────────
+    // Clock-controller tracking
     // fixed-clock controllers: (phandle, rate_hz)
     let mut fixed_clocks: [(u32, u64); 8] = [(0, 0); 8];
     let mut fixed_clock_count: usize = 0;
@@ -821,7 +821,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
             FDT_END_NODE => {
                 let was_depth = current_depth;
                 current_depth = current_depth.saturating_sub(1);
-                // ── Settle what this node's `reg` means ──
+                // Settle what this node's `reg` means
                 // A node writes `reg` before the `compatible` that says what it
                 // is, so the address is classified here, against the flags the
                 // `compatible` set, rather than by matching the address itself
@@ -939,7 +939,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 pending_memory_node_id = None;
                 node_has_memory_reg = false;
 
-                // ── OPP finalization ──
+                // OPP finalization
                 if opp_table_active && was_depth == opp_table_depth {
                     // Exiting the OPP table node itself: record the table.
                     if let Some(ph) = current_table_phandle {
@@ -969,7 +969,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 opp_node_hz = None;
                 opp_node_disabled = false;
 
-                // ── Clock finalization ──
+                // Clock finalization
                 // Exiting a clock-controller node: record its phandle + rate
                 // (fixed-clock) or phandle + parent + mult/div
                 // (fixed-factor-clock).
@@ -1429,7 +1429,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
         }
     }
 
-    // ── Resolve CPU-referenced OPP tables into a frequency range ───────
+    // Resolve CPU-referenced OPP tables into a frequency range
     // Union the ranges of every OPP table referenced by a CPU node, plus any
     // legacy `operating-points` tuples found directly on CPU nodes.
     let mut min_hz = u64::MAX;
@@ -1455,7 +1455,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
         info.cpu_freq_max_hz = Some(max_hz);
     }
 
-    // ── Resolve the CPU clock controller into a nominal rate ───────────
+    // Resolve the CPU clock controller into a nominal rate
     // The first CPU `clocks` phandle identifies the controller: a fixed-clock
     // contributes its rate directly; a fixed-factor-clock scales its (fixed)
     // parent rate by mult/div.  Clock nodes usually follow `/cpus` in the tree,
@@ -2337,7 +2337,7 @@ mod tests {
         );
     }
 
-    // ── Small generic FDT builder for timer-frequency tests ──────────────
+    // Small generic FDT builder for timer-frequency tests
 
     /// Emit a single node with the given properties (all 4-byte values here)
     /// followed by FDT_END_NODE.
@@ -2589,7 +2589,7 @@ mod tests {
         let _ = info;
     }
 
-    // ── DT node table (device-tree-driven driver probe) ─────────────────
+    // DT node table (device-tree-driven driver probe)
 
     #[test]
     fn collect_dt_nodes_extracts_virtio_mmio_nodes() {
@@ -2724,7 +2724,7 @@ mod tests {
         assert!(disabled.disabled);
     }
 
-    // ── OPP table discovery tests ───────────────────────────────────────
+    // OPP table discovery tests
 
     fn be32(v: u32) -> [u8; 4] {
         v.to_be_bytes()
@@ -2927,7 +2927,7 @@ mod tests {
         assert_eq!(info.cpu_freq_max_hz, None);
     }
 
-    // ── Clock-controller discovery tests ───────────────────────────────
+    // Clock-controller discovery tests
 
     /// Build a synthetic FDT with a CPU node whose `clocks` phandle points at
     /// a `fixed-clock` controller carrying a 1.5 GHz `clock-frequency`.
@@ -3048,7 +3048,7 @@ mod tests {
         assert_eq!(info.cpu_clock_rate_hz, None);
     }
 
-    // ── The non-allocating early read ───────────────────────────────────
+    // The non-allocating early read
 
     /// The walk answers from the `/memory` node and nothing else: the device
     /// node before it has a `reg` too, and a walk that answered the first `reg`

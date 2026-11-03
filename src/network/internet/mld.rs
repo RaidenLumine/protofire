@@ -18,7 +18,7 @@ use super::ipv6::Ipv6NextHeader;
 use crate::network::stack::NetworkStack;
 use crate::Result;
 
-// ─── MLDv1 ICMPv6 type constants ────────────────────────────────────────
+// MLDv1 ICMPv6 type constants
 
 /// MLDv1 Multicast Listener Query (type 130).
 pub const MLD_TYPE_QUERY: u8 = 130;
@@ -27,7 +27,7 @@ pub const MLD_TYPE_REPORT: u8 = 131;
 /// MLDv1 Multicast Listener Done (type 132).
 pub const MLD_TYPE_DONE: u8 = 132;
 
-// ─── MLDv1 message structure ────────────────────────────────────────────
+// MLDv1 message structure
 
 /// MLDv1 message (beyond the 4-byte ICMPv6 header).
 ///
@@ -79,7 +79,7 @@ pub fn build_mld_message(
     build_icmpv6_message(src, dst, icmp_type, 0, &body)
 }
 
-// ─── Multicast group state ──────────────────────────────────────────────
+// Multicast group state
 
 #[derive(Debug, Clone)]
 struct MldGroupState {
@@ -138,7 +138,7 @@ impl MldState {
     }
 }
 
-// ─── MLD processing ─────────────────────────────────────────────────────
+// MLD processing
 
 /// Process an incoming MLD message (ICMPv6 types 130–132).
 ///
@@ -270,7 +270,7 @@ pub fn build_done_message(src: Ipv6Addr, group: Ipv6Addr) -> (Ipv6Header, Vec<u8
     (ip_header, raw)
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

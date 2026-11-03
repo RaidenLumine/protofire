@@ -16,7 +16,7 @@ use protofire::syscall::SyscallContext;
 use protofire::syscall::SyscallNumber;
 use protofire::syscall::Table;
 
-// ── Simple PRNG ─────────────────────────────────────────────────────────────
+// Simple PRNG
 
 struct Lcg {
     state: u64,
@@ -41,7 +41,7 @@ impl Lcg {
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// Helpers
 
 fn public_syscall_count() -> usize {
     SyscallNumber::ConnectLocal as usize + 1
@@ -231,7 +231,7 @@ fn fuzz_syscall(table: &Table, syscall_number: usize, arg_sets: &[[usize; 6]]) {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[test]
 fn fuzz_safe_syscalls_with_edge_arguments() {

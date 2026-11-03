@@ -137,7 +137,7 @@ impl TerminationReason {
     }
 }
 
-// ── Per-process fault record ring buffer ──
+// Per-process fault record ring buffer
 
 /// A single fault record stored in the per-process ring buffer.
 #[derive(Debug, Clone, Copy)]
@@ -429,7 +429,7 @@ impl core::fmt::Debug for MqState {
     }
 }
 
-// ── Epoll types ───────────────────────────────────────────────────────────
+// Epoll types
 
 /// Per-fd event registration for an epoll instance.
 #[derive(Debug, Clone, Copy)]
@@ -453,7 +453,7 @@ impl core::fmt::Debug for EpollState {
     }
 }
 
-// ── io_uring types ─────────────────────────────────────────────────────────
+// io_uring types
 
 /// A pending (in-flight) io_uring operation that could not complete
 /// immediately (e.g. a read on a fd with no data available).
@@ -522,8 +522,7 @@ pub(crate) struct ProcessShmAttachment {
     pub(crate) size: usize,
 }
 
-// ── Ptrace types
-// ──────────────────────────────────────────────────────────────
+// Ptrace types
 
 /// Per-process flag constants for ptrace tracing state.
 pub(crate) mod ptrace_flags {

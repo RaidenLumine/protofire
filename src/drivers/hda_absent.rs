@@ -47,7 +47,7 @@ pub fn device_read(_buffer: &mut [u8], _timeout_ticks: u64) -> crate::Result<usi
     Err(crate::Error::Unsupported)
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────
+// Tests
 
 /// The device node exists on this machine and refuses what it cannot do.
 #[cfg(test)]

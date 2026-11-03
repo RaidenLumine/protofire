@@ -43,7 +43,7 @@ use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
 use super::Iso9660Volume;
 
-// ── Image geometry ──────────────────────────────────────────────────────
+// Image geometry
 
 /// Sectors in the image.  The volume claims the first 32 and the rest is the
 /// room a growth allocates into.  Opening it for writing rebuilds the root
@@ -63,7 +63,7 @@ const NOTES_SECTOR: u64 = 31;
 const HELLO: &[u8] = b"Hello from ISO 9660!\n";
 const NOTES: &[u8] = b"Notes in a subdirectory.\n";
 
-// ── Image builders ──────────────────────────────────────────────────────
+// Image builders
 
 /// Serialise a standard ISO 9660 directory record.
 fn make_dir_record(extent_loc: u64, extent_size: u32, flags: u8, name: &[u8]) -> Vec<u8> {
@@ -255,7 +255,7 @@ fn open_volume(device: Arc<dyn crate::fs::block::BlockDevice>) -> Iso9660Volume 
     Iso9660Volume::open(device).expect("open iso9660 volume")
 }
 
-// ── The two-tree fixture ────────────────────────────────────────────────
+// The two-tree fixture
 
 /// Where the second tree's own extents are.
 const JOLIET_ROOT_SECTOR: u64 = 33;
@@ -364,7 +364,7 @@ fn build_joliet_image() -> Vec<u8> {
     image
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────
+// Tests
 
 #[test]
 fn volume_opens_with_volume_label() {
@@ -424,7 +424,7 @@ fn lookup_and_read_file() {
     assert_eq!(node.read(HELLO.len() as u64, &mut tail).expect("eof"), 0);
 }
 
-// ─── Writing file data (RFC 0011, stage 1) ─────────────────────────────
+// Writing file data (RFC 0011, stage 1)
 
 /// The volume and its device, writable: the write tests need a device that
 /// takes the write, which is the one thing the read tests never do.
@@ -556,7 +556,7 @@ fn a_directory_refuses_a_write() {
     assert_eq!(dir.write(0, b"x"), Err(Error::InvalidArgument));
 }
 
-// ─── Creating and removing files (RFC 0011, stage 3b) ──────────────────
+// Creating and removing files (RFC 0011, stage 3b)
 
 /// The root directory's extent, as the descriptor names it.
 ///
@@ -790,7 +790,7 @@ fn creating_and_removing_are_refused_on_a_read_only_device() {
     );
 }
 
-// ─── Creating and removing directories (RFC 0011, stage 3c) ────────────
+// Creating and removing directories (RFC 0011, stage 3c)
 
 /// The directories a path table names, as `(number, parent, identifier,
 /// extent)`.  A record's number is its position, so it is not read from the
@@ -994,7 +994,7 @@ fn a_read_only_device_refuses_a_created_directory() {
     assert!(volume.create_dir("/NEWDIR").is_err());
 }
 
-// ─── The extensions reference (RFC 0011, stage 3f) ─────────────────────
+// The extensions reference (RFC 0011, stage 3f)
 
 /// The signatures a System Use area's entries carry, in the order they sit.
 fn area_entries(system_use: &[u8]) -> Vec<Vec<u8>> {
@@ -1258,7 +1258,7 @@ fn a_writable_open_survives_a_mutated_image() {
     }
 }
 
-// ─── Renaming and moving (RFC 0011, stage 3d) ──────────────────────────
+// Renaming and moving (RFC 0011, stage 3d)
 
 /// The extent a directory's own ".." record points at, read off the medium.
 ///
@@ -1466,7 +1466,7 @@ fn a_directory_that_moves_takes_its_childrens_parent_with_it() {
     );
 }
 
-// ─── Changing a file's length (RFC 0011, stage 2) ──────────────────────
+// Changing a file's length (RFC 0011, stage 2)
 
 /// A named record's eight-byte data-length field, read off the medium rather
 /// than through the parser: the format stores the length twice, and a reader
@@ -1815,7 +1815,7 @@ fn bootable_volume_reports_boot_entries() {
     assert!(plain_volume.boot_entries().is_empty());
 }
 
-// ─── Giving the blocks back (RFC 0011, stage 3g) ───────────────────────
+// Giving the blocks back (RFC 0011, stage 3g)
 
 /// The records of a Joliet extent, read off the medium.
 fn joliet_records(

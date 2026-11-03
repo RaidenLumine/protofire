@@ -39,7 +39,7 @@ use super::pyrofs::ImageEntry;
 use super::pyrofs::PyroFs;
 use crate::Result;
 
-// ── Per-architecture contents ──────────────────────────────────────────
+// Per-architecture contents
 //
 // Each module answers two questions: the apps zone for this target, and the
 // system zone.  Everything else — the layout, the fallback, the disk — is

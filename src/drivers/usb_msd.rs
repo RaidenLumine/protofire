@@ -22,7 +22,7 @@ use crate::println;
 use crate::Error;
 use crate::Result;
 
-// ── USB class constants ──────────────────────────────────────────────────
+// USB class constants
 
 /// USB mass storage class code.
 pub const USB_CLASS_MSC: u8 = 0x08;
@@ -31,7 +31,7 @@ pub const USB_SUBCLASS_SCSI: u8 = 0x06;
 /// Bulk-Only Transport protocol.
 pub const USB_PROTOCOL_BOT: u8 = 0x50;
 
-// ── BOT protocol constants ───────────────────────────────────────────────
+// BOT protocol constants
 
 /// Bulk-Only Transport: Command Block Wrapper signature.
 const CBW_SIGNATURE: u32 = 0x43425355; // "USBC"
@@ -50,7 +50,7 @@ const CSW_STATUS_FAILED: u8 = 1;
 /// CSW status: phase error.
 const CSW_STATUS_PHASE_ERROR: u8 = 2;
 
-// ── SCSI command constants ───────────────────────────────────────────────
+// SCSI command constants
 
 const SCSI_INQUIRY: u8 = 0x12;
 const SCSI_TEST_UNIT_READY: u8 = 0x00;
@@ -59,7 +59,7 @@ const SCSI_READ_10: u8 = 0x28;
 const SCSI_WRITE_10: u8 = 0x2A;
 const SCSI_REQUEST_SENSE: u8 = 0x03;
 
-// ── CBW / CSW structures ─────────────────────────────────────────────────
+// CBW / CSW structures
 
 /// Command Block Wrapper (31 bytes, little-endian).
 #[repr(C, packed)]
@@ -82,7 +82,7 @@ struct Csw {
     status: u8,
 }
 
-// ── SCSI command structures ──────────────────────────────────────────────
+// SCSI command structures
 
 /// SCSI READ CAPACITY(10) response (8 bytes).
 #[repr(C, packed)]
@@ -102,7 +102,7 @@ struct ScsiRw10Cdb {
     control: u8,
 }
 
-// ── Bulk endpoint info ───────────────────────────────────────────────────
+// Bulk endpoint info
 
 /// Information about a USB mass storage device's bulk endpoints.
 #[derive(Debug, Clone, Copy)]
@@ -113,7 +113,7 @@ pub struct MsdBulkEndpoints {
     pub max_packet_size: u16,
 }
 
-// ── MSD state (global singleton) ─────────────────────────────────────────
+// MSD state (global singleton)
 
 static MSD_DEVICE: Mutex<Option<MsdDevice>> = Mutex::new(None);
 
@@ -124,7 +124,7 @@ struct MsdDevice {
     tag: u32, // CBW tag counter
 }
 
-// ── BlockDevice implementation ───────────────────────────────────────────
+// BlockDevice implementation
 
 /// The USB mass storage block device.
 pub struct UsbMsdBlockDevice;
@@ -200,7 +200,7 @@ fn device_block_size() -> usize {
         .unwrap_or(BLOCK_SIZE)
 }
 
-// ── SCSI commands ────────────────────────────────────────────────────────
+// SCSI commands
 
 fn scsi_read_10(lba: u64, buffer: &mut [u8]) -> Result<()> {
     let block_size = device_block_size();
@@ -304,7 +304,7 @@ fn scsi_request_sense() -> Result<u8> {
     Ok(resp[2] & 0x0F)
 }
 
-// ── Boot-disk probe ──────────────────────────────────────────────────────
+// Boot-disk probe
 
 /// Return the USB mass storage block device as a boot disk candidate.
 ///
@@ -323,7 +323,7 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     }
 }
 
-// ── BOT protocol ─────────────────────────────────────────────────────────
+// BOT protocol
 
 /// Perform a BOT transfer: send CBW, transfer data, receive CSW.
 ///
@@ -427,7 +427,7 @@ fn bot_transfer(cdb: &[u8], data: Option<BotData<'_>>) -> Result<()> {
     Ok(())
 }
 
-// ── Initialisation ───────────────────────────────────────────────────────
+// Initialisation
 
 /// Register a newly detected USB mass storage device at the given xHCI slot.
 ///

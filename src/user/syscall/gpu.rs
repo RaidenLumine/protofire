@@ -9,7 +9,7 @@ use crate::syscall::SyscallContext;
 use crate::syscall::SyscallNumber;
 
 impl super::UserSyscall {
-    // ── GPU (VIRGL 3D) syscalls ───────────────────────────────────────
+    // GPU (VIRGL 3D) syscalls
 
     /// Create a VIRGL rendering context with the given `ctx_id`.
     pub const fn gpu_ctx_create(ctx_id: u32) -> SyscallContext {

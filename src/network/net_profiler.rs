@@ -149,7 +149,7 @@ impl NetProfiler {
         }
     }
 
-    // ─── individual counter incrementers ───
+    // individual counter incrementers
 
     #[inline]
     pub fn inc_arp_lookups(&self) {
@@ -285,7 +285,7 @@ impl NetProfiler {
         let _ = self;
     }
 
-    // ─── new counters (P144) ───
+    // new counters (P144)
 
     #[inline]
     pub fn inc_arp_packets_rx(&self) {
@@ -424,7 +424,7 @@ impl NetProfiler {
         let _ = self;
     }
 
-    // ─── tick-based relative timing ───
+    // tick-based relative timing
 
     /// Return a monotonically increasing tick value for relative latency
     /// measurement.  Used with [`record_elapsed`] to accumulate a rough

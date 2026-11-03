@@ -32,7 +32,7 @@ use super::types::*;
 use super::F2fsFs;
 use super::F2fsVolume;
 
-// ─── F2fsVolume implementation ────────────────────────────────────────
+// F2fsVolume implementation
 
 impl F2fsVolume {
     /// Open an F2FS volume from the given block device.
@@ -50,7 +50,7 @@ impl F2fsVolume {
     }
 }
 
-// ─── VfsFileSystem implementation ─────────────────────────────────────
+// VfsFileSystem implementation
 
 impl VfsFileSystem for F2fsVolume {
     fn name(&self) -> &str {
@@ -420,7 +420,7 @@ impl VfsFileSystem for F2fsVolume {
     }
 }
 
-// ─── F2VNode implementation ───────────────────────────────────────────
+// F2VNode implementation
 
 /// Private VNode handle for an F2FS inode.
 struct F2VNode {
@@ -541,7 +541,7 @@ impl VNode for F2VNode {
     }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────
+// Helpers
 
 /// Split a path into `(parent_path, leaf_name)`.
 ///

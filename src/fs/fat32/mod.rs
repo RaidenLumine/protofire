@@ -34,14 +34,14 @@ use crate::fs::unicode::OemCodePage;
 
 use types::FatGeometry;
 
-// ─── re-exports ────────────────────────────────────────────────────────────
+// re-exports
 
 // Re-export types, constants, and helpers needed by sibling modules
 // (and tests via `use super::*`).
 #[allow(unused_imports)]
 pub(crate) use types::*;
 
-// ─── public volume wrapper ─────────────────────────────────────────────────
+// public volume wrapper
 
 /// A mounted FAT volume that implements [`VfsFileSystem`].
 ///
@@ -52,7 +52,7 @@ pub struct FatVolume {
     fs: Arc<crate::kernel::sync::Mutex<FatFs>>,
 }
 
-// ─── internal filesystem state ─────────────────────────────────────────────
+// internal filesystem state
 
 /// Internal FAT filesystem state (FAT12/16/32), shared between
 /// [`FatVolume`] and every [`FatVNode`] it hands out.

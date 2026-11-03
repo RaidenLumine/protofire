@@ -58,7 +58,7 @@ const BITMAP_CLUSTER: u32 = 3;
 const UPCASE_CLUSTER: u32 = 4;
 const VOLUME_LENGTH: u32 = CLUSTER_HEAP_OFFSET + CLUSTER_COUNT;
 
-// ── Image builder ───────────────────────────────────────────────────────────
+// Image builder
 
 fn put_u32(img: &mut [u8], off: usize, val: u32) {
     img[off..off + 4].copy_from_slice(&val.to_le_bytes());
@@ -72,7 +72,7 @@ fn build_exfat_rw_image() -> Vec<u8> {
     let total = VOLUME_LENGTH as usize * BYTES_PER_SECTOR;
     let mut img = vec![0u8; total];
 
-    // ── Boot sector ───────────────────────────────────────────────────────
+    // Boot sector
     let boot = &mut img[..BYTES_PER_SECTOR];
     boot[B_OEM_NAME..B_OEM_NAME + 8].copy_from_slice(b"EXFAT   ");
     write_u64_le(boot, B_VOLUME_LENGTH, VOLUME_LENGTH as u64);
@@ -90,14 +90,14 @@ fn build_exfat_rw_image() -> Vec<u8> {
     boot[BOOT_SIGNATURE_OFFSET] = 0x55;
     boot[BOOT_SIGNATURE_OFFSET + 1] = 0xAA;
 
-    // ── Boot checksum: sum of sectors 0..10, stored in sector 11 @ 0x1FC ──
+    // Boot checksum: sum of sectors 0..10, stored in sector 11 @ 0x1FC
     let sum: u32 = img[..BYTES_PER_SECTOR * B_CHECKSUM_SECTOR]
         .iter()
         .fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
     let cs_off = BYTES_PER_SECTOR * B_CHECKSUM_SECTOR + B_CHECKSUM_OFFSET;
     img[cs_off..cs_off + 4].copy_from_slice(&sum.to_le_bytes());
 
-    // ── FAT table ──────────────────────────────────────────────────────────
+    // FAT table
     let fat_base = FAT_OFFSET as usize * BYTES_PER_SECTOR;
     put_u32(&mut img, fat_base, 0xFFFF_FFF8); // FAT[0] media descriptor
     put_u32(&mut img, fat_base + 4, 0xFFFF_FFFF); // FAT[1]
@@ -105,16 +105,16 @@ fn build_exfat_rw_image() -> Vec<u8> {
     put_u32(&mut img, fat_base + 12, 0xFFFF_FFFF); // FAT[3] bitmap EOC
     put_u32(&mut img, fat_base + 16, 0xFFFF_FFFF); // FAT[4] up-case EOC
 
-    // ── Allocation bitmap (cluster 3) ──────────────────────────────────────
+    // Allocation bitmap (cluster 3)
     // Clusters 2, 3 and 4 are allocated; all others are free.
     let bitmap_off = cluster_lba(BITMAP_CLUSTER) as usize * BYTES_PER_SECTOR;
     img[bitmap_off] = 0x07;
 
-    // ── Up-case table (cluster 4) ──────────────────────────────────────────
+    // Up-case table (cluster 4)
     let upcase_off = cluster_lba(UPCASE_CLUSTER) as usize * BYTES_PER_SECTOR;
     img[upcase_off..upcase_off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
 
-    // ── Root directory (cluster 2) ─────────────────────────────────────────
+    // Root directory (cluster 2)
     let root = cluster_lba(ROOT_DIR_CLUSTER) as usize * BYTES_PER_SECTOR;
     // Bitmap entry set: 0x81 + stream 0xC0 (first_cluster=3, data_length=12).
     img[root] = EXFAT_ENTRY_BITMAP;
@@ -133,20 +133,20 @@ fn build_exfat_rw_image() -> Vec<u8> {
     img
 }
 
-// ── Test helper ─────────────────────────────────────────────────────────────
+// Test helper
 
 fn make_volume(image: Vec<u8>) -> ExfatVolume {
     let dev: Arc<dyn BlockDevice> = MemoryBlockDevice::new("test-exfat-rw", image, false);
     ExfatVolume::open(dev).expect("open exFAT volume")
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[allow(clippy::module_inception)]
 mod tests {
     use super::*;
 
-    // ─── Read-write tests (with bitmap) ──────────────────────────────────
+    // Read-write tests (with bitmap)
 
     #[test]
     fn rw_create_and_read_file() {

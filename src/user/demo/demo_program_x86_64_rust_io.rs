@@ -601,7 +601,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         RUST_IO_PAYLOAD_RESUMED_AFTER_YIELD_MESSAGE.len(),
     );
 
-    // ── launch metadata ──────────────────────────────────────────────────
+    // launch metadata
     let mut app_id_buffer = MaybeUninit::<[u8; RUST_IO_PAYLOAD_READ_BUFFER_CAPACITY]>::uninit();
     let app_id_len = ensure_ok(
         app_id(
@@ -697,7 +697,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         );
     }
 
-    // ── initial user-stack inspection ────────────────────────────────────
+    // initial user-stack inspection
     let stack_argv0 = payload_runtime_stack_argv_value(initial_stack, 0);
     write_prefixed_c_string(
         rip_relative_address!(RUST_IO_PAYLOAD_STACK_ARG0_PREFIX),
@@ -728,7 +728,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         aux_entry,
     );
 
-    // ── runtime README ───────────────────────────────────────────────────
+    // runtime README
     let readme_fd = ensure_ok(
         open_path(
             rip_relative_address!(RUST_IO_PAYLOAD_README_PATH),
@@ -755,7 +755,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         readme_count,
     );
 
-    // ── data file write/read round trip ──────────────────────────────────
+    // data file write/read round trip
     let data_fd = ensure_ok(
         open_path(
             rip_relative_address!(RUST_IO_PAYLOAD_DATA_PATH),
@@ -792,7 +792,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         data_count,
     );
 
-    // ── state directory + session log ────────────────────────────────────
+    // state directory + session log
     ensure_ok_or_already_exists(
         make_dir(
             rip_relative_address!(RUST_IO_PAYLOAD_STATE_DIR_PATH),
@@ -854,7 +854,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         session_count,
     );
 
-    // ── temporary file create + remove ───────────────────────────────────
+    // temporary file create + remove
     let temp_fd = ensure_ok(
         open_path(
             rip_relative_address!(RUST_IO_PAYLOAD_TEMP_PATH),
@@ -887,7 +887,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         RUST_IO_PAYLOAD_TEMP_PATH.len(),
     );
 
-    // ── spawn + wait the normal rust child ───────────────────────────────
+    // spawn + wait the normal rust child
     spawn_child_and_wait(
         rip_relative_address!(RUST_IO_PAYLOAD_WAIT_CHILD_CATALOG_PATH),
         RUST_IO_PAYLOAD_WAIT_CHILD_CATALOG_PATH.len(),
@@ -911,7 +911,7 @@ extern "C" fn protofire_demo_program_rust_io_main_from_stack(initial_stack: usiz
         RUST_IO_PAYLOAD_WAIT_ADDRESS_PREFIX.len(),
     );
 
-    // ── spawn + wait the unhandled-page-fault exception child ────────────
+    // spawn + wait the unhandled-page-fault exception child
     let exception_child_argv = [
         ProcessSpawnStringRef {
             ptr: rip_relative_address!(RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ARGV0),

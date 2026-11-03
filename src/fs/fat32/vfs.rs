@@ -37,7 +37,7 @@ use super::types::FIRST_DATA_CLUSTER;
 use super::FatFs;
 use super::FatVolume;
 
-// ─── Public volume entry point ─────────────────────────────────────────────
+// Public volume entry point
 
 impl FatVolume {
     /// Open a FAT volume from the given block device.
@@ -63,7 +63,7 @@ impl FatVolume {
     }
 }
 
-// ─── VFS trait implementation ──────────────────────────────────────────────
+// VFS trait implementation
 
 impl VfsTrait for FatVolume {
     fn name(&self) -> &str {
@@ -440,7 +440,7 @@ impl VfsTrait for FatVolume {
     }
 }
 
-// ─── FAT VNode ─────────────────────────────────────────────────────────────
+// FAT VNode
 
 struct FatVNode {
     name: String,
@@ -672,7 +672,7 @@ impl VNode for FatVNode {
     }
 }
 
-// ─── Helpers for the write path ────────────────────────────────────────────
+// Helpers for the write path
 
 /// Split a path into `(parent_path, file_name)`.
 pub(crate) fn split_parent(path: &str) -> (&str, &str) {

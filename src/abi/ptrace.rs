@@ -5,7 +5,7 @@
 
 use core::mem::size_of;
 
-// ── Request codes ──
+// Request codes
 
 pub const PTRACE_TRACEME: i32 = 0;
 pub const PTRACE_ATTACH: i32 = 1;
@@ -19,7 +19,7 @@ pub const PTRACE_SINGLESTEP: i32 = 8;
 pub const PTRACE_SYSCALL: i32 = 9;
 pub const PTRACE_GETEVENTMSG: i32 = 10;
 
-// ── Event codes ──
+// Event codes
 
 pub const PTRACE_EVENT_SIGNAL: u64 = 1;
 pub const PTRACE_EVENT_SYSCALL_ENTRY: u64 = 2;
@@ -29,7 +29,7 @@ pub const PTRACE_EVENT_EXEC: u64 = 5;
 pub const PTRACE_EVENT_CLONE: u64 = 6;
 pub const PTRACE_EVENT_SINGLESTEP: u64 = 7;
 
-// ── Event record ──
+// Event record
 
 /// Record consumed via PTRACE_GETEVENTMSG: the last ptrace stop event.
 #[repr(C)]
@@ -43,7 +43,7 @@ pub struct PtraceEventRecord {
 
 pub const PTRACE_EVENT_RECORD_SIZE: usize = size_of::<PtraceEventRecord>();
 
-// ── User-mode register file (x86_64) ──
+// User-mode register file (x86_64)
 
 /// 22 × u64 = 176 bytes: the x86_64 user-mode register file exchanged through
 /// PTRACE_GETREGS / PTRACE_SETREGS.

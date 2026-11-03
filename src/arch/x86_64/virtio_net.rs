@@ -58,7 +58,7 @@ pub(crate) fn pci_net_device() -> Option<Arc<dyn NetworkDevice>> {
             );
         }
 
-        // ── Try modern PCI transport via the modern MMIO BAR ─────
+        // Try modern PCI transport via the modern MMIO BAR
         // QEMU's transitional `virtio-net-pci` exposes two MMIO BARs: a
         // legacy 0x1000 device region (BAR1) and the modern transport
         // BAR (BAR4, 0x4000, 64-bit prefetchable) that holds the common
@@ -111,7 +111,7 @@ pub(crate) fn pci_net_device() -> Option<Arc<dyn NetworkDevice>> {
             }
         }
 
-        // ── Fallback: legacy IO-port BAR ─────────────────────────
+        // Fallback: legacy IO-port BAR
         if let Some(io_bar) = device
             .bars
             .first()

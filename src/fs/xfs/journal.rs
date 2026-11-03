@@ -16,7 +16,7 @@ use super::types::be32;
 use super::types::be64;
 use super::types::Superblock;
 
-// ─── XFS log constants ──────────────────────────────────────────────────────
+// XFS log constants
 
 /// Log record header magic (v2/v5).
 const XLOG_HEADER_MAGIC: u32 = 0xFE03_AD0B;
@@ -42,7 +42,7 @@ const XLOG_OP_HDR_SIZE: usize = 16;
 /// Size of the buffer log format structure (32 bytes for v2).
 const XFS_BLF_HDR_SIZE: usize = 32;
 
-// ─── Parsing helpers ───────────────────────────────────────────────────────
+// Parsing helpers
 
 /// Log record magic at offset 0 (u32 BE).
 fn xlog_magic(buf: &[u8], off: usize) -> u32 {
@@ -82,7 +82,7 @@ fn blf_total_size(buf: &[u8], off: usize) -> u16 {
     u16::from_be_bytes([buf[off + 2], buf[off + 3]])
 }
 
-// ─── Public interface ───────────────────────────────────────────────────────
+// Public interface
 
 /// Replay the XFS journal if it is dirty.
 ///
@@ -242,7 +242,7 @@ fn replay_buffer_item(
     write_device(device, byte_offset, block_data)
 }
 
-// ─── Device I/O ─────────────────────────────────────────────────────────────
+// Device I/O
 
 /// Read bytes from the device at a byte-aligned offset.
 fn read_device(

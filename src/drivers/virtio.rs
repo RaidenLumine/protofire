@@ -11,7 +11,7 @@ use crate::kernel::block::DeviceHealth;
 use crate::Error;
 use crate::Result;
 
-// ─── MMIO register offsets (section 4.2.2) ───
+// MMIO register offsets (section 4.2.2)
 
 pub const REG_MAGIC_VALUE: u64 = 0x000;
 pub const REG_VERSION: u64 = 0x004;
@@ -35,7 +35,7 @@ pub const REG_QUEUE_DEVICE_HIGH: u64 = 0x0A4;
 pub const REG_STATUS: u64 = 0x070;
 pub const REG_CONFIG_GENERATION: u64 = 0x0FC;
 
-// ─── Magic value and device IDs ───
+// Magic value and device IDs
 
 pub const MAGIC_VALUE: u32 = 0x74726976; // "virt"
 pub const DEVICE_ID_NET: u32 = 1;
@@ -46,7 +46,7 @@ pub const DEVICE_ID_GPU: u32 = 16;
 pub const DEVICE_ID_INPUT: u32 = 18;
 pub const VIRTIO_VERSION: u32 = 2;
 
-// ─── Status bits (section 4.2.2) ───
+// Status bits (section 4.2.2)
 
 pub const STATUS_ACKNOWLEDGE: u32 = 1;
 pub const STATUS_DRIVER: u32 = 2;
@@ -54,12 +54,12 @@ pub const STATUS_DRIVER_OK: u32 = 4;
 pub const STATUS_FEATURES_OK: u32 = 8;
 pub const STATUS_FAILED: u32 = 128;
 
-// ─── Virtqueue descriptor flags (section 2.6.4.3) ───
+// Virtqueue descriptor flags (section 2.6.4.3)
 
 pub(crate) const VIRTQ_DESC_F_NEXT: u16 = 1;
 pub(crate) const VIRTQ_DESC_F_WRITE: u16 = 2;
 
-// ─── Block device constants (section 5.2) ───
+// Block device constants (section 5.2)
 
 /// Read request.
 const VIRTIO_BLK_T_IN: u32 = 0;
@@ -93,7 +93,7 @@ const VIRTIO_POLL_LIMIT: u32 = 1_000_000;
 #[cfg(test)]
 const MOCK_REGION_SIZE: usize = 0x200;
 
-// ─── MMIO register region abstraction ───
+// MMIO register region abstraction
 
 /// Opaque handle for a memory-mapped VirtIO register region.  On bare-metal
 /// this is a pointer to physical MMIO space; in host tests it is backed by
@@ -112,7 +112,7 @@ pub trait MmioRegion: Send + Sync {
     }
 }
 
-// ─── Transport layer ───
+// Transport layer
 
 pub struct VirtIoMmio {
     regs: alloc::boxed::Box<dyn MmioRegion>,
@@ -252,7 +252,7 @@ impl VirtIoMmio {
         Ok(())
     }
 
-    // ─── helpers ───
+    // helpers
 
     fn set_status(&self, bits: u32) -> Result<()> {
         self.regs.write32(REG_STATUS, bits);
@@ -262,7 +262,7 @@ impl VirtIoMmio {
     }
 }
 
-// ─── Virtqueue descriptor and block request layouts ───
+// Virtqueue descriptor and block request layouts
 
 /// A VirtIO split-virtqueue descriptor (section 2.6.4.3).
 #[repr(C)]
@@ -290,7 +290,7 @@ struct VirtioBlkReqHeader {
     sector: u64,
 }
 
-// ─── VirtQueue ───
+// VirtQueue
 
 /// A VirtIO split virtqueue owned by the driver.
 ///
@@ -314,7 +314,7 @@ pub struct VirtQueue {
     /// Number of descriptors currently allocated.
     used_count: u16,
     queue_size: u16,
-    // ── PCI page-aligned backing ──────────────────────────────
+    // PCI page-aligned backing
     // Non-null when the queue was created with `new_pci`.  The
     // region owns all three rings; the Vec fields are slices into
     // this region.  Freed on Drop; the Vecs MUST NOT be dropped.
@@ -730,7 +730,7 @@ impl VirtQueue {
     }
 }
 
-// ─── Block virtqueue processing (mock / test helper) ───
+// Block virtqueue processing (mock / test helper)
 
 /// Process all pending block I/O requests from `queue` against the given
 /// `storage` slice.  This function is the mock equivalent of the device
@@ -868,7 +868,7 @@ pub fn process_block_virtqueue(queue: &mut VirtQueue, storage: &mut [u8]) -> Res
     Ok(())
 }
 
-// ─── VirtIO block driver ───
+// VirtIO block driver
 
 use crate::kernel::sync::Mutex;
 
@@ -1148,7 +1148,7 @@ impl BlockDevice for VirtIoBlock {
     }
 }
 
-// ─── VirtIO driver (bare-metal device discovery) ───
+// VirtIO driver (bare-metal device discovery)
 
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
@@ -1258,7 +1258,7 @@ fn try_virtio_block_at(base: usize) -> Option<alloc::sync::Arc<dyn BlockDevice>>
     Some(alloc::sync::Arc::new(block))
 }
 
-// ─── PCIe block device: the second driver on the message-signalled path ───
+// PCIe block device: the second driver on the message-signalled path
 //
 // Until this existed the network driver was the only device that claimed
 // identities from its MSI-X table, which left the whole message-signalled path
@@ -1482,7 +1482,7 @@ pub fn probe_boot_disk() -> Option<alloc::sync::Arc<dyn BlockDevice>> {
     None
 }
 
-// ─── Bare-metal MMIO region ───
+// Bare-metal MMIO region
 
 /// Memory-mapped I/O region backed by a raw physical address.  Used on
 /// bare-metal to access VirtIO MMIO register space through volatile
@@ -1535,7 +1535,7 @@ impl MmioRegion for BareMmioRegion {
     }
 }
 
-// ─── VirtIO block driver: bare-metal extension ───
+// VirtIO block driver: bare-metal extension
 
 #[cfg(target_os = "none")]
 impl VirtIoBlock {
@@ -1609,7 +1609,7 @@ impl VirtIoBlock {
     }
 }
 
-// ─── Mock MMIO region for host-side testing ───
+// Mock MMIO region for host-side testing
 
 #[cfg(test)]
 pub(crate) mod mock {
@@ -1660,7 +1660,7 @@ pub(crate) mod mock {
     }
 }
 
-// ─── tests ───
+// tests
 
 #[cfg(test)]
 mod tests {
@@ -1754,7 +1754,7 @@ mod tests {
         assert_eq!(transport.discover(), Err(Error::Unsupported));
     }
 
-    // ─── VirtQueue unit tests ───
+    // VirtQueue unit tests
 
     #[test]
     fn virtqueue_alloc_free_cycle() {
@@ -1823,7 +1823,7 @@ mod tests {
         assert_eq!(vq.used_count, 0); // chain freed
     }
 
-    // ─── VirtIO block device tests ───
+    // VirtIO block device tests
 
     fn make_block_driver(storage: alloc::vec::Vec<u8>) -> VirtIoBlock {
         let block_count = (storage.len() / SECTOR_SIZE) as u64;

@@ -60,7 +60,7 @@ pub const WAIT_FOREVER: u64 = u64::MAX;
 /// number is passed as the sole argument.
 pub type SignalHandler = fn(i32);
 
-// ── Core wait API ──────────────────────────────────────────────────────────
+// Core wait API
 
 /// Wait for a signal with an optional timeout.
 ///
@@ -97,7 +97,7 @@ pub fn poll_signal() -> Option<ProcessSignalRecord> {
     wait_signal(0)
 }
 
-// ── Signal mask ────────────────────────────────────────────────────────────
+// Signal mask
 
 /// Block delivery of `signal` by adding it to the current signal mask.
 ///
@@ -127,7 +127,7 @@ pub fn signal_mask() -> u32 {
     syscall::sys_set_signal_mask(0).unwrap_or(0) as u32
 }
 
-// ── Send ───────────────────────────────────────────────────────────────────
+// Send
 
 /// Send a signal to a process.
 ///
@@ -137,7 +137,7 @@ pub fn send_signal(pid: usize, signal: usize, payload: usize) -> Result<(), isiz
     syscall::sys_send_signal(pid, signal, payload)
 }
 
-// ── Cooperative dispatch loop ──────────────────────────────────────────────
+// Cooperative dispatch loop
 
 /// Run a cooperative signal-wait loop that dispatches to registered
 /// handlers.

@@ -26,7 +26,7 @@ use crate::network::stack::NetworkStack;
 use crate::Error;
 use crate::Result;
 
-// ─── ICMPv6 type constants ──────────────────────────────────────────────
+// ICMPv6 type constants
 
 pub const ICMPV6_ECHO_REPLY: u8 = 129;
 pub const ICMPV6_ECHO_REQUEST: u8 = 128;
@@ -39,7 +39,7 @@ pub const NDP_ROUTER_ADVERTISEMENT: u8 = 134;
 pub const NDP_NEIGHBOR_SOLICITATION: u8 = 135;
 pub const NDP_NEIGHBOR_ADVERTISEMENT: u8 = 136;
 
-// ─── NDP option types ───────────────────────────────────────────────────
+// NDP option types
 
 const NDP_OPT_SOURCE_LL_ADDR: u8 = 1;
 const NDP_OPT_TARGET_LL_ADDR: u8 = 2;
@@ -48,12 +48,12 @@ const NDP_OPT_PREFIX_INFO: u8 = 3;
 /// hosts MUST honor when it is >= IPV6_MIN_MTU (1280).
 const NDP_OPT_MTU: u8 = 5;
 
-// ─── ICMPv6 header size ─────────────────────────────────────────────────
+// ICMPv6 header size
 
 /// ICMPv6 header: type(1) + code(1) + checksum(2) = 4 bytes.
 pub const ICMPV6_HEADER_SIZE: usize = 4;
 
-// ─── ICMPv6 message ─────────────────────────────────────────────────────
+// ICMPv6 message
 
 /// Parsed ICMPv6 header (first 4 bytes; NDP messages have additional fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +163,7 @@ pub fn build_icmpv6_dest_unreachable_for(
     build_icmpv6_message(src, dst, ICMPV6_DEST_UNREACHABLE, 4, &body)
 }
 
-// ─── ICMPv6 error-message inspection ─────────────────────────────────────
+// ICMPv6 error-message inspection
 
 /// Information about the original packet embedded in an ICMPv6 error message.
 ///
@@ -224,7 +224,7 @@ pub fn parse_icmpv6_error_info(data: &[u8]) -> Option<Icmpv6ErrorInfo> {
     })
 }
 
-// ─── ICMPv6 processing ─────────────────────────────────────────────────
+// ICMPv6 processing
 
 /// Process an incoming ICMPv6 packet embedded in an IPv6 datagram.
 ///
@@ -288,7 +288,7 @@ pub fn process_icmpv6_packet(
     }
 }
 
-// ─── NDP: Neighbor Solicitation (RFC 4861 §4.3) ─────────────────────────
+// NDP: Neighbor Solicitation (RFC 4861 §4.3)
 
 /// Size of an NDP Neighbor Solicitation message:
 /// 4 (ICMPv6 header) + 4 (reserved) + 16 (target address) = 24.
@@ -352,7 +352,7 @@ fn process_neighbor_solicitation(
     Ok(Some((ip_header, na)))
 }
 
-// ─── NDP: Neighbor Advertisement (RFC 4861 §4.4) ────────────────────────
+// NDP: Neighbor Advertisement (RFC 4861 §4.4)
 
 /// Size of an NDP Neighbor Advertisement message:
 /// 4 (ICMPv6 header) + 4 (flags+reserved) + 16 (target address) = 24.
@@ -434,7 +434,7 @@ fn build_neighbor_advertisement(
     build_icmpv6_message(src, dst, NDP_NEIGHBOR_ADVERTISEMENT, 0, &body)
 }
 
-// ─── NDP: Router Solicitation (RFC 4861 §4.1) ──────────────────────────
+// NDP: Router Solicitation (RFC 4861 §4.1)
 
 /// Size of an NDP Router Solicitation message (ICMPv6 header + 4 reserved).
 const NDP_RS_BASE_SIZE: usize = ICMPV6_HEADER_SIZE + 4;
@@ -449,7 +449,7 @@ pub fn build_router_solicitation(src_ll_addr: &MacAddress) -> Vec<u8> {
     body
 }
 
-// ─── NDP: Router Advertisement processing (SLAAC) ──────────────────────
+// NDP: Router Advertisement processing (SLAAC)
 
 /// Minimum size of an RA: 4 (ICMPv6) + 12 (RA fields) = 16 bytes.
 const NDP_RA_BASE_SIZE: usize = 16;
@@ -589,7 +589,7 @@ fn process_router_advertisement(stack: &NetworkStack, data: &[u8]) {
     }
 }
 
-// ─── Duplicate Address Detection (DAD) ──────────────────────────────────
+// Duplicate Address Detection (DAD)
 
 /// Perform Duplicate Address Detection for `addr` by sending a Neighbor
 /// Solicitation with the unspecified source address.
@@ -634,7 +634,7 @@ pub fn send_dad_probe(stack: &NetworkStack, addr: Ipv6Addr) {
     let _ = send_ipv6_frame(stack, &ip_header, &msg);
 }
 
-// ─── Neighbor Cache ─────────────────────────────────────────────────────
+// Neighbor Cache
 
 /// States for a neighbor cache entry (RFC 4861 §7.3.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -749,7 +749,7 @@ impl NeighborCache {
     }
 }
 
-// ─── Neighbor Cache Timing ──────────────────────────────────────────────
+// Neighbor Cache Timing
 
 /// Reachable time in ticks (30 seconds at 100 Hz).
 const REACHABLE_TIME_TICKS: u64 = 3000;
@@ -763,7 +763,7 @@ const MAX_MULTICAST_SOLICIT: u32 = 3;
 /// Neighbor Solicitation retransmit interval in ticks (1 second).
 const RETRANS_TIMER_TICKS: u64 = 100;
 
-// ─── NDP: MAC resolution (Neighbor Solicitation) ────────────────────────
+// NDP: MAC resolution (Neighbor Solicitation)
 
 /// Resolve an IPv6 address to a MAC address via NDP Neighbor Solicitation.
 ///
@@ -852,7 +852,7 @@ fn send_neighbor_solicitation(stack: &NetworkStack, target: Ipv6Addr) -> Result<
     send_ipv6_frame(stack, &ip_header, &msg)
 }
 
-// ─── SLAAC: Address Configuration ──────────────────────────────────────
+// SLAAC: Address Configuration
 
 /// Send a Router Solicitation to the all-routers multicast address.
 /// This triggers Router Advertisements for SLAAC.
@@ -876,7 +876,7 @@ pub fn send_router_solicitation(stack: &NetworkStack) -> Result<()> {
     send_ipv6_frame(stack, &ip_header, &msg)
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────
+// Helpers
 
 /// Extract a link-layer address option from an NDP message.
 fn extract_ll_addr_option(data: &[u8], offset: usize, opt_type: u8) -> Option<MacAddress> {
@@ -955,7 +955,7 @@ pub fn send_ipv6_frame(
     stack.device().send(&raw_frame)
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {
@@ -978,7 +978,7 @@ mod tests {
         NetworkStack::global().expect("stack should be initialised")
     }
 
-    // ── ICMPv6 header tests ──────────────────────────────────────────
+    // ICMPv6 header tests
 
     #[test]
     fn icmpv6_header_parse_round_trip() {
@@ -1019,7 +1019,7 @@ mod tests {
         assert_eq!(reply_header.icmp_type, ICMPV6_ECHO_REPLY);
     }
 
-    // ── Neighbor cache tests ──────────────────────────────────────────
+    // Neighbor cache tests
 
     #[test]
     fn neighbor_cache_insert_and_lookup() {
@@ -1079,7 +1079,7 @@ mod tests {
         assert!(cache.is_empty());
     }
 
-    // ── NDP message tests ─────────────────────────────────────────────
+    // NDP message tests
 
     #[test]
     fn build_neighbor_advertisement_sets_solicited_flag() {
@@ -1120,7 +1120,7 @@ mod tests {
         assert_eq!(parsed_target, target);
     }
 
-    // ── Link-local address generation test ────────────────────────────
+    // Link-local address generation test
 
     #[test]
     fn link_local_address_from_mac_is_fe80_prefix() {

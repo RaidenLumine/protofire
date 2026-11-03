@@ -87,7 +87,7 @@ pub fn declare_file(fs: &crate::fs::FileSystem, path: &str, now_tick: u64) -> cr
 /// before the service runs at all.
 pub const DEFAULT_PRIVILEGED_ACCOUNT: &str = "root";
 
-// ── Service definition types ─────────────────────────────────────────────────
+// Service definition types
 
 /// The kind of service to launch.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,7 +241,7 @@ impl ServiceDefinition {
     }
 }
 
-// ── Loading from config files ────────────────────────────────────────────────
+// Loading from config files
 
 /// Load service definitions from a TOML config text.
 ///
@@ -493,7 +493,7 @@ pub fn load_services_from_fs(fs: &crate::fs::FileSystem, dir: &str) -> Vec<Servi
     all_services
 }
 
-// ── The default service set, and its written form ───────────────────────────
+// The default service set, and its written form
 
 /// The name a launch reference contributes to the service table.
 ///
@@ -658,7 +658,7 @@ fn write_quoted(out: &mut String, value: &str) {
     out.push('"');
 }
 
-// ── Runtime registry ─────────────────────────────────────────────────────────
+// Runtime registry
 
 /// What the boot path should start, and in what order.
 #[derive(Debug, Default)]
@@ -1306,7 +1306,7 @@ pub fn plan_supervision(
     steps
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
+// Tests
 
 /// Serialises **every** test that touches the registry, wherever it lives.
 ///

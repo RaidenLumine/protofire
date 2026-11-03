@@ -9,7 +9,7 @@ use core::fmt;
 
 pub(crate) use super::constants::*;
 
-// ── UserThreadStart ──────────────────────────────────────────────────────
+// UserThreadStart
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UserThreadStart {
@@ -112,7 +112,7 @@ const fn is_user_thread_stack_pointer_aligned(stack_pointer: usize) -> bool {
     stack_pointer & (USER_THREAD_STACK_ALIGNMENT - 1) == 0
 }
 
-// ── Canonical user address check (shared across arch validators) ────────
+// Canonical user address check (shared across arch validators)
 
 pub(crate) const fn is_canonical_user_address(address: usize) -> bool {
     address <= 0x0000_7FFF_FFFF_FFFF
@@ -138,7 +138,7 @@ pub(crate) trait UserForkContext: Copy {
     fn install(&self, thread: &super::Thread);
 }
 
-// ── Scheduling types ─────────────────────────────────────────────────────
+// Scheduling types
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -186,7 +186,7 @@ pub struct ThreadSchedStats {
     pub total_wait_ticks: u64,
 }
 
-// ── Thread state & diagnostics ──────────────────────────────────────────
+// Thread state & diagnostics
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadState {
@@ -232,7 +232,7 @@ pub enum ThreadWaitOutcome {
     TimedOut,
 }
 
-// ── Execution state & user runtime state ────────────────────────────────
+// Execution state & user runtime state
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ThreadExecutionState {

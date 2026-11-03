@@ -17,7 +17,7 @@ use std::fs;
 use std::io::Write;
 use std::io::{self};
 
-// ── ELF64 constants ─────────────────────────────────────────────────────
+// ELF64 constants
 const EM_X86_64: u16 = 62;
 const SHT_RELA: u32 = 4;
 const SHT_SYMTAB: u32 = 2;
@@ -419,7 +419,7 @@ fn main() -> io::Result<()> {
     let total = relocations.len();
     eprintln!("Collected {total} absolute relocation entries");
 
-    // ── Pre-compute VMA→file-offset mapping from LOAD segments ──────────
+    // Pre-compute VMA→file-offset mapping from LOAD segments
     struct LoadSegment {
         vaddr: u64,
         file_off: u64,
@@ -456,7 +456,7 @@ fn main() -> io::Result<()> {
         None
     };
 
-    // ── Read __bss_end / __kernel_end from the symbol table ──────────
+    // Read __bss_end / __kernel_end from the symbol table
     // Fallback: compute kernel_end from LOAD segments (last LOAD vaddr + memsz).
     let mut kernel_end: u64 = 0;
     for seg in &segs {
@@ -481,7 +481,7 @@ fn main() -> io::Result<()> {
             }
         }
     }
-    // ── The kernel's end, from the linker's own symbols ───────────────
+    // The kernel's end, from the linker's own symbols
     // The window below needs the kernel's *end*, and the LOAD segments no
     // longer have it: the frame pool is reserved address space, outside
     // every segment, so the segment walk stops at `__image_end` while the
@@ -597,7 +597,7 @@ fn main() -> io::Result<()> {
         );
     }
 
-    // ── Validate each entry against the symbol it names ───────────────
+    // Validate each entry against the symbol it names
     // `--emit-relocs` preserves relocations from ALL input object files, and
     // not every record is a reference the link actually applied: the site can
     // hold instruction bytes that merely look like an address.  The filter
@@ -774,7 +774,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // ── Pointers the linker resolved without leaving a record ──────────
+    // Pointers the linker resolved without leaving a record
     // The copy has to be patched everywhere the loaded image holds an
     // address, and "everywhere" is not the same set as "everywhere a
     // relocation record exists": a `.data` dispatch slot the linker resolved

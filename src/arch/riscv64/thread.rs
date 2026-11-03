@@ -238,7 +238,7 @@ impl RiscV64UserThreadStateSnapshot {
     }
 }
 
-// ── RISC-V 64 user-thread context ────────────────────────────────────
+// RISC-V 64 user-thread context
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -481,7 +481,7 @@ impl RiscV64UserThreadContext {
     }
 }
 
-// ── RISC-V 64 user-thread context on `Thread` ────────────────────────
+// RISC-V 64 user-thread context on `Thread`
 
 /// The riscv64 half of the thread API, next to the x86_64 and aarch64
 /// halves rather than scattered through the shared lifecycle code.
@@ -846,7 +846,7 @@ impl crate::kernel::process::thread::types::UserForkContext for RiscV64UserThrea
     }
 }
 
-// ── RISC-V 64 entry trampoline ──────────────────────────────────────
+// RISC-V 64 entry trampoline
 
 impl Thread {
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]

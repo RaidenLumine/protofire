@@ -54,7 +54,7 @@ use asid::allocate_asid;
 use asid::free_asid;
 use asid::satp_with_asid;
 
-// ── Constants ────────────────────────────────────────────────────────────
+// Constants
 
 /// Size of one translation granule (4 KiB).
 const TRANSLATION_GRANULE_SIZE: usize = 4096;
@@ -123,7 +123,7 @@ const USER_DEMO_EXCEPTION_STACK_GUARD_SIZE: usize = 0x1_0000; // 64 KiB
 /// Entry-point offset within the code region of a slot.
 const USER_DEMO_CODE_OFFSET: usize = 0x1000;
 
-// ── Sv39 translation descriptor bits ─────────────────────────────────────
+// Sv39 translation descriptor bits
 
 /// Valid bit — present in both table and leaf descriptors.
 const PTE_VALID: u64 = 1 << 0;
@@ -146,7 +146,7 @@ const PTE_DIRTY: u64 = 1 << 7;
 /// Physical page number mask within a descriptor: PPN occupies bits [53:10].
 const PPN_MASK: u64 = 0x0000_0FFF_FFFF_FFFF;
 
-// ── Types ────────────────────────────────────────────────────────────────
+// Types
 
 /// A single 512-entry Sv39 translation table (one 4 KiB page).
 ///
@@ -290,7 +290,7 @@ pub struct PreparedProcessAddressSpace {
     asid: u64,
 }
 
-// ── Kernel translation tables ────────────────────────────────────────────
+// Kernel translation tables
 
 /// A 4 KiB-aligned Sv39 translation table.
 ///
@@ -405,7 +405,7 @@ pub fn user_root_installed() -> usize {
 static PREPARED_WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_MAPPED_PAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-// ── Entry-point helpers ──────────────────────────────────────────────────
+// Entry-point helpers
 
 /// Sv39 index of a virtual address within the top-level (PGD) table.
 fn pgd_index(virtual_address: usize) -> usize {
@@ -540,7 +540,7 @@ const fn align_down(value: usize, align: usize) -> usize {
     value & !(align - 1)
 }
 
-// ── MMU control ──────────────────────────────────────────────────────────
+// MMU control
 
 /// Return the address currently programmed into satp (ASID stripped).
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
@@ -665,7 +665,7 @@ fn flush_tlb_page(virtual_address: usize) {
 #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
 fn flush_tlb_page(_virtual_address: usize) {}
 
-// ── Runtime page-table pool ──────────────────────────────────────────────
+// Runtime page-table pool
 
 /// Pages for runtime page tables allocated outside the kernel tables.
 const RUNTIME_PT_POOL_PAGES: usize = 32;
@@ -803,7 +803,7 @@ unsafe fn resolve_pte_table(root: usize, virtual_address: usize) -> Option<*mut 
     Some(page_base_address(pmd_entry) as *mut u64)
 }
 
-// ── Install / unmap / device MMIO ────────────────────────────────────────
+// Install / unmap / device MMIO
 
 /// Install (or replace) a U-mode-accessible page in the live tables.
 ///
@@ -980,7 +980,7 @@ pub unsafe fn map_device_mmio(phys: u64, size: usize) -> Option<*mut u8> {
     }
 }
 
-// ── Runtime kernel tables ────────────────────────────────────────────────
+// Runtime kernel tables
 
 /// Validate the heap bounds against the runtime-table memory map.
 fn validate_runtime_layout(heap_bounds: (usize, usize)) -> Option<()> {
@@ -1049,7 +1049,7 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     })
 }
 
-// ── The stack window ─────────────────────────────────────────────────────
+// The stack window
 
 /// Walk to the leaf entry for a stack-window address, building the level-0
 /// table when it is missing.
@@ -1318,7 +1318,7 @@ pub fn active_runtime_kernel_page_table_check(
     })
 }
 
-// ── Demo user slots ──────────────────────────────────────────────────────
+// Demo user slots
 
 /// How many address spaces hold each demo slot.
 ///
@@ -1563,7 +1563,7 @@ pub fn prepare_runtime_process_address_space(
     })
 }
 
-// ── Activation ───────────────────────────────────────────────────────────
+// Activation
 
 pub fn activate_prepared_runtime_kernel_page_tables() -> Option<ActivatedRuntimeKernelPageTables> {
     let prepared = prepared_runtime_kernel_page_tables()?;
@@ -1633,7 +1633,7 @@ fn activate_prepared_process_address_space_impl(
     })
 }
 
-// ── PreparedDemoUserSlot impl ────────────────────────────────────────────
+// PreparedDemoUserSlot impl
 
 impl PreparedDemoUserSlot {
     pub fn region_start(&self) -> usize {
@@ -1771,7 +1771,7 @@ impl Clone for PreparedDemoUserSlot {
     }
 }
 
-// ── PreparedProcessAddressSpace impl ─────────────────────────────────────
+// PreparedProcessAddressSpace impl
 
 impl PreparedProcessAddressSpace {
     pub fn root_table_address(&self) -> usize {

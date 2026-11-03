@@ -25,7 +25,7 @@ use crate::memory::paging::PagePermissions;
 use crate::Error;
 use crate::Result;
 
-// ── the user-access window ─────────────────────────────────────────────
+// the user-access window
 
 /// Run `f` with supervisor access to user memory permitted.
 ///
@@ -93,7 +93,7 @@ pub(crate) unsafe fn write_user_value_untracked<T: Copy>(addr: u64, value: &T) {
     }
 }
 
-// ── the user-mapping check ─────────────────────────────────────────────
+// the user-mapping check
 
 /// Whether this target checks a syscall's user addresses against the current
 /// thread's address space.
@@ -209,7 +209,7 @@ pub(crate) fn thread_requires_user_memory_validation(thread: &Thread) -> Result<
     }
 }
 
-// ── tests ──────────────────────────────────────────────────────────────
+// tests
 
 /// The mapping check walks a real user address space, and only the x86_64
 /// host build can materialize one in-process; the other targets take the

@@ -291,7 +291,7 @@ fn synthetic_public_file_stat_record(kind: NodeKind, size: usize) -> fs_abi::Fil
     FileMetadata::new(kind, size).public_stat_record()
 }
 
-// ── eventfd helpers ───────────────────────────────────────────────────────
+// eventfd helpers
 
 use alloc::sync::Arc;
 
@@ -419,7 +419,7 @@ pub(super) fn eventfd_write(
     Ok(8)
 }
 
-// ── signalfd helpers ─────────────────────────────────────────────────────
+// signalfd helpers
 
 /// Read from a signalfd: dequeue the next pending signal matching the fd's
 /// signal mask and return it as a `ProcessSignalRecord`.
@@ -520,7 +520,7 @@ fn write_signal_record(buffer: &mut [u8], record: &crate::abi::process::ProcessS
     }
 }
 
-// ── timerfd helpers ──────────────────────────────────────────────────────
+// timerfd helpers
 
 use core::sync::atomic::Ordering as AtomicOrdering;
 
@@ -573,7 +573,7 @@ pub(super) fn timerfd_readable(state: &Arc<super::types::TimerFdState>) -> Resul
     Ok(state.expirations.load(AtomicOrdering::Acquire) > 0)
 }
 
-// ── mqueue helpers ─────────────────────────────────────────────────────────
+// mqueue helpers
 
 /// Read from a message queue: dequeue one message.
 pub(super) fn mqueue_read(
@@ -677,7 +677,7 @@ pub(super) fn mqueue_write(
     }
 }
 
-// ── eventfd tests ──────────────────────────────────────────────────────────
+// eventfd tests
 
 #[cfg(test)]
 mod tests {

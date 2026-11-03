@@ -21,7 +21,7 @@ fn require_privileged_caller() -> Result<()> {
     })
 }
 
-// ── AddUser (slot 89) ─────────────────────────────────────────────────────
+// AddUser (slot 89)
 
 pub(super) fn add_user(context: &mut SyscallContext) -> Result<super::SyscallDispatch> {
     require_privileged_caller()?;
@@ -72,7 +72,7 @@ pub(super) fn add_user(context: &mut SyscallContext) -> Result<super::SyscallDis
     Ok(super::SyscallDispatch::complete(0))
 }
 
-// ── RemoveUser (slot 90) ──────────────────────────────────────────────────
+// RemoveUser (slot 90)
 
 pub(super) fn remove_user(context: &mut SyscallContext) -> Result<super::SyscallDispatch> {
     require_privileged_caller()?;
@@ -95,7 +95,7 @@ pub(super) fn remove_user(context: &mut SyscallContext) -> Result<super::Syscall
     Ok(super::SyscallDispatch::complete(0))
 }
 
-// ── SetUserPassword (slot 91) ─────────────────────────────────────────────
+// SetUserPassword (slot 91)
 
 pub(super) fn set_user_password(context: &mut SyscallContext) -> Result<super::SyscallDispatch> {
     require_privileged_caller()?;

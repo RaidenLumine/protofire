@@ -24,7 +24,7 @@ pub struct Ext4FsVolume {
     fs: Arc<Ext4Fs>,
 }
 
-// ─── internal filesystem state ──────────────────────────────────────────────
+// internal filesystem state
 
 /// Internal ext2 filesystem state, shared between [`Ext4FsVolume`] and every
 /// [`Ext4VNode`] it hands out.
@@ -47,7 +47,7 @@ pub(crate) struct Ext4Fs {
     pub(crate) checksum_policy: ChecksumPolicy,
 }
 
-// ─── re-exports ─────────────────────────────────────────────────────────────
+// re-exports
 
 // Re-export types, constants, and helpers needed by sibling modules
 // (and tests via `use super::*`).

@@ -31,7 +31,7 @@ pub use aarch64_context::*;
 #[cfg(any(target_arch = "riscv64", test))]
 pub use riscv64_context::*;
 
-// ── Dispatch over the per-architecture thread state ─────────────────────
+// Dispatch over the per-architecture thread state
 //
 // `Thread` holds one state object per architecture, so an operation that
 // touches "the user-runtime state" is one statement per architecture.  They
@@ -43,7 +43,7 @@ use crate::kernel::process::thread::types::ThreadUserRuntimeState;
 use crate::kernel::process::thread::Thread;
 use crate::Result;
 
-// ── The state Thread carries ───────────────────────────────────────────
+// The state Thread carries
 //
 // One object per architecture inside one object here, rather than one field
 // on `Thread` per architecture: the saved context, the handler table and the
@@ -176,7 +176,7 @@ pub(crate) fn restore_user_runtime_state(thread: &Thread, state: ThreadUserRunti
 #[cfg(target_arch = "x86_64")]
 pub use x86_64_context::*;
 
-// ── The user image a thread runs ───────────────────────────────────────
+// The user image a thread runs
 //
 // A thread that was just loaded, forked or exec'd has a user half the
 // architecture owns: the context registers the entry reads, the image the

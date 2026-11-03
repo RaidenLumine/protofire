@@ -27,13 +27,9 @@ use crate::fs::vfs::FileSystem as VfsFileSystem;
 use crate::fs::vfs::NodeKind;
 use crate::Error;
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Byte-level helpers
-// ═══════════════════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Reading a volume
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Open a fixture volume for reading.
 fn open(fixture: &Fixture) -> super::NtfsFs {
@@ -437,9 +433,7 @@ fn a_files_data_reads_through_the_runs_its_record_names() {
     assert_eq!(sub.read(0, &mut buf), Err(Error::NotFound));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Writing, and what a second mount sees
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Mount the same bytes again: a change only a node knows about does not
 /// survive this.
@@ -3714,9 +3708,7 @@ fn a_record_the_mft_grew_for_can_be_given_back() {
     assert_eq!(fs_handle.resolve("/again.txt").expect("resolve").0, RECORDS);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // The fixture volume
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// The shape of a fixture volume: the two boot-sector exponents are what a
 /// real volume varies by, and the two shapes below are the two the arithmetic
@@ -6041,9 +6033,7 @@ fn make_filename_body(name: &str, namespace: u8, flags: u32, parent: u64) -> Vec
     body
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Reparse-point parsing
-// ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn parse_reparse_point_symlink() {
@@ -6060,9 +6050,7 @@ fn parse_reparse_point_dosdevices_prefix() {
     assert_eq!(target.as_deref(), Some("E:\\data"));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // EA parsing
-// ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn parse_ea_entries_empty() {
@@ -6124,9 +6112,7 @@ fn parse_ea_entries_two() {
     assert_eq!(entries[1].value, b"q");
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Namespace-aware filename selection + $STANDARD_INFORMATION
-// ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn filename_parse_namespace_and_dir_flag() {

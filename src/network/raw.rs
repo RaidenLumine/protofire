@@ -14,7 +14,7 @@ use crate::network::internet::ip::IpAddress;
 use crate::Error;
 use crate::Result;
 
-// ─── Raw socket ─────────────────────────────────────────────────────────
+// Raw socket
 
 /// Maximum number of queued packets per raw socket (bound to minimise
 /// memory usage; raw sockets are a privileged operation).
@@ -84,7 +84,7 @@ impl RawSocket {
     }
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

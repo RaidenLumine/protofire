@@ -275,7 +275,7 @@ pub fn multiboot2_memory_regions_at(addr: usize) -> Option<Vec<MemoryRegion>> {
     None
 }
 
-// ── The PVH hand-off ────────────────────────────────────────────────────
+// The PVH hand-off
 //
 // A direct QEMU boot on the PC (`-kernel`, the PVH protocol) hands over a
 // different block through the same entry symbol: Xen's `hvm_start_info`,

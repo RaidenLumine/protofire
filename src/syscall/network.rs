@@ -111,7 +111,7 @@ fn accept_tcp_request(context: &super::SyscallContext) -> Result<usize> {
     Ok(listener_fd)
 }
 
-// ─── UDP syscall handlers ───────────────────────────────────────────────
+// UDP syscall handlers
 
 pub(super) fn bind_udp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (port,) = bind_udp_request(context)?;
@@ -195,7 +195,7 @@ pub(super) fn recv_from_udp(context: &mut super::SyscallContext) -> Result<super
     })
 }
 
-// ─── request validation ─────────────────────────────────────────────────
+// request validation
 
 fn bind_udp_request(context: &super::SyscallContext) -> Result<(u16,)> {
     let port = context.arg(0);
@@ -300,7 +300,7 @@ fn validate_connect_tcp_shape(host_len: usize, port: usize, flags: usize) -> Res
     validate_connect_tcp_args(host_len, port, flags)
 }
 
-// ─── Socket address syscall handlers ────────────────────────────────────
+// Socket address syscall handlers
 
 const SOCKADDR_IN_SIZE: usize = 16; // struct sockaddr_in
 
@@ -382,7 +382,7 @@ pub(super) fn getpeername(context: &mut super::SyscallContext) -> Result<super::
     Ok(super::SyscallDispatch::complete(SOCKADDR_IN_SIZE))
 }
 
-// ─── Raw socket syscall handlers ───────────────────────────────────────
+// Raw socket syscall handlers
 
 /// Create a raw socket bound to the given IP protocol number.
 ///
@@ -505,7 +505,7 @@ pub(super) fn recv_raw_packet(
     })
 }
 
-// ─── resolve_hostname ─────────────────────────────────────────────────────
+// resolve_hostname
 
 const MAX_RESOLVE_HOST_BYTES: usize = 256;
 
@@ -541,7 +541,7 @@ pub(super) fn resolve_hostname(
     Ok(super::SyscallDispatch::complete(addr_u32 as usize))
 }
 
-// ─── setsockopt / getsockopt ──────────────────────────────────────────────
+// setsockopt / getsockopt
 
 /// Syscall 79: Set socket option.
 ///
@@ -651,7 +651,7 @@ fn get_tcp_option(conn: &crate::network::TcpConnection, level: u32, name: u32) -
     }
 }
 
-// ─── DCCP syscall handlers (#157-163) ───────────────────────────────────
+// DCCP syscall handlers (#157-163)
 
 /// Syscall 157: dccp_bind(port, service_code, flags) → fd.
 pub(super) fn dccp_bind(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {

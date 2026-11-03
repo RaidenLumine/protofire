@@ -15,7 +15,7 @@ use crate::network::stack::NetworkStack;
 use crate::Error;
 use crate::Result;
 
-// ─── ARP constants ───
+// ARP constants
 
 /// Hardware type: Ethernet.
 pub const ARP_HTYPE_ETHERNET: u16 = 1;
@@ -51,7 +51,7 @@ const ARP_RETRANSMIT_TICKS: u64 = 33;
 /// to the tick-based timeout path (which returns `TimedOut` regardless).
 const ARP_MAX_SPIN_ITERATIONS: u64 = 1_000_000;
 
-// ─── ARP operation enum ───
+// ARP operation enum
 
 /// ARP operation codes (RFC 826 §1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +131,7 @@ fn build_arp_packet(packet: &ArpPacket) -> Vec<u8> {
     buf
 }
 
-// ─── ARP cache ───
+// ARP cache
 
 struct ArpCacheEntry {
     mac: MacAddress,
@@ -187,7 +187,7 @@ impl ArpCache {
     }
 }
 
-// ─── Resolution ───
+// Resolution
 
 /// Resolve `target_ip` to a MAC address, sending an ARP Request and
 /// busy-waiting for the Reply if it isn't cached.
@@ -283,7 +283,7 @@ fn send_arp_request(stack: &NetworkStack, target_ip: Ipv4Addr) -> Result<()> {
     stack.device().send(&raw)
 }
 
-// ─── Inbound handling ───
+// Inbound handling
 
 /// Process a received ARP packet.
 ///

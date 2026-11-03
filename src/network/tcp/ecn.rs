@@ -47,14 +47,14 @@ impl EcnCodepoint {
     }
 }
 
-// ─── TCP flags for ECN ──────────────────────────────────────────────────────
+// TCP flags for ECN
 
 /// TCP ECE flag (ECN-Echo, bit 6 of flags byte).
 pub const TCP_FLAG_ECE: u8 = 0x40;
 /// TCP CWR flag (Congestion Window Reduced, bit 7 of flags byte).
 pub const TCP_FLAG_CWR: u8 = 0x80;
 
-// ─── Per-connection ECN state ───────────────────────────────────────────────
+// Per-connection ECN state
 
 /// ECN negotiation and reaction state for a single TCP connection.
 #[derive(Debug, Clone, Default)]
@@ -194,7 +194,7 @@ impl EcnState {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

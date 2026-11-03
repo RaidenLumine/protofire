@@ -44,7 +44,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-// ── public result types ──────────────────────────────────────────────
+// public result types
 
 /// The bytes between two payload boundary symbols, plus their addresses.
 pub struct SymbolRange {
@@ -88,7 +88,7 @@ struct DecodeFlags {
     branch_target: Option<usize>,
 }
 
-// ── artifact location ────────────────────────────────────────────────
+// artifact location
 
 static ARTIFACT_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> = OnceLock::new();
 
@@ -145,7 +145,7 @@ fn cross_target_artifact(target: &str) -> Option<PathBuf> {
     executable.is_file().then_some(executable)
 }
 
-// ── ELF section / symbol parsing ─────────────────────────────────────
+// ELF section / symbol parsing
 
 struct ElfSection {
     name: String,
@@ -299,7 +299,7 @@ fn file_offset_for_addr(sections: &[ElfSection], addr: u64) -> Option<u64> {
     None
 }
 
-// ── public inspection entry points ───────────────────────────────────
+// public inspection entry points
 
 /// Return the bytes between two symbols in the payload artifact for `target`.
 pub fn target_symbol_range(
@@ -464,7 +464,7 @@ fn empty_disassembly() -> Option<Disassembly> {
     })
 }
 
-// ── invariants ───────────────────────────────────────────────────────
+// invariants
 
 /// Assert the decoded x86_64 payload stays self-contained and scalar-only.
 pub fn assert_self_contained_and_scalar_only(disassembly: &Disassembly) {
@@ -643,7 +643,7 @@ fn sign_extend(value: i64, bits: u32) -> i64 {
     (value << shift) >> shift
 }
 
-// ── x86-64 length decoding ───────────────────────────────────────────
+// x86-64 length decoding
 
 /// Decode a single x86-64 instruction beginning at `code[ip..]`.
 ///
@@ -730,7 +730,7 @@ fn decode_one(code: &[u8], ip: usize) -> (usize, DecodeFlags) {
     let mut rex_w = false;
     let mut simd_prefix = 0u8; // 0 = none, 1 = 66, 2 = F2, 3 = F3
 
-    // ── legacy + REX prefixes ───────────────────────────────────────
+    // legacy + REX prefixes
     loop {
         let Some(&byte) = code.get(index) else {
             return (index - ip, flags);
@@ -763,7 +763,7 @@ fn decode_one(code: &[u8], ip: usize) -> (usize, DecodeFlags) {
     };
     index += 1;
 
-    // ── two-byte (0F) opcodes ───────────────────────────────────────
+    // two-byte (0F) opcodes
     if opcode == 0x0f {
         let Some(&second) = code.get(index) else {
             return (index - ip, flags);
@@ -803,7 +803,7 @@ fn decode_one(code: &[u8], ip: usize) -> (usize, DecodeFlags) {
         }
     }
 
-    // ── single-byte opcodes ─────────────────────────────────────────
+    // single-byte opcodes
     match opcode {
         // push r64 / pop r64
         0x50..=0x5f => (index - ip, flags),

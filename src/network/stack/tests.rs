@@ -44,7 +44,7 @@ fn make_stack() -> (Arc<MockNetworkDevice>, &'static NetworkStack) {
     (dev, stack)
 }
 
-// ─── Phase 4: full-stack UDP & ICMP integration tests ───
+// Phase 4: full-stack UDP & ICMP integration tests
 
 /// Helper: wrap a payload in IPv4 + Ethernet for inject_rx.
 fn build_ipv4_eth_frame(
@@ -265,7 +265,7 @@ fn slaac_solicits_from_the_tick_path_and_checks_a_formed_address() {
     assert!(stack.global_ip_v6().is_none());
 }
 
-// ─── Receiving from more than one poller ───
+// Receiving from more than one poller
 
 /// The payload every frame in this test carries: one repeated byte, so a
 /// frame assembled from two different receives cannot pass as one.

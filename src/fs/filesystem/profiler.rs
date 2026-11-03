@@ -90,7 +90,7 @@ impl FsProfiler {
         }
     }
 
-    // ─── individual counter incrementers ───
+    // individual counter incrementers
 
     #[inline]
     pub fn inc_lookups(&self) {
@@ -174,7 +174,7 @@ impl FsProfiler {
         let _ = self;
     }
 
-    // ─── tick-based relative timing ───
+    // tick-based relative timing
 
     /// Return a monotonically increasing tick value for relative latency
     /// measurement.  Used with [`record_elapsed`] to accumulate a rough

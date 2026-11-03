@@ -18,7 +18,7 @@ pub const IO_URING_SQE_SIZE: usize = 48;
 /// Size of a single completion-queue entry (CQE) in bytes.
 pub const IO_URING_CQE_SIZE: usize = 16;
 
-// ── Opcodes ──────────────────────────────────────────────────────────
+// Opcodes
 
 /// No-operation (immediate completion with result=0).
 pub const IORING_OP_NOP: u8 = 0;
@@ -31,22 +31,22 @@ pub const IORING_OP_POLL_ADD: u8 = 3;
 /// Timer operation — completes after a tick-based timeout.
 pub const IORING_OP_TIMEOUT: u8 = 4;
 
-// ── Setup flags (IoUringSetup arg1) ──────────────────────────────────
+// Setup flags (IoUringSetup arg1)
 
 /// Enable I/O polling for poll-capable devices (reserved for future use).
 pub const IORING_SETUP_IOPOLL: u32 = 1 << 0;
 
-// ── Enter flags (IoUringEnter arg5) ─────────────────────────────────
+// Enter flags (IoUringEnter arg5)
 
 /// Wait for at least `min_complete` completions before returning.
 pub const IORING_ENTER_GETEVENTS: u32 = 1 << 0;
 
-// ── SQE flags ────────────────────────────────────────────────────────
+// SQE flags
 
 /// Use fixed file table index (reserved — must be 0 for now).
 pub const IORING_SQE_FIXED_FILE: u8 = 1 << 0;
 
-// ── Poll events (IORING_OP_POLL_ADD) ──────────────────────────────────
+// Poll events (IORING_OP_POLL_ADD)
 
 pub const IORING_POLL_IN: u16 = 1 << 0;
 pub const IORING_POLL_OUT: u16 = 1 << 1;

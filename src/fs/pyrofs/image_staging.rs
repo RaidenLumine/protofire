@@ -21,7 +21,7 @@ use super::types::*;
 use super::ImageEntry;
 use super::PyroFs;
 
-// ── Image building ────────────────────────────────────────────────────
+// Image building
 
 impl PyroFs {
     pub fn build_image(label: &str, files: &[ImageEntry<'_>]) -> Result<Vec<u8>> {
@@ -268,7 +268,7 @@ impl PyroFs {
     }
 }
 
-// ── Staging area ──────────────────────────────────────────────────────
+// Staging area
 
 pub struct StagingArea {
     fs: Arc<PyroFs>,

@@ -36,7 +36,7 @@ use crate::Result;
 pub(crate) use crate::arch::machine_devices::virtio_input_mmio as mmio;
 pub use crate::arch::machine_devices::virtio_input_mmio::poll_hardware;
 
-// ─── Driver registration ─────────────────────────────────────────────────
+// Driver registration
 
 struct VirtioInputDriver;
 
@@ -60,7 +60,7 @@ pub fn driver() -> Arc<dyn Driver> {
     Arc::new(VirtioInputDriver)
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

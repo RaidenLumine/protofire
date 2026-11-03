@@ -16,7 +16,7 @@
 //! kernel's `SyscallNumber` enum). They are re-exported below so existing
 //! `SYS_*` references keep resolving.
 
-// ── Syscall numbers ─────────────────────────────────────────────────────
+// Syscall numbers
 //
 // Canonical syscall-number definitions live in
 // `crate::abi::syscall` (the single source of truth shared with
@@ -25,7 +25,7 @@
 
 pub use crate::abi::syscall::*;
 
-// ── Raw syscall entry points ─────────────────────────────────────────────
+// Raw syscall entry points
 //
 // Each environment (kernel, ring3-shell) provides these symbols.  In the
 // kernel the real definitions live in
@@ -137,7 +137,7 @@ fn decode(status: isize) -> Result<usize, isize> {
     }
 }
 
-// ── Higher-level syscall wrappers ───────────────────────────────────────
+// Higher-level syscall wrappers
 
 /// Open a file by path.  Returns fd on success.
 pub fn sys_open(path: &str, flags: usize) -> Result<usize, isize> {
@@ -549,7 +549,7 @@ pub fn sys_exit(code: usize) -> ! {
     }
 }
 
-// ── Network syscall wrappers ──────────────────────────────────────────────
+// Network syscall wrappers
 
 /// Query network subsystem status.
 ///
@@ -801,7 +801,7 @@ pub fn sys_getsockopt(fd: usize, level: u32, name: u32, buf: &mut [u8]) -> Resul
     decode(rc)
 }
 
-// ── Network status flag constants ─────────────────────────────────────────
+// Network status flag constants
 // These MUST match the kernel's abi::net flags.
 
 /// Network subsystem is available.
@@ -866,7 +866,7 @@ pub fn sys_set_signal_handler(
     decode(rc).map(|_| ())
 }
 
-// ── POSIX signal constants ─────────────────────────────────────────────────
+// POSIX signal constants
 
 pub const SIGHUP: usize = 1;
 pub const SIGINT: usize = 2;
@@ -922,7 +922,7 @@ pub struct PollFd {
 pub const POLLIN: u16 = 0x001;
 pub const POLLOUT: u16 = 0x004;
 
-// ── Unix domain (local) sockets ─────────────────────────────────────────────
+// Unix domain (local) sockets
 
 /// Bind a local (Unix domain) socket at the given filesystem path.
 ///
@@ -950,7 +950,7 @@ pub fn sys_accept_local(listener_fd: usize) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── SystV shared memory (shm) ───────────────────────────────────────────────
+// SystV shared memory (shm)
 
 /// Create or open a shared memory segment.
 ///
@@ -1004,7 +1004,7 @@ pub fn network_supports_tcp_stream_transport(flags: u32) -> bool {
             | NETWORK_STATUS_FLAG_READ_TIMEOUTS)
 }
 
-// ── Utility helpers ─────────────────────────────────────────────────────
+// Utility helpers
 
 /// Probe read_dir to discover the required buffer size for a directory.
 /// Returns the total byte count needed, or an error.
@@ -1013,7 +1013,7 @@ pub fn sys_read_dir_probe(path: &str) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── FUSE (Filesystem in Userspace) ───────────────────────────────────────
+// FUSE (Filesystem in Userspace)
 
 /// Mount a FUSE filesystem at the given path.
 ///
@@ -1069,7 +1069,7 @@ pub fn sys_futex(
     decode(rc)
 }
 
-// ── eventfd ──────────────────────────────────────────────────────────────
+// eventfd
 
 /// eventfd flags (kernel ABI encoding; note the kernel's bits are shifted one
 /// relative to Linux — `SEMAPHORE` is bit 0 here, `CLOEXEC` bit 2).
@@ -1090,7 +1090,7 @@ pub fn sys_eventfd(initval: u32, flags: u32) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── signalfd ─────────────────────────────────────────────────────────────
+// signalfd
 
 /// Create a signalfd file descriptor.
 ///
@@ -1104,7 +1104,7 @@ pub fn sys_signalfd(sigset: u64, flags: u32) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── timerfd ──────────────────────────────────────────────────────────────
+// timerfd
 
 /// Create a timerfd file descriptor.
 ///
@@ -1123,7 +1123,7 @@ pub fn sys_timerfd(expiry_delta: u64, interval_ticks: u64, flags: u32) -> Result
     decode(rc)
 }
 
-// ── CPU affinity ─────────────────────────────────────────────────────────
+// CPU affinity
 
 /// Set the calling thread's CPU affinity.
 ///
@@ -1142,7 +1142,7 @@ pub fn sys_sched_getaffinity() -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── Message queues (#112–#117) ──────────────────────────────────────────────
+// Message queues (#112–#117)
 
 /// Open or create a named message queue.
 ///
@@ -1196,7 +1196,7 @@ pub fn sys_mq_unlink(name: &str) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── epoll (#118–#120) ────────────────────────────────────────────────────
+// epoll (#118–#120)
 
 /// epoll_ctl operations.
 pub const EPOLL_CTL_ADD: u32 = 1;
@@ -1246,7 +1246,7 @@ pub fn sys_epoll_wait(epfd: usize, events: &mut [u8], timeout_ticks: u64) -> Res
     decode(rc)
 }
 
-// ── mount / umount (#65, #66) ────────────────────────────────────────
+// mount / umount (#65, #66)
 
 /// Mount a filesystem at the given target path.
 ///
@@ -1270,7 +1270,7 @@ pub fn sys_umount(target: &str) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── TLS connect (#121) ─────────────────────────────────────────────────────
+// TLS connect (#121)
 
 /// Connect to a remote TLS 1.3 server at `host:port`.
 ///
@@ -1291,7 +1291,7 @@ pub fn sys_tls_connect(host: &str, port: u16, flags: usize) -> Result<usize, isi
     decode(rc)
 }
 
-// ─── Packet filter / firewall syscalls (#122–#125) ───────────────────────
+// Packet filter / firewall syscalls (#122–#125)
 
 /// Add a packet filter rule (syscall 122).
 pub fn sys_filter_add_rule(def: *const u8, def_len: usize) -> Result<usize, isize> {
@@ -1317,7 +1317,7 @@ pub fn sys_filter_get_stats(stats: *mut u8, stats_len: usize) -> Result<usize, i
     decode(rc)
 }
 
-// ── io_uring syscalls (#126–#127) ──────────────────────────────────────
+// io_uring syscalls (#126–#127)
 
 /// Create an io_uring async I/O instance (syscall 126).
 ///
@@ -1365,7 +1365,7 @@ pub fn sys_io_uring_enter(
     decode(rc)
 }
 
-// ── ptrace syscall (#128) ─────────────────────────────────────────────
+// ptrace syscall (#128)
 
 /// Process tracing control (syscall 128).
 pub fn sys_ptrace(
@@ -1451,7 +1451,7 @@ pub fn sys_seccomp(
     decode(rc)
 }
 
-// ── POSIX per-process timers (#137–140) ──────────────────────────────────
+// POSIX per-process timers (#137–140)
 
 /// timer_create(clock_id, sevp) → timer_id
 pub fn sys_timer_create(clock_id: u32, _sevp: usize) -> Result<usize, isize> {
@@ -1488,7 +1488,7 @@ pub fn sys_timer_delete(timer_id: u32) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── Audit subsystem (#143–144) ───────────────────────────────────────────
+// Audit subsystem (#143–144)
 
 /// Audit enable-mask bit constants.
 /// These must match `src/kernel/audit/types.rs`.
@@ -1536,7 +1536,7 @@ pub fn sys_audit_read_log(buf: &mut [u8]) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── CPU frequency scaling (#145–149) ─────────────────────────────────────
+// CPU frequency scaling (#145–149)
 
 /// Frequency-scaling governor identifiers (must match the kernel enum).
 pub const GOVERNOR_PERFORMANCE: usize = 0;
@@ -1584,7 +1584,7 @@ pub fn sys_compact_memory() -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── Extended attributes + per-file data-reduction flags (#151-156) ───────
+// Extended attributes + per-file data-reduction flags (#151-156)
 
 /// Set an extended attribute on a file/directory.
 pub fn sys_set_xattr(path: &str, name: &[u8], value: &[u8]) -> Result<usize, isize> {
@@ -1658,7 +1658,7 @@ pub fn sys_get_file_flags(path: &str) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── DCCP transport (#157-163) ────────────────────────────────────────────
+// DCCP transport (#157-163)
 
 /// Flag passed to [`sys_dccp_connect`] when the destination is IPv6.
 pub const NETWORK_DCCP_FLAG_IPV6: usize = 1 << 0;
@@ -1753,7 +1753,7 @@ pub fn sys_dccp_close(fd: usize, flags: usize) -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── IPsec SPD/SAD (#164-168) ─────────────────────────────────────────────
+// IPsec SPD/SAD (#164-168)
 
 /// Add an IPsec security-policy entry.  Returns the policy id.
 pub fn sys_ipsec_add_sp(sp: &crate::abi::ipsec::IpsecSpDef) -> Result<usize, isize> {
@@ -1800,7 +1800,7 @@ pub fn sys_ipsec_get_stats(stats: &mut crate::abi::ipsec::IpsecStats) -> Result<
     decode(rc)
 }
 
-// ── Multicast routing (#169-174) ─────────────────────────────────────────
+// Multicast routing (#169-174)
 
 /// Enable multicast routing.
 pub fn sys_mrt_init() -> Result<usize, isize> {
@@ -1856,7 +1856,7 @@ pub fn sys_mrt_del_mfc(source: [u8; 4], group: [u8; 4]) -> Result<usize, isize> 
     decode(rc)
 }
 
-// ── MAC type enforcement (#175-178) ───────────────────────────────────────
+// MAC type enforcement (#175-178)
 
 /// Enable/disable MAC enforcement and set the default-deny mode.  Returns the
 /// previous `enabled` value.
@@ -1904,7 +1904,7 @@ pub fn sys_mac_get_status(status: &mut crate::abi::mac::MacStatus) -> Result<usi
     decode(rc)
 }
 
-// ── fcntl descriptor control (#179) ────────────────────────────────────────
+// fcntl descriptor control (#179)
 
 /// Generic descriptor control.  `cmd` is one of the `F_*` constants from
 /// `crate::abi::fs`.  Returns the command's result value.
@@ -1923,7 +1923,7 @@ pub fn sys_fcntl_set_pipe_sz(fd: usize, size: usize) -> Result<usize, isize> {
     sys_fcntl(fd, crate::abi::fs::F_SETPIPE_SZ, size)
 }
 
-// ── Global filesystem sync (#180) ──────────────────────────────────────────
+// Global filesystem sync (#180)
 
 /// Flush all mounted filesystems' dirty data to persistent storage.
 pub fn sys_sync() -> Result<usize, isize> {
@@ -1931,7 +1931,7 @@ pub fn sys_sync() -> Result<usize, isize> {
     decode(rc)
 }
 
-// ── VIRGL 3D userspace interface (#181-189) ─────────────────────────────────
+// VIRGL 3D userspace interface (#181-189)
 
 /// Create a VIRGL rendering context.  Returns the context id.
 pub fn sys_gpu_ctx_create(ctx_id: u32) -> Result<usize, isize> {

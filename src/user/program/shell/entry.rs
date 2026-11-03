@@ -12,7 +12,7 @@ use super::history::add_history;
 use super::history::expand_history;
 use super::*;
 
-// ─── Signal handlers ──────────────────────────────────────────────────
+// Signal handlers
 
 /// Ctrl-C handler: send SIGTERM to the foreground job.
 fn shell_ctrl_c_handler() {
@@ -39,7 +39,7 @@ fn shell_ctrl_z_handler() {
     }
 }
 
-// ─── User-mode shell (fd-based I/O) ───────────────────────────────────
+// User-mode shell (fd-based I/O)
 
 /// Return the current process via the scheduler's current-thread binding.
 pub(crate) fn current_process() -> Option<Arc<Process>> {
@@ -170,7 +170,7 @@ pub fn shell_user_main() {
             continue;
         }
 
-        // ── History expansion ──
+        // History expansion
         let line = expand_history(line);
 
         if in_continuation {

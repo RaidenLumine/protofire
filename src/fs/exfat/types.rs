@@ -32,7 +32,7 @@ pub(crate) const DIR_ENTRY_SIZE: usize = 32;
 /// Maximum entries per directory listing (safety cap).
 pub(crate) const MAX_DIR_ENTRIES: usize = 4096;
 
-// ─── directory entry type codes ──────────────────────────────────────────
+// directory entry type codes
 
 /// End of directory marker — no more entries beyond this point.
 pub(crate) const EXFAT_ENTRY_EOD: u8 = 0x00;
@@ -79,7 +79,7 @@ pub(crate) const EXFAT_ATTR_ARCHIVE: u16 = 0x0020;
 /// Boot signature at offset 510–511 (0x55, 0xAA).
 pub(crate) const BOOT_SIGNATURE_OFFSET: usize = 510;
 
-// ─── boot region layout ──────────────────────────────────────────────────
+// boot region layout
 
 /// Number of sectors in the Main (and Backup) Boot Region.
 /// Sectors 0–11: 1 boot + 8 extended + 1 OEM params + 1 checksum + 1 reserved
@@ -108,7 +108,7 @@ pub(crate) const B_CHECKSUM_OFFSET: usize = 0x1FC; // u32 LE — within the chec
 #[allow(dead_code)]
 pub(crate) const VOLUME_FLAG_DIRTY: u16 = 0x0002;
 
-// ─── file entry field offsets (type 0x85) ────────────────────────────────
+// file entry field offsets (type 0x85)
 
 pub(crate) const F_ATTR: usize = 4; // u16 LE
 #[allow(dead_code)]
@@ -118,7 +118,7 @@ pub(crate) const F_MODIFY_TIME: usize = 12; // u32 LE
 #[allow(dead_code)]
 pub(crate) const F_ACCESS_TIME: usize = 16; // u32 LE
 
-// ─── stream extension field offsets (type 0xC0) ─────────────────────────
+// stream extension field offsets (type 0xC0)
 
 /// Flags byte within the stream extension entry.
 pub(crate) const S_FLAGS: usize = 1;
@@ -133,7 +133,7 @@ pub(crate) const S_DATA_LEN: usize = 24; // u32 LE (low), high implied by ValidD
 #[allow(dead_code)]
 pub(crate) const S_VALID_DATA_LEN_HI: usize = 28; // u32 LE
 
-// ─── file name extension field offsets (type 0xC1) ──────────────────────
+// file name extension field offsets (type 0xC1)
 
 /// GeneralPurposeFlag at offset 1 (bit 0 = alloc possible, bit 1 = no fat
 /// chain). Each file name extension holds up to 15 UTF-16LE code units (30

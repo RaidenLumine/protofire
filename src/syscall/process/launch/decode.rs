@@ -27,7 +27,7 @@ use super::MAX_OVERRIDE_BUDGET_BYTES;
 use super::MAX_OVERRIDE_STRING_BYTES;
 use super::MAX_WORKING_DIR_BYTES;
 
-// ── Limits & profile types ────────────────────────────────────────────
+// Limits & profile types
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct StringListLimits {
@@ -106,7 +106,7 @@ impl LaunchDecodeProfile {
     }
 }
 
-// ── Constant limit/profile instances ──────────────────────────────────
+// Constant limit/profile instances
 
 const ARGUMENT_STRING_LIST_LIMITS: StringListLimits = StringListLimits {
     max_entries: MAX_ARGUMENT_OVERRIDE_ENTRIES,
@@ -152,7 +152,7 @@ pub(super) const EXEC_LAUNCH_DECODE_PROFILE: LaunchDecodeProfile = LaunchDecodeP
     limits: EXEC_LAUNCH_DECODE_LIMITS,
 };
 
-// ── Decoded launch options ────────────────────────────────────────────
+// Decoded launch options
 
 #[derive(Debug, Clone)]
 pub(super) struct DecodedLaunchOptions {
@@ -160,7 +160,7 @@ pub(super) struct DecodedLaunchOptions {
     pub(super) overrides: SpawnProcessOverrides,
 }
 
-// ── Override specs ────────────────────────────────────────────────────
+// Override specs
 
 #[derive(Debug, Clone)]
 pub(super) struct LaunchOverrideSpecs {
@@ -359,7 +359,7 @@ impl WorkingDirOverrideSpec {
     }
 }
 
-// ── Decode helpers ────────────────────────────────────────────────────
+// Decode helpers
 
 fn decoded_override_budget_bytes(overrides: &SpawnProcessOverrides) -> Result<usize> {
     let mut used_budget = 0usize;

@@ -24,7 +24,7 @@
 
 use alloc::vec::Vec;
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// Constants
 
 /// One backoff slot in ticks.
 pub const SLOT_TICKS: u32 = 1;
@@ -50,7 +50,7 @@ pub const NAV_DATA_TICKS: u32 = 8;
 /// NAV duration set by an ACK (ticks).
 pub const NAV_ACK_TICKS: u32 = 4;
 
-// ── Frame kinds and events ─────────────────────────────────────────────────
+// Frame kinds and events
 
 /// The kinds of frame that appear on the medium.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +80,7 @@ pub enum ExchangeEvent {
     Deferred,
 }
 
-// ── Exchange state machine ─────────────────────────────────────────────────
+// Exchange state machine
 
 /// The phase of the RTS/CTS/DATA/ACK handshake a station is in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,7 +103,7 @@ pub enum ExchangeState {
     Deferring,
 }
 
-// ── Shared medium ──────────────────────────────────────────────────────────
+// Shared medium
 
 /// The shared wireless medium: NAV, the current transmitter, and a record
 /// of the last frame broadcast (so a test harness can "overhear" it).
@@ -184,7 +184,7 @@ impl Bus {
     }
 }
 
-// ── Station ────────────────────────────────────────────────────────────────
+// Station
 
 /// A CSMA/CA station running the 802.11 DCF exchange state machine.
 #[derive(Debug, Clone)]
@@ -328,7 +328,7 @@ impl Station {
         }
     }
 
-    // ── internal helpers ──────────────────────────────────────────────
+    // internal helpers
 
     /// Pick a deterministic backoff slot and enter the Backoff state.
     fn enter_backoff(&mut self) {
@@ -411,7 +411,7 @@ impl Station {
     }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

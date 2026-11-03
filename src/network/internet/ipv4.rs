@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use crate::Error;
 use crate::Result;
 
-// ─── IPv4 address ───
+// IPv4 address
 
 /// IPv4 address represented as four octets in network byte order.
 pub type Ipv4Addr = [u8; 4];
@@ -24,7 +24,7 @@ pub const IPV4_DEFAULT_TTL: u8 = 64;
 /// IP version + IHL field for a standard 20-byte header.
 const IPV4_VERSION_IHL: u8 = 0x45; // version=4, IHL=5 (5 × 4 = 20 bytes)
 
-// ─── Protocol numbers ───
+// Protocol numbers
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IpProtocol {
@@ -69,11 +69,11 @@ impl IpProtocol {
     }
 }
 
-// ─── Flags / fragment offset ───
+// Flags / fragment offset
 
 const IP_FLAG_DF: u16 = 0x4000; // Don't Fragment
 
-// ─── IPv4 header ───
+// IPv4 header
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ipv4Header {
@@ -99,7 +99,7 @@ impl Ipv4Header {
     }
 }
 
-// ─── IPv4 packet ───
+// IPv4 packet
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ipv4Packet {
@@ -107,7 +107,7 @@ pub struct Ipv4Packet {
     pub payload: Vec<u8>,
 }
 
-// ─── Checksum ───
+// Checksum
 
 /// Add `data` to a running RFC 791 internet checksum accumulator.
 ///
@@ -217,7 +217,7 @@ pub fn pseudo_header_checksum_input(
     buf
 }
 
-// ─── Parse / build ───
+// Parse / build
 
 /// Parse an IPv4 packet from a byte slice.
 ///
@@ -331,7 +331,7 @@ pub fn build_packet(header: &Ipv4Header, payload: &[u8]) -> Vec<u8> {
     buf
 }
 
-// ─── Lenient header parse / multicast MAC mapping ───
+// Lenient header parse / multicast MAC mapping
 
 /// Parse just the IPv4 header, without validating the checksum or the total
 /// length against the available data.
@@ -382,7 +382,7 @@ pub fn multicast_mac_from_ipv4(addr: Ipv4Addr) -> [u8; 6] {
     [0x01, 0x00, 0x5E, addr[1] & 0x7F, addr[2], addr[3]]
 }
 
-// ─── tests ───
+// tests
 
 #[cfg(test)]
 mod tests {

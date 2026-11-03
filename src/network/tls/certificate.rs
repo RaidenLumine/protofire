@@ -24,7 +24,7 @@ const OID_ECDSA_SHA384: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03
 /// OID for SHA-256 with RSA (1.2.840.113549.1.1.11).
 const OID_SHA256_RSA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B];
 
-// ── ASN.1 tag constants ────────────────────────────────────────────────────
+// ASN.1 tag constants
 
 const TAG_BOOLEAN: u8 = 0x01;
 const TAG_INTEGER: u8 = 0x02;
@@ -44,7 +44,7 @@ const TAG_GENERALIZED_TIME: u8 = 0x18;
 const TAG_SEQUENCE: u8 = 0x30;
 const TAG_SET: u8 = 0x31;
 
-// ── Public types ───────────────────────────────────────────────────────────
+// Public types
 
 /// A parsed X.509 v3 certificate.
 #[derive(Debug, Clone)]
@@ -112,7 +112,7 @@ pub struct Validity {
     pub not_after: String,
 }
 
-// ── DER reader ─────────────────────────────────────────────────────────────
+// DER reader
 
 /// Lightweight cursor for reading DER-encoded bytes.
 struct DerReader<'a> {
@@ -204,13 +204,13 @@ impl<'a> DerReader<'a> {
     }
 }
 
-// ── OID matching ──────────────────────────────────────────────────────────
+// OID matching
 
 fn oid_eq(a: &[u8], b: &[u8]) -> bool {
     a == b
 }
 
-// ── Name parsing ───────────────────────────────────────────────────────────
+// Name parsing
 
 /// Parse an X.500 Distinguished Name (SEQUENCE OF SET OF
 /// AttributeTypeAndValue).
@@ -277,7 +277,7 @@ fn parse_x509_name(der: &[u8]) -> X509Name {
     name
 }
 
-// ── Certificate parsing ────────────────────────────────────────────────────
+// Certificate parsing
 
 /// Parse a DER-encoded X.509 v3 certificate.
 ///
@@ -439,7 +439,7 @@ pub fn parse_certificate_chain(der_list: &[u8]) -> Vec<X509Certificate> {
     certs
 }
 
-// ── Convenience accessors ──────────────────────────────────────────────────
+// Convenience accessors
 
 impl X509Certificate {
     /// Parse and return the issuer name.
@@ -638,7 +638,7 @@ fn search_extension_san(extensions: &[u8], oid: &[u8]) -> Vec<String> {
     names
 }
 
-// ── Certificate chain verification ─────────────────────────────────────────
+// Certificate chain verification
 
 /// Verification result for a certificate chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1011,7 +1011,7 @@ fn name_matches_wildcard(pattern: &str, hostname: &str) -> bool {
     pattern.eq_ignore_ascii_case(hostname)
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {
@@ -1303,7 +1303,7 @@ mod tests {
         );
     }
 
-    // ── Chain verification with OpenSSL-generated signed fixtures ─────────
+    // Chain verification with OpenSSL-generated signed fixtures
 
     #[test]
     fn verify_chain_signed_by_trusted_root() {
@@ -1402,7 +1402,7 @@ mod tests {
         );
     }
 
-    // ── Certificate validity dates ─────────────────────────────────────────
+    // Certificate validity dates
 
     #[test]
     fn asn1_time_to_unix_known_values() {

@@ -20,7 +20,7 @@ use crate::memory::paging::PagePermissions;
 use crate::Error;
 use crate::Result;
 
-// ─── Segment descriptor ────────────────────────────────────────────────
+// Segment descriptor
 
 /// A shared memory segment backed by a set of physical frames.
 pub struct SharedMemorySegment {
@@ -188,7 +188,7 @@ impl Drop for SharedMemorySegment {
     }
 }
 
-// ─── Per-process attach tracking ──────────────────────────────────────
+// Per-process attach tracking
 
 /// Tracks one shared memory segment attached to a process.
 ///
@@ -200,7 +200,7 @@ pub(crate) struct ProcessShmAttachment {
     pub(crate) virtual_address: usize,
 }
 
-// ─── Global segment registry ──────────────────────────────────────────
+// Global segment registry
 
 /// Global registry of all shared memory segments.
 pub struct ShmRegistry {
@@ -252,7 +252,7 @@ impl ShmRegistry {
 /// Global shm registry, guarded by a mutex.
 static SHM_REGISTRY: Mutex<ShmRegistry> = Mutex::new(ShmRegistry::new());
 
-// ─── Public API ───────────────────────────────────────────────────────
+// Public API
 
 /// shmget: create or find a shared memory segment.
 pub fn shmget(
@@ -440,7 +440,7 @@ pub(crate) fn detach_all_for_process(process: &Process) {
     process.clear_shm_attachments();
 }
 
-// ─── Address allocation helpers ───────────────────────────────────────
+// Address allocation helpers
 
 /// Pick a virtual address for a shared memory mapping.
 ///

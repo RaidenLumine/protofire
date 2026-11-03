@@ -62,7 +62,7 @@ pub(crate) fn read_inode_raw(
     Ok(read_ext4_inode(raw, inode_size as u16))
 }
 
-// ─── Ext4Fs implementation ────────────────────────────────────────────────
+// Ext4Fs implementation
 
 impl Ext4Fs {
     pub(crate) fn open(device: Arc<dyn BlockDevice>) -> Result<Self> {
@@ -547,7 +547,7 @@ impl Ext4Fs {
         Ok(out)
     }
 
-    // ─── extent tree write-helpers ───────────────────────────────────────
+    // extent tree write-helpers
 
     /// Initialise the `i_block` area with an empty extent tree header,
     /// returning (block, block_high, flags) suitable for a new extent inode.
@@ -968,7 +968,7 @@ impl Ext4Fs {
         )
     }
 
-    // ─── write helpers ──────────────────────────────────────────────────
+    // write helpers
 
     /// Check that the volume is writable.
     pub(crate) fn check_writable(&self) -> Result<()> {

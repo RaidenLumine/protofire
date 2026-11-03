@@ -22,7 +22,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// ── Error type ───────────────────────────────────────────────────────────────
+// Error type
 
 /// Lightweight config parse error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +45,7 @@ impl ConfigError {
     }
 }
 
-// ── Parsed config representation ─────────────────────────────────────────────
+// Parsed config representation
 
 /// A single key-value pair from a TOML-like config file.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,7 +135,7 @@ impl ConfigDocument {
     }
 }
 
-// ── Section helpers (shared lookup logic for sections and array elements) ───
+// Section helpers (shared lookup logic for sections and array elements)
 
 /// Trait for anything that holds key-value pairs.
 pub trait ConfigEntryLookup {
@@ -210,7 +210,7 @@ impl ConfigEntryLookup for ConfigArrayElement {
     }
 }
 
-// ── Parser ───────────────────────────────────────────────────────────────────
+// Parser
 
 /// Parse a TOML-subset config document from text.
 pub fn parse_config(text: &str) -> Result<ConfigDocument, ConfigError> {
@@ -249,7 +249,7 @@ pub fn parse_config(text: &str) -> Result<ConfigDocument, ConfigError> {
             continue;
         }
 
-        // ── Section headers ──────────────────────────────────────────
+        // Section headers
         if line.starts_with("[[") && line.ends_with("]]") {
             // Array-of-tables: [[name]]
             flush_current(&mut current_section, &mut current_entries, &mut doc);
@@ -288,7 +288,7 @@ pub fn parse_config(text: &str) -> Result<ConfigDocument, ConfigError> {
             return Err(ConfigError::MalformedSection);
         }
 
-        // ── Key = value ─────────────────────────────────────────────
+        // Key = value
         let Some((key, raw_value)) = line.split_once('=') else {
             // Lines without '=' inside a section/array element are
             // silently skipped (could be blank after comment strip).
@@ -358,7 +358,7 @@ fn parse_value(raw: &str) -> Result<ConfigValue, ConfigError> {
     Ok(ConfigValue::String(String::from(raw)))
 }
 
-// ── String literal parsing (reuses metadata.rs patterns) ────────────────────
+// String literal parsing (reuses metadata.rs patterns)
 
 fn parse_string_literal(value: &str) -> Result<String, ConfigError> {
     let (parsed, rest) = parse_string_literal_prefix(value)?;
@@ -456,7 +456,7 @@ fn parse_string_literal_prefix(value: &str) -> Result<(String, &str), ConfigErro
     Err(ConfigError::InvalidValue)
 }
 
-// ── Comment stripping ────────────────────────────────────────────────────────
+// Comment stripping
 
 fn strip_line_comment(line: &str) -> &str {
     let mut in_string = false;
@@ -484,7 +484,7 @@ fn strip_line_comment(line: &str) -> &str {
     line
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

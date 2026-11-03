@@ -43,7 +43,7 @@ static ASID_BITMAP_STORE: AsidBitmapStore = AsidBitmapStore([0u64; ASID_BITMAP_W
 /// bitmap is empty.
 static NEXT_ASID: AtomicU64 = AtomicU64::new(1);
 
-// ── Bitmap access helper ────────────────────────────────────────────────
+// Bitmap access helper
 
 /// Return a reference to the `word_idx`-th atomic word in the free bitmap.
 #[inline]
@@ -54,7 +54,7 @@ fn bitmap_word(word_idx: usize) -> &'static AtomicU64 {
     unsafe { &*(&ASID_BITMAP_STORE.0[word_idx] as *const u64 as *const AtomicU64) }
 }
 
-// ── Public API ──────────────────────────────────────────────────────────
+// Public API
 
 /// Initialise the ASID allocator. Called once during early boot.
 ///

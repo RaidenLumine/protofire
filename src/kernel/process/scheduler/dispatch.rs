@@ -176,7 +176,7 @@ impl Scheduler {
         }
     }
 
-    // ── SMP work stealing ─────────────────────────────────────────────────
+    // SMP work stealing
     //
     // When a CPU's ready queues are empty, it steals threads from the
     // busiest online CPU to balance load across cores.

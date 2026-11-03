@@ -186,7 +186,7 @@ impl BootReport {
             .collect()
     }
 
-    // ── Global access ──
+    // Global access
 
     pub fn install_global(report: BootReport) {
         let mut slot = BOOT_REPORT.lock();

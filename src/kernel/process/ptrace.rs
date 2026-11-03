@@ -20,8 +20,7 @@ use crate::kernel::process::Thread;
 use crate::Error;
 use crate::Result;
 
-// ── Public API
-// ────────────────────────────────────────────────────────────────
+// Public API
 
 /// PTRACE_TRACEME: mark the calling process as traceable by its parent.
 ///
@@ -229,8 +228,7 @@ pub fn ptrace_get_event_msg(
     Ok(())
 }
 
-// ── Syscall hooks (called from dispatch_with_action)
-// ──────────────────────────
+// Syscall hooks (called from dispatch_with_action)
 
 /// Called AFTER a syscall handler completes, just before returning to user
 /// mode.
@@ -273,8 +271,7 @@ pub fn notify_syscall_exit(
     false
 }
 
-// ── Helpers
-// ───────────────────────────────────────────────────────────────────
+// Helpers
 
 /// Look up a process by PID from the global scheduler.
 fn find_process(pid: ProcessId) -> Result<Arc<Process>> {
@@ -329,4 +326,4 @@ fn resume_tracee(pid: ProcessId) -> Result<()> {
     Ok(())
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// Tests

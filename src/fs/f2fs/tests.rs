@@ -101,7 +101,7 @@ fn inode_block(inode: &F2fsInode) -> Vec<u8> {
 fn build_test_image() -> Vec<u8> {
     let mut image = vec![0u8; IMAGE_BLOCKS as usize * F2FS_BLOCK_SIZE];
 
-    // ── Superblock (block 0) ─────────────────────────────────────────
+    // Superblock (block 0)
     let sb = F2fsSuperblock {
         magic: F2FS_MAGIC,
         major_ver: 1,
@@ -138,7 +138,7 @@ fn build_test_image() -> Vec<u8> {
         put_block(&mut image, 0, &block);
     }
 
-    // ── Checkpoints (blocks 1 and 2) ─────────────────────────────────
+    // Checkpoints (blocks 1 and 2)
     let cp_winner = F2fsCheckpoint {
         check_ver: 1,
         nat_ver: 1,
@@ -166,7 +166,7 @@ fn build_test_image() -> Vec<u8> {
         put_block(&mut image, CP1_BLOCK, &block);
     }
 
-    // ── SIT (block 3) ────────────────────────────────────────────────
+    // SIT (block 3)
     {
         let mut block = vec![0u8; F2FS_BLOCK_SIZE];
         let mut seg0 = F2fsSitEntry {
@@ -183,7 +183,7 @@ fn build_test_image() -> Vec<u8> {
         put_block(&mut image, SIT_BLOCK, &block);
     }
 
-    // ── NAT (block 4): nid3 → root inode, nid4 → hello.txt inode ─────
+    // NAT (block 4): nid3 → root inode, nid4 → hello.txt inode
     {
         let mut block = vec![0u8; F2FS_BLOCK_SIZE];
         let root_entry = F2fsNatEntry {
@@ -199,9 +199,9 @@ fn build_test_image() -> Vec<u8> {
         put_block(&mut image, NAT_BLOCK, &block);
     }
 
-    // ── SSA (block 5): unused in v1, remains zeroed ──────────────────
+    // SSA (block 5): unused in v1, remains zeroed
 
-    // ── Root inode (nid 3, block 6) ──────────────────────────────────
+    // Root inode (nid 3, block 6)
     {
         let mut root = empty_inode(F2FS_S_IFDIR | 0o755);
         root.i_links = 2;
@@ -211,14 +211,14 @@ fn build_test_image() -> Vec<u8> {
         put_block(&mut image, ROOT_INODE_BLOCK, &inode_block(&root));
     }
 
-    // ── Root directory data (block 7): the "hello.txt" entry ─────────
+    // Root directory data (block 7): the "hello.txt" entry
     {
         let mut block = vec![0u8; F2FS_BLOCK_SIZE];
         write_f2fs_dir_entry(HELLO_NID, "hello.txt", F2FS_FT_REG_FILE, 0, &mut block);
         put_block(&mut image, ROOT_DIR_DATA_BLOCK, &block);
     }
 
-    // ── hello.txt inode (nid 4, block 8) ─────────────────────────────
+    // hello.txt inode (nid 4, block 8)
     {
         let mut file = empty_inode(F2FS_S_IFREG | 0o644);
         file.i_size = HELLO.len() as u64;
@@ -227,7 +227,7 @@ fn build_test_image() -> Vec<u8> {
         put_block(&mut image, HELLO_INODE_BLOCK, &inode_block(&file));
     }
 
-    // ── hello.txt data (block 9) ─────────────────────────────────────
+    // hello.txt data (block 9)
     {
         let start = HELLO_DATA_BLOCK as usize * F2FS_BLOCK_SIZE;
         image[start..start + HELLO.len()].copy_from_slice(HELLO);
@@ -240,7 +240,7 @@ fn open_volume(device: Arc<dyn BlockDevice>) -> F2fsVolume {
     F2fsVolume::open(device).expect("open f2fs volume")
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────
+// Tests
 
 #[test]
 fn volume_opens_with_correct_name() {

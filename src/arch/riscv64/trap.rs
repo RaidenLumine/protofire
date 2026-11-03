@@ -29,7 +29,7 @@ use crate::syscall::{self};
 const RISCV64_TRAP_STUBS: usize = 17;
 const _: () = assert!(crate::kernel::smp::MAX_CPUS == RISCV64_TRAP_STUBS);
 
-// ── RISC-V exception / interrupt constants ──
+// RISC-V exception / interrupt constants
 
 // scause exception codes (top bit = 0)
 const EXCEPTION_INSTRUCTION_ADDRESS_MISALIGNED: u64 = 0;
@@ -62,7 +62,7 @@ const VECTOR_SUPERVISOR_ECALL: u8 = EXCEPTION_SUPERVISOR_ECALL as u8;
 const SSTATUS_SPP_MASK: u64 = 1 << 8;
 const SSTATUS_SPP_USER: u64 = 0; // SPP = 0 means came from U-mode
 
-// ── Trap frame ──
+// Trap frame
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,7 +205,7 @@ pub fn interrupt_code(frame: &TrapFrame) -> u64 {
     frame.scause & 0x7f
 }
 
-// ── Main trap dispatch ──
+// Main trap dispatch
 
 #[no_mangle]
 extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
@@ -260,7 +260,7 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
         return;
     }
 
-    // ── Page fault recovery (demand-paging / CoW) ──
+    // Page fault recovery (demand-paging / CoW)
     if let Some(mut memory) = crate::memory::global_mut() {
         match code {
             EXCEPTION_INSTRUCTION_PAGE_FAULT
@@ -269,7 +269,7 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
                 let fault_address = frame.stval as usize;
                 let is_write = code == EXCEPTION_STORE_PAGE_FAULT;
 
-                // ── fault profiler: page fault type counters ──
+                // fault profiler: page fault type counters
                 memory.fault_profiler.inc_faults_total();
                 memory.fault_profiler.inc_page_faults_total();
                 if entered_from_user {
@@ -287,7 +287,7 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
         }
     }
 
-    // ── User exception delivery ──
+    // User exception delivery
     //
     // Everything above is the kernel's own answer to the fault — demand-paging
     // it can resolve, a syscall it recognises.  What is left, for a fault that
@@ -301,7 +301,7 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
         return;
     }
 
-    // ── fault profiler: unhandled trap fatal ──
+    // fault profiler: unhandled trap fatal
     if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
@@ -410,7 +410,7 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
     }
 }
 
-// ── User frame validation ──
+// User frame validation
 
 fn validate_user_entry_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool) {
     validate_user_frame_or_terminate(frame, entered_from_user, "entry");
@@ -579,7 +579,7 @@ fn deliver_user_exception(frame: &mut TrapFrame, code: u64) -> bool {
         Some(frame.stval as usize),
     ) {
         Ok(true) => {
-            // ── fault profiler: delivered to user handler ──
+            // fault profiler: delivered to user handler
             if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_delivered_to_handler();
             }
@@ -593,7 +593,7 @@ fn deliver_user_exception(frame: &mut TrapFrame, code: u64) -> bool {
             true
         }
         Ok(false) => {
-            // ── fault profiler: no user handler ──
+            // fault profiler: no user handler
             if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_no_handler();
             }
@@ -633,7 +633,7 @@ fn riscv64_exception_name(code: u64) -> &'static str {
     }
 }
 
-// ── Interrupt handling ──
+// Interrupt handling
 
 fn handle_interrupt(frame: &mut TrapFrame) {
     let code = interrupt_code(frame);
@@ -747,7 +747,7 @@ fn handle_interrupt(frame: &mut TrapFrame) {
     }
 }
 
-// ── Syscall handling ──
+// Syscall handling
 
 /// Handle a non-maskable interrupt (machine-level trap).
 ///
@@ -924,7 +924,7 @@ fn advance_past_idle_wfi(frame: &mut TrapFrame) {
     }
 }
 
-// ── Async signal delivery (preemptive) ──
+// Async signal delivery (preemptive)
 
 /// The most user stack a signal frame may span: the frame itself, plus the
 /// alignment gap the frame base leaves below the interrupted SP.
@@ -975,7 +975,7 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     // Consume the signal.
     let _ = process.take_pending_signal();
 
-    // ── Build the signal frame on the user stack ────────────────────
+    // Build the signal frame on the user stack
     //
     // Stack layout (addresses descending, RISC-V stack grows down):
     //
@@ -1009,7 +1009,7 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
         return;
     }
 
-    // ── SA_RESTART ─────────────────────────────────────────────────
+    // SA_RESTART
     // On RISC-V an async signal is only ever delivered on an interrupt
     // frame returning to user mode, and the interrupted SEPC there is
     // never an *executed* ecall: the ecall traps synchronously, so the
@@ -1046,7 +1046,7 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
         });
     }
 
-    // ── Rewrite TrapFrame for handler entry ────────────────────────
+    // Rewrite TrapFrame for handler entry
     frame.sepc = handler_addr;
     frame.stack_pointer = signal_frame_base;
     frame.a0 = signal_num as u64; // a0 = first argument (signal number)
@@ -1069,7 +1069,7 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     frame.t6 = 0;
 }
 
-// ── Fault records ──
+// Fault records
 
 fn push_fault_record_from_trap(frame: &TrapFrame) {
     if let Some(scheduler) = crate::kernel::process::Scheduler::global() {
@@ -1111,7 +1111,7 @@ fn log_user_exception_termination(frame: &TrapFrame, exception_name: &str) {
     );
 }
 
-// ── Exception classification helpers (shared with thread.rs) ──
+// Exception classification helpers (shared with thread.rs)
 
 /// Map an scause exception code to a human-readable name.
 pub fn exception_name(code: u64) -> &'static str {

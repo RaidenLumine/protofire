@@ -8,7 +8,7 @@ use core::mem::offset_of;
 use crate::kernel::process::thread::RiscV64UserThreadContext;
 use crate::kernel::process::Context;
 
-// ── Context switch assembly ──
+// Context switch assembly
 //
 // The Context struct layout:
 //   offset 0:   instruction_pointer (usize)

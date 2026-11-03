@@ -110,7 +110,7 @@ impl KernelPageTableSpec {
             spec.add_firmware_identity_pages(base, size)?;
         }
 
-        // ── Detect 1 GiB gigantic-page candidates (PDPT level) ──
+        // Detect 1 GiB gigantic-page candidates (PDPT level)
         // A 1 GiB block is eligible when a single contiguous region covers
         // its entire range with uniform permissions.  The PDPTE is stored
         // with the PS bit (1 << 7), letting the CPU skip both the PD and PT
@@ -129,7 +129,7 @@ impl KernelPageTableSpec {
             }
         }
 
-        // ── Detect 2 MiB huge-page candidates ──
+        // Detect 2 MiB huge-page candidates
         // A window is eligible when a single contiguous region covers its
         // entire 2 MiB range with uniform permissions and it is not already
         // backed by a 1 GiB gigantic page.  The PDE is stored with the PS
@@ -150,7 +150,7 @@ impl KernelPageTableSpec {
             }
         }
 
-        // ── Fill normal (4 KiB) PT entries, skipping huge-page windows ──
+        // Fill normal (4 KiB) PT entries, skipping huge-page windows
         for window in &mut spec.windows {
             if huge_pdpt_entries.contains_key(&page_directory_pointer_index(window.base_address)) {
                 // Backed by a 1 GiB gigantic page — no PD/PT levels needed.

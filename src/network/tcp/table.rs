@@ -405,7 +405,7 @@ pub fn listener_has_pending(table: &TcpConnectionTable, port: u16) -> bool {
         .is_some_and(|l| !l.backlog.is_empty())
 }
 
-// ─── Socket options ─────────────────────────────────────────────────────────
+// Socket options
 
 /// Apply a socket option to a TCP connection.
 pub fn set_option(

@@ -44,7 +44,7 @@ pub(crate) mod lifecycle;
 mod tests;
 pub(crate) mod user_runtime;
 
-// ── Thread struct fields ────────────────────────────────────────────────
+// Thread struct fields
 
 use kernel_stack::KernelStack;
 
@@ -56,7 +56,7 @@ use kernel_stack::KernelStack;
 //   X86_64UserExceptionHandlerRegistration, X86_64UserThreadContext (via pub
 // use arch_x86_64::)
 
-// ── Thread struct ───────────────────────────────────────────────────────
+// Thread struct
 
 pub struct Thread {
     tid: ThreadId,
@@ -105,7 +105,7 @@ pub struct Thread {
     boosted: AtomicBool,
 }
 
-// ── Public re-exports ───────────────────────────────────────────────────
+// Public re-exports
 
 pub use constants::ThreadId;
 pub use types::ThreadPriority;
@@ -117,7 +117,7 @@ pub use types::ThreadWaitOutcome;
 pub use types::UserThreadStart;
 pub use types::THREAD_PRIORITY_COUNT;
 
-// ── crate-internal re-exports ───────────────────────────────────────────
+// crate-internal re-exports
 
 #[allow(unused_imports)]
 pub(crate) use lifecycle::*;

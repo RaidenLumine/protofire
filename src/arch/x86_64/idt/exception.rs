@@ -66,7 +66,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
             crate::memory::global_mut()
         };
         if let Some(mut memory) = memory_manager {
-            // ── fault profiler: page fault type counters ──
+            // fault profiler: page fault type counters
             memory.fault_profiler.inc_faults_total();
             memory.fault_profiler.inc_page_faults_total();
             if context.entered_from_user_mode() {
@@ -80,7 +80,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
                 memory.fault_profiler.inc_page_faults_not_present();
             }
 
-            // ── demand-paging / CoW resolution ──
+            // demand-paging / CoW resolution
             // Attempt to resolve before spending cycles on diagnostics.
             // When the faulting page is registered as DemandPaged or Cow in
             // the software PageTable, this transparently allocates or copies.
@@ -297,7 +297,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
             );
         }
     } else {
-        // ── Ptrace single-step (#DB) from user mode ──
+        // Ptrace single-step (#DB) from user mode
         // Intercept before logging so a traced process being single-stepped
         // does not produce a spurious exception log entry. We check TF in
         // RFLAGS to distinguish single-step #DB from other debug exceptions
@@ -311,7 +311,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
             return;
         }
 
-        // ── fault profiler: non-PF exception type counters ──
+        // fault profiler: non-PF exception type counters
         if let Some(memory) = crate::memory::try_global_mut() {
             memory.fault_profiler.inc_faults_total();
             match vector {
@@ -350,7 +350,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         {
             match thread.deliver_x86_64_user_exception(context, fault_address) {
                 Ok(true) => {
-                    // ── fault profiler: delivered to user handler ──
+                    // fault profiler: delivered to user handler
                     if let Some(memory) = crate::memory::try_global_mut() {
                         memory.fault_profiler.inc_faults_delivered_to_handler();
                     }
@@ -365,7 +365,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
                     return;
                 }
                 Ok(false) => {
-                    // ── fault profiler: no user handler ──
+                    // fault profiler: no user handler
                     if let Some(memory) = crate::memory::try_global_mut() {
                         memory.fault_profiler.inc_faults_no_handler();
                     }
@@ -382,7 +382,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
             }
         }
         log_user_exception_termination(context, fault_address);
-        // ── fault profiler: user exception termination ──
+        // fault profiler: user exception termination
         if let Some(memory) = crate::memory::try_global_mut() {
             memory.fault_profiler.inc_faults_terminated();
         }
@@ -392,7 +392,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         crate::kernel::process::terminate_current_with_reason(reason);
     }
 
-    // ── fault profiler: kernel fatal halt ──
+    // fault profiler: kernel fatal halt
     if let Some(memory) = crate::memory::try_global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
@@ -589,7 +589,7 @@ pub(crate) fn record_process_fault_record(
     }
 }
 
-// ── Non-page-fault exception diagnostics ──
+// Non-page-fault exception diagnostics
 
 /// Produce a compact diagnostic string for exceptions other than page faults.
 pub(crate) fn diagnose_non_page_fault(vector: u64, error_code: u64, rip: u64) -> &'static str {
@@ -617,7 +617,7 @@ fn diagnose_invalid_opcode(_rip: u64) -> &'static str {
     "invalid-opcode"
 }
 
-// ── Page-fault recovery evaluation ──
+// Page-fault recovery evaluation
 
 pub(crate) fn evaluate_page_fault_recovery_strategy(
     context: &InterruptContext,

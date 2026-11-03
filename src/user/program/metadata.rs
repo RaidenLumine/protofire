@@ -17,7 +17,7 @@ use super::catalog::CatalogEntry;
 use super::catalog::LaunchManifest;
 use super::integrity::validate_optional_sha256_hex;
 
-// ── launch metadata budget limits ─────────────────────────────────────
+// launch metadata budget limits
 //
 // These bound the argv/environment/working-dir metadata carried inside
 // launch manifests before it is copied into a user process image.  The
@@ -38,7 +38,7 @@ pub(crate) const MAX_METADATA_ENVIRONMENT_TOTAL_BYTES: usize = 64 * 1024;
 /// Maximum length (in bytes) of the launch working directory.
 pub(crate) const MAX_METADATA_WORKING_DIR_BYTES: usize = 4096;
 
-// ── catalog entry parsing ──────────────────────────────────────────────
+// catalog entry parsing
 //
 // Catalog records use a small key = "value" format:
 //
@@ -86,7 +86,7 @@ pub(crate) fn parse_catalog_entry(text: &str) -> Result<CatalogEntry> {
     })
 }
 
-// ── launch manifest parsing ───────────────────────────────────────────
+// launch manifest parsing
 //
 //   name = "shell"
 //   version = "0.1.0"
@@ -128,7 +128,7 @@ pub(crate) fn parse_launch_manifest(text: &str) -> Result<LaunchManifest> {
     })
 }
 
-// ── launch metadata budget validation ─────────────────────────────────
+// launch metadata budget validation
 
 /// Validate that launch metadata (arguments, environment, and working
 /// directory) stays within the enforced budgets.
@@ -172,7 +172,7 @@ pub(crate) fn validate_launch_metadata_budget(
     Ok(())
 }
 
-// ── string literal rendering ──────────────────────────────────────────
+// string literal rendering
 
 /// Render `value` as a double-quoted TOML-style string literal.
 ///
@@ -215,7 +215,7 @@ pub(crate) fn render_string_list_literal(values: &[String]) -> String {
     rendered
 }
 
-// ── string literal parsing ────────────────────────────────────────────
+// string literal parsing
 
 /// Parse a double-quoted TOML-style string literal (starting at the opening
 /// quote).  Supported escapes: `\"`, `\\`, `\n`, `\r`, `\t`, `\0`, `\xHH`.
@@ -291,7 +291,7 @@ pub(crate) fn parse_string_list_literal(text: &str) -> Result<Vec<String>> {
     Ok(items)
 }
 
-// ── field lookup helpers ──────────────────────────────────────────────
+// field lookup helpers
 
 /// Find the `field = ` assignment in `text` and return the trimmed value
 /// (the text after `=`), or `None` when the field is absent.
@@ -334,7 +334,7 @@ pub(crate) fn parse_string_list_field(text: &str, field: &str) -> Result<Vec<Str
     parse_string_list_literal(value)
 }
 
-// ── list splitting ────────────────────────────────────────────────────
+// list splitting
 
 /// Split a TOML array body on top-level commas, keeping quoted strings
 /// intact (escaped quotes are preserved as literal pairs).
@@ -385,7 +385,7 @@ fn hex_digit_value(ch: char) -> Result<u8> {
     }
 }
 
-// ── tests ─────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

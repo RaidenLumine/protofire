@@ -9,7 +9,7 @@
 
 use core::fmt;
 
-// ─── IpAddress ──────────────────────────────────────────────────────────
+// IpAddress
 
 /// An IP address, either version 4 or version 6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -21,7 +21,7 @@ pub enum IpAddress {
 }
 
 impl IpAddress {
-    // ── well-known addresses ─────────────────────────────────────────
+    // well-known addresses
 
     /// IPv4 broadcast address `255.255.255.255`.
     pub const IPV4_BROADCAST: Self = IpAddress::V4([255, 255, 255, 255]);
@@ -44,7 +44,7 @@ impl IpAddress {
         0x02,
     ]);
 
-    // ── predicates ───────────────────────────────────────────────────
+    // predicates
 
     /// Returns `true` if this is an IPv4 address.
     pub fn is_ipv4(&self) -> bool {
@@ -160,7 +160,7 @@ impl From<[u8; 16]> for IpAddress {
     }
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

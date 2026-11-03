@@ -7,7 +7,7 @@
 //! handle table management, lifecycle, fork, sockets, security and the
 //! per-process address space.
 
-// ── Submodules ──────────────────────────────────────────────────────────
+// Submodules
 
 pub mod address_space;
 pub mod constants;
@@ -19,7 +19,7 @@ pub mod object_shape;
 pub mod socket_ops;
 pub mod types;
 
-// ── Re-exports (consumed by `crate::kernel::process`) ───────────────────
+// Re-exports (consumed by `crate::kernel::process`)
 
 pub use crate::kernel::security::IntegrityLevel;
 pub use crate::kernel::security::SecurityToken;
@@ -58,7 +58,7 @@ pub use types::RawSocketHandle;
 pub use types::TerminationReason;
 pub use types::UserAddressSpaceSummary;
 
-// ── Imports for the Process struct ──────────────────────────────────────
+// Imports for the Process struct
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -77,7 +77,7 @@ use crate::kernel::process::wait::Event;
 use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 
-// ── Process struct definition ──
+// Process struct definition
 
 pub struct Process {
     pid: ProcessId,

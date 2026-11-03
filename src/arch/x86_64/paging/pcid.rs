@@ -103,7 +103,7 @@ struct InvpcidDesc {
     _reserved: u64,
 }
 
-// ── Bitmap access helper ────────────────────────────────────────────────
+// Bitmap access helper
 
 /// Return a reference to the `word_idx`-th atomic word in the free bitmap.
 #[inline]
@@ -117,7 +117,7 @@ fn bitmap_word(word_idx: usize) -> &'static core::sync::atomic::AtomicU64 {
     }
 }
 
-// ── INVPCID wrappers ────────────────────────────────────────────────────
+// INVPCID wrappers
 
 /// Execute `invpcid type, [desc]`.
 ///
@@ -183,7 +183,7 @@ fn reload_cr3() {
     }
 }
 
-// ── Public API ──────────────────────────────────────────────────────────
+// Public API
 
 /// Initialise the PCID allocator.  Called once during early boot, after
 /// `control_regs::enable_pcide()`.
@@ -399,7 +399,7 @@ pub(crate) fn cr3_with_pcid(root_table_address: usize, pcid: u64) -> usize {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

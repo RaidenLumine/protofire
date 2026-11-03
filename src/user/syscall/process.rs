@@ -9,7 +9,7 @@ use crate::user::shared::abi::process as process_abi;
 use super::USER_EXCEPTION_HANDLER_FLAGS_NONE;
 
 impl super::UserSyscall {
-    // ── Hostname syscalls ────────────────────────────────────────────
+    // Hostname syscalls
 
     /// Read the kernel hostname into `buffer`.
     pub const fn gethostname(buffer: usize, length: usize) -> SyscallContext {
@@ -225,7 +225,7 @@ impl super::UserSyscall {
         )
     }
 
-    // ── Diagnostic / management syscalls ─────────────────────────────
+    // Diagnostic / management syscalls
 
     /// Yield the current timeslice so the scheduler can run another thread.
     pub const fn yield_now() -> SyscallContext {
@@ -264,7 +264,7 @@ impl super::UserSyscall {
         )
     }
 
-    // ── Identity syscalls ────────────────────────────────────────────
+    // Identity syscalls
 
     pub const fn getpid() -> SyscallContext {
         SyscallContext::new(SyscallNumber::GetPid as usize, [0; 6])
@@ -319,7 +319,7 @@ impl super::UserSyscall {
         )
     }
 
-    // ── Memory syscalls ────────────────────────────────────────────
+    // Memory syscalls
 
     /// Set the program break (heap end) for the current process.
     /// Returns the new program break on success.

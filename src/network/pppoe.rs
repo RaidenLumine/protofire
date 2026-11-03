@@ -228,7 +228,7 @@ impl Default for PppoeSession {
     }
 }
 
-// ── Wire helpers ────────────────────────────────────────────────────────────
+// Wire helpers
 
 /// Wrap a PPPoE packet (code + session-id + payload) in an Ethernet frame.
 fn pppoe_eth_frame(
@@ -305,7 +305,7 @@ pub fn parse_tags(data: &[u8]) -> Vec<PppoeTag> {
     tags
 }
 
-// ── NetworkStack integration ────────────────────────────────────────────────
+// NetworkStack integration
 
 impl NetworkStack {
     /// Handle an incoming PPPoE Ethernet frame (Discovery or Session).
@@ -380,7 +380,7 @@ impl NetworkStack {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {
@@ -407,7 +407,7 @@ mod tests {
         (dev, stack)
     }
 
-    // ── Frame glue ────────────────────────────────────────────────────
+    // Frame glue
 
     #[test]
     fn pppoe_header_roundtrip_with_session_id() {
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(tags.len(), 1);
     }
 
-    // ── State machine ─────────────────────────────────────────────────
+    // State machine
 
     #[test]
     fn discovery_flow_assigns_session() {
@@ -565,7 +565,7 @@ mod tests {
         );
     }
 
-    // ── End-to-end over the mock device ───────────────────────────────
+    // End-to-end over the mock device
 
     #[test]
     fn mock_device_padi_to_pads_session_flow() {

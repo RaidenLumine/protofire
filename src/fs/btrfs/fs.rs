@@ -33,7 +33,7 @@ use super::types::KEY_ROOT_ITEM;
 use super::types::SUPERBLOCK_OFFSET;
 use super::types::SUPERBLOCK_SIZE;
 
-// ── Superblock ──────────────────────────────────────────────────────────
+// Superblock
 
 pub fn read_superblock(device: &Arc<dyn BlockDevice>) -> Result<Superblock, Error> {
     let mut buf = [0u8; SUPERBLOCK_SIZE];
@@ -41,7 +41,7 @@ pub fn read_superblock(device: &Arc<dyn BlockDevice>) -> Result<Superblock, Erro
     Superblock::parse(&buf).ok_or(Error::InvalidArgument)
 }
 
-// ── B-tree traversal ────────────────────────────────────────────────────
+// B-tree traversal
 
 pub fn read_node(
     device: &Arc<dyn BlockDevice>,
@@ -126,7 +126,7 @@ pub fn leaf_search(
     }
 }
 
-// ── Root tree traversal ─────────────────────────────────────────────────
+// Root tree traversal
 
 pub fn find_tree_root(
     device: &Arc<dyn BlockDevice>,
@@ -158,7 +158,7 @@ pub fn find_tree_root(
     }
 }
 
-// ── Subvolume discovery ───────────────────────────────────────────────────
+// Subvolume discovery
 
 /// Scan the root tree and return all subvolume (ROOT_ITEM) entries.
 ///
@@ -227,7 +227,7 @@ pub fn discover_subvolumes(
     Ok(subvols)
 }
 
-// ── Inode lookup ────────────────────────────────────────────────────────
+// Inode lookup
 
 pub fn lookup_inode(
     device: &Arc<dyn BlockDevice>,
@@ -247,7 +247,7 @@ pub fn lookup_inode(
     }
 }
 
-// ── Directory lookup ────────────────────────────────────────────────────
+// Directory lookup
 
 pub fn read_dir_entries(
     device: &Arc<dyn BlockDevice>,
@@ -315,7 +315,7 @@ pub fn read_dir_entries(
     Ok(entries)
 }
 
-// ── File extent lookup ──────────────────────────────────────────────────
+// File extent lookup
 
 pub fn read_extents(
     device: &Arc<dyn BlockDevice>,
@@ -466,7 +466,7 @@ pub fn read_file(
     Ok(total)
 }
 
-// ── Chunk tree / logical→physical address translation ───────────────────
+// Chunk tree / logical→physical address translation
 
 /// Maps a logical byte address range to a physical (device_index, offset) pair.
 #[derive(Debug, Clone)]
@@ -586,7 +586,7 @@ impl ChunkMap {
     }
 }
 
-// ── Byte I/O ────────────────────────────────────────────────────────────
+// Byte I/O
 
 fn read_device_bytes(
     device: &Arc<dyn BlockDevice>,

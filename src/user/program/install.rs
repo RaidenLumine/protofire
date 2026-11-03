@@ -39,7 +39,7 @@ use super::constants::INSTALLED_CATALOG_ROOT;
 use super::metadata::parse_optional_string_field;
 use super::metadata::parse_string_field;
 
-// ── paths ─────────────────────────────────────────────────────────────
+// paths
 
 /// Root directory for the install transaction log.  Each transaction is a
 /// directory named `<app_id>@<version>` containing a `state.toml` record.
@@ -53,7 +53,7 @@ pub(crate) const DOWNLOAD_CACHE_ROOT: &str = "/data/downloads";
 /// Staging directory inside the download cache (transient, in-flight state).
 const DOWNLOAD_CACHE_STAGING_DIR: &str = ".staging";
 
-// ── recovery outcome / repair enums ───────────────────────────────────
+// recovery outcome / repair enums
 
 /// Outcome of recovering a single install transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +89,7 @@ pub enum TransactionLogRepairReason {
     UnexpectedEntryName,
 }
 
-// ── record types ──────────────────────────────────────────────────────
+// record types
 //
 // Under the demo-disk build (feature `demo-disk`, no `test`) the appctl
 // surface only reports the aggregate counts, so these per-entry fields are
@@ -133,7 +133,7 @@ pub struct InstallManagementRecoveryReport {
     pub download_cache_recovery_error: Option<Error>,
 }
 
-// ── recovery entry point ──────────────────────────────────────────────
+// recovery entry point
 
 /// Recover install-management state after a crash.
 ///
@@ -155,7 +155,7 @@ pub(crate) fn recover_install_management_state(
     })
 }
 
-// ── transaction log recovery ──────────────────────────────────────────
+// transaction log recovery
 
 /// Walk the install transaction log, recovering valid transactions and
 /// removing invalid entries.
@@ -337,7 +337,7 @@ fn read_transaction_state(fs: &FileSystem, state_path: &str) -> Result<Transacti
     })
 }
 
-// ── download cache recovery ───────────────────────────────────────────
+// download cache recovery
 
 /// Walk the download cache, pruning the staging tree, orphaned entries, and
 /// duplicates of already-installed versions.
@@ -448,7 +448,7 @@ fn recover_download_cache(fs: &FileSystem) -> (Vec<RepairedDownloadCacheEntry>, 
     (repaired, None)
 }
 
-// ── shared helpers ────────────────────────────────────────────────────
+// shared helpers
 
 struct DirectoryChild {
     name: String,
@@ -511,7 +511,7 @@ fn installed_version_present(fs: &FileSystem, app_id: &str, version: &str) -> bo
     fs.stat_path(&catalog_path).is_ok()
 }
 
-// ── the install path ──────────────────────────────────────────────────
+// the install path
 //
 // The gate is the caller's: the `install_package` syscall
 // (`src/syscall/install.rs`) and the appctl surface, both compiled with a demo

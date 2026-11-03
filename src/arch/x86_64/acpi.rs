@@ -10,7 +10,7 @@
 
 use alloc::vec::Vec;
 
-// ── ACPI structures (minimal — only what MADT parsing needs) ────────────
+// ACPI structures (minimal — only what MADT parsing needs)
 
 #[cfg(target_os = "none")]
 #[repr(C, packed)]
@@ -73,7 +73,7 @@ pub struct LocalApicEntry {
     pub enabled: bool,
 }
 
-// ── RSDP discovery ─────────────────────────────────────────────────────
+// RSDP discovery
 
 /// Find the ACPI RSDP.
 ///
@@ -188,7 +188,7 @@ unsafe fn find_rsdp_via_bios_scan() -> Option<*const Rsdp> {
     None
 }
 
-// ── MADT parsing ───────────────────────────────────────────────────────
+// MADT parsing
 
 /// Read a physical address' contents via identity mapping.
 ///
@@ -714,7 +714,7 @@ unsafe fn find_table_in_rsdt(rsdt_addr: usize, signature: &[u8; 4]) -> Option<us
     })
 }
 
-// ── Early-discovered I/O APIC address ──────────────────────────────────
+// Early-discovered I/O APIC address
 
 /// The primary I/O APIC's MMIO base discovered before the page-table switch,
 /// so `init_ioapic` maps and drives the controller the machine declared rather
@@ -743,7 +743,7 @@ pub fn ioapic_base() -> Option<usize> {
     }
 }
 
-// ── Early-discovered ISA IRQ overrides ─────────────────────────────────
+// Early-discovered ISA IRQ overrides
 
 /// The MADT interrupt-source overrides discovered before the page-table
 /// switch, so the I/O APIC setup (which runs later) routes by the machine's
@@ -792,7 +792,7 @@ pub fn isa_irq_gsi(irq: u8) -> u32 {
     }
 }
 
-// ── Early-discovered AP list ───────────────────────────────────────────
+// Early-discovered AP list
 
 /// Stores the AP list discovered before the page-table switch so it can be
 /// used later during bring-up.  See [`store_early_aps`] and [`take_early_aps`].
@@ -820,7 +820,7 @@ pub fn take_early_aps() -> Option<alloc::vec::Vec<(u32, u8)>> {
     unsafe { (*EARLY_APS.get()).take() }
 }
 
-// ── Early-discovered NUMA data ─────────────────────────────────────────
+// Early-discovered NUMA data
 
 /// A single processor-local APIC affinity record parsed from the ACPI SRAT.
 /// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs,

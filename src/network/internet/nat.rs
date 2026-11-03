@@ -20,7 +20,7 @@ use core::fmt;
 
 use crate::network::internet::ipv4;
 
-// ── Constants ───────────────────────────────────────────────────────────────
+// Constants
 
 /// First ephemeral port used for NAT translations.
 const NAT_PORT_START: u16 = 32768;
@@ -46,7 +46,7 @@ const SWEEP_INTERVAL: u64 = 3_000;
 /// Maximum entries in the NAT table before rejecting new translations.
 const MAX_NAT_ENTRIES: usize = 1024;
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// Types
 
 /// Per-protocol connection state for timeout selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,7 +111,7 @@ impl NatEntry {
     }
 }
 
-// ── NAT table ──────────────────────────────────────────────────────────────
+// NAT table
 
 /// Network Address Translation (NAPT) table with connection tracking.
 pub struct NatTable {
@@ -181,7 +181,7 @@ impl NatTable {
         self.entries.len()
     }
 
-    // ── Port allocation ──────────────────────────────────────────────────
+    // Port allocation
 
     /// Allocate a translated (external) port for the given protocol.
     /// Returns `None` if port exhaustion or table full.
@@ -203,7 +203,7 @@ impl NatTable {
         self.allocated_ports.remove(&port);
     }
 
-    // ── SNAT: Outbound translation ───────────────────────────────────────
+    // SNAT: Outbound translation
 
     /// Apply source NAT to an outbound IPv4 packet.
     ///
@@ -309,7 +309,7 @@ impl NatTable {
         Some(new_packet)
     }
 
-    // ── DNAT: Inbound reverse translation ────────────────────────────────
+    // DNAT: Inbound reverse translation
 
     /// Apply destination NAT to an inbound IPv4 packet (reverse translation).
     ///
@@ -403,7 +403,7 @@ impl NatTable {
         Some(new_packet)
     }
 
-    // ── Housekeeping ────────────────────────────────────────────────────
+    // Housekeeping
 
     /// Sweep expired entries.  Call periodically from the tick handler.
     pub fn sweep_expired(&mut self, current_tick: u64) {
@@ -476,7 +476,7 @@ impl Default for NatTable {
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// Helpers
 
 /// Extract source and destination ports from TCP/UDP header.
 fn extract_tcp_udp_ports(packet: &[u8], header_len: usize) -> Option<(u16, u16)> {
@@ -547,7 +547,7 @@ fn incremental_checksum_update(old_csum: u16, old_val: u16, new_val: u16) -> u16
     !(csum as u16)
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

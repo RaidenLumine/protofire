@@ -360,7 +360,7 @@ pub fn write_fmt(args: fmt::Arguments<'_>) -> fmt::Result {
     serial::write_fmt(args)
 }
 
-// ── CPU frequency / power management ──────────────────────────────────────
+// CPU frequency / power management
 //
 // The power subsystem (`kernel::power`) talks to the platform exclusively
 // through these four dispatchers.  x86_64 uses the MSR P-state driver; the

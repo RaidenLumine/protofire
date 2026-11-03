@@ -280,11 +280,11 @@ impl KernelGlobalAllocator {
                     continue 'search;
                 }
 
-                // ── Prefix (before aligned payload) ──
+                // Prefix (before aligned payload)
                 let prefix_size = alloc_header_start.wrapping_sub(candidate);
                 let prefix_created = prefix_size >= MIN_FREE_BLOCK;
 
-                // ── Suffix (after the allocation) ──
+                // Suffix (after the allocation)
                 let suffix_size = block_end.wrapping_sub(alloc_end);
                 let suffix_created = suffix_size >= MIN_FREE_BLOCK;
 
@@ -303,7 +303,7 @@ impl KernelGlobalAllocator {
                 // reason; the suffix has to be treated the same way.
                 let allocation_end = if suffix_created { alloc_end } else { block_end };
 
-                // ── Mark the allocated block as used ──
+                // Mark the allocated block as used
                 // A sub-minimum prefix (smaller than MIN_FREE_BLOCK) is too
                 // small to be inserted as a free block.  Absorb it into the
                 // allocated block by placing the block header at the free
@@ -334,7 +334,7 @@ impl KernelGlobalAllocator {
                     (alloc_header_start, allocated_size)
                 };
 
-                // ── Suffix (after the allocation) ──
+                // Suffix (after the allocation)
                 if suffix_created {
                     block_set_size(alloc_end, suffix_size);
                     block_clear_used(alloc_end);
@@ -342,7 +342,7 @@ impl KernelGlobalAllocator {
                     insert_free_block(state, alloc_end);
                 }
 
-                // ── Fix up prev_phys chain ──
+                // Fix up prev_phys chain
                 if prefix_created {
                     block_set_prev_phys(alloc_header_start, candidate);
                 }
@@ -361,7 +361,7 @@ impl KernelGlobalAllocator {
                     block_set_prev_phys(block_end, alloc_start);
                 }
 
-                // ── Canary ──
+                // Canary
                 // Written once the block's extent is final.  The request was
                 // inflated by `CANARY_SIZE` when the block was carved, so this
                 // word sits after the caller's bytes and the first thing an
@@ -369,7 +369,7 @@ impl KernelGlobalAllocator {
                 // header.
                 super::tlsf::canary_write(alloc_start);
 
-                // ── Accounting: only the bytes that become unavailable are
+                // Accounting: only the bytes that become unavailable are
                 //    removed.  The allocated block (which may include an
                 //    absorbed alignment prefix) is subtracted here and added
                 //    back on free; re-inserted prefix/suffix free blocks are
@@ -547,7 +547,7 @@ impl KernelGlobalAllocator {
     pub fn verify_heap_integrity(&self) {}
 }
 
-// ─── GlobalAlloc impl ─────────────────────────────────────────────────────
+// GlobalAlloc impl
 
 // SAFETY: the `GlobalAlloc` methods take `&self` and reach the state only
 // through `with_state`, which holds the allocator's lock for the duration of
@@ -580,7 +580,7 @@ unsafe impl GlobalAlloc for KernelGlobalAllocator {
     }
 }
 
-// ─── Spinlock guard ───────────────────────────────────────────────────────
+// Spinlock guard
 
 pub(crate) struct KernelGlobalAllocatorGuard<'a> {
     allocator: &'a KernelGlobalAllocator,

@@ -63,11 +63,11 @@ pub(crate) fn load_installed_catalog_split_phase(
     let normalized_cwd = crate::fs::path::normalize_path(cwd, "/")?;
     let allow_working_dir_override = overrides.working_dir.is_some();
 
-    // ── Phase 1: resolve the launch reference and read the ELF image from
+    // Phase 1: resolve the launch reference and read the ELF image from
     //    the filesystem.  The ordinary lock is correct here: this phase never
     //    reaches `memory::global_mut()`, which is the only thing that would
     //    make the interrupts-on discipline necessary.  See the note on
-    //    `SpinLock::lock_without_irq_disable`. ──
+    //    `SpinLock::lock_without_irq_disable`.
     let (catalog_path, descriptor, image) = {
         let fs_guard = fs.lock();
         let resolved =
@@ -82,14 +82,14 @@ pub(crate) fn load_installed_catalog_split_phase(
         )?;
         (resolved.catalog_path, descriptor, image)
     };
-    // ── fs lock released here.  The memory-manager lock may now be acquired
+    // fs lock released here.  The memory-manager lock may now be acquired
     //    (in finish_loading_program / prepare_runtime) without risking a
-    //    deadlock with a cross-CPU TLB shootdown. ──
+    //    deadlock with a cross-CPU TLB shootdown.
 
-    // ── Phase 2: validate ELF, prepare runtime (page allocation, etc.). ──
+    // Phase 2: validate ELF, prepare runtime (page allocation, etc.).
     let loaded = finish_loading_program(descriptor, image)?;
 
-    // ── Phase 3: validate the installed catalog (briefly re-lock fs). ──
+    // Phase 3: validate the installed catalog (briefly re-lock fs).
     {
         let fs_guard = fs.lock();
         validate_installed_catalog_launch_with_options(
@@ -419,7 +419,7 @@ fn resolve_installed_app_id_reference(fs: &FileSystem, app_id: &str) -> Result<S
     Err(Error::NotFound)
 }
 
-// ── filesystem helpers (relocated from the removed install/fs_util.rs) ──
+// filesystem helpers (relocated from the removed install/fs_util.rs)
 
 fn path_exists_with_kind(fs: &FileSystem, path: &str, expected_kind: fs::NodeKind) -> Result<bool> {
     match fs.stat_path(path) {

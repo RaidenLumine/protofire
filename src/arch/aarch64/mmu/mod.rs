@@ -48,7 +48,7 @@ use asid::allocate_asid;
 use asid::free_asid;
 use asid::ttbr0_with_asid;
 
-// ── Constants ────────────────────────────────────────────────────────────
+// Constants
 
 /// When true, SCTLR_EL1.SPAN is programmed during translation configuration
 /// and the kernel auto-sets PSTATE.PAN on EL0→EL1 entry.  See
@@ -97,7 +97,7 @@ const USER_DEMO_EXCEPTION_STACK_GUARD_SIZE: usize = 0x1_0000; // 64 KiB
 /// Entry-point offset within the code region of a slot.
 const USER_DEMO_CODE_OFFSET: usize = 0x1000;
 
-// ── Translation descriptor bits ──────────────────────────────────────────
+// Translation descriptor bits
 
 /// Table descriptor (levels 0-2 at the 4 KiB granule): bits[1:0] = 0b11,
 /// the address field points to the next-level table.
@@ -136,7 +136,7 @@ const TCR_EL1_CONFIG: u64 =
 /// attr 1 = Device-nGnRnE.
 const MAIR_EL1_CONFIG: u64 = 0x0000_00FF;
 
-// ── Types ────────────────────────────────────────────────────────────────
+// Types
 
 /// A single 512-entry translation table (one 4 KiB page).
 ///
@@ -278,7 +278,7 @@ pub struct PreparedProcessAddressSpace {
 pub type ForkClonedAddressSpace =
     crate::memory::paging::ForkedAddressSpace<PreparedProcessAddressSpace>;
 
-// ── Kernel translation tables ────────────────────────────────────────────
+// Kernel translation tables
 
 /// A `TranslationTable` pinned to its own 4 KiB page.
 ///
@@ -320,7 +320,7 @@ static PREPARED_ROOT_TABLE: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_MAPPED_PAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-// ── Entry-point helpers ──────────────────────────────────────────────────
+// Entry-point helpers
 
 /// Build a next-level-table descriptor for `address`.
 fn table_entry(address: usize) -> u64 {
@@ -457,7 +457,7 @@ const fn align_down(value: usize, align: usize) -> usize {
     value & !(align - 1)
 }
 
-// ── MMU control ──────────────────────────────────────────────────────────
+// MMU control
 
 /// Return the address currently programmed into TTBR0_EL1 (ASID stripped).
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
@@ -616,7 +616,7 @@ fn flush_tlb_page(virtual_address: usize) {
 #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
 fn flush_tlb_page(_virtual_address: usize) {}
 
-// ── Runtime page-table pool ──────────────────────────────────────────────
+// Runtime page-table pool
 
 /// Pages for runtime page tables allocated outside the kernel tables.
 const RUNTIME_PT_POOL_PAGES: usize = 32;
@@ -772,7 +772,7 @@ unsafe fn resolve_l3_table(root: usize, virtual_address: usize) -> Option<*mut u
     Some((l2_entry & 0x0000_FFFF_FFFF_F000) as *mut u64)
 }
 
-// ── Install / unmap / device MMIO ────────────────────────────────────────
+// Install / unmap / device MMIO
 
 /// Install (or replace) an EL0-accessible page in the live tables.
 ///
@@ -1070,7 +1070,7 @@ pub unsafe fn map_device_mmio(phys: u64, size: usize) -> Option<*mut u8> {
     }
 }
 
-// ── Runtime kernel tables ────────────────────────────────────────────────
+// Runtime kernel tables
 
 /// Validate the heap bounds against the runtime-table memory map.
 fn validate_runtime_layout(heap_bounds: (usize, usize)) -> Option<()> {
@@ -1611,7 +1611,7 @@ pub fn active_runtime_kernel_page_table_check(
     })
 }
 
-// ── Demo user slots ──────────────────────────────────────────────────────
+// Demo user slots
 
 /// How many address spaces hold each demo slot.
 ///
@@ -1930,7 +1930,7 @@ pub fn prepare_runtime_process_address_space(
     })
 }
 
-// ── Activation ───────────────────────────────────────────────────────────
+// Activation
 
 pub fn activate_prepared_runtime_kernel_page_tables() -> Option<ActivatedRuntimeKernelPageTables> {
     let prepared = prepared_runtime_kernel_page_tables()?;
@@ -1986,7 +1986,7 @@ fn activate_prepared_process_address_space_impl(
     })
 }
 
-// ── PreparedDemoUserSlot impl ────────────────────────────────────────────
+// PreparedDemoUserSlot impl
 
 impl PreparedDemoUserSlot {
     pub fn region_start(&self) -> usize {
@@ -2136,7 +2136,7 @@ impl Clone for PreparedDemoUserSlot {
     }
 }
 
-// ── PreparedProcessAddressSpace impl ─────────────────────────────────────
+// PreparedProcessAddressSpace impl
 
 impl PreparedProcessAddressSpace {
     pub fn root_table_address(&self) -> usize {

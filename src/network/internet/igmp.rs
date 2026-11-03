@@ -18,14 +18,14 @@ use super::ipv4::{self};
 use crate::network::stack::NetworkStack;
 use crate::Result;
 
-// ─── IGMPv2 type constants ──────────────────────────────────────────────
+// IGMPv2 type constants
 
 pub const IGMP_TYPE_MEMBERSHIP_QUERY: u8 = 0x11;
 pub const IGMP_TYPE_MEMBERSHIP_REPORT_V1: u8 = 0x12;
 pub const IGMP_TYPE_MEMBERSHIP_REPORT_V2: u8 = 0x16;
 pub const IGMP_TYPE_LEAVE_GROUP: u8 = 0x17;
 
-// ─── IGMPv2 header sizes ────────────────────────────────────────────────
+// IGMPv2 header sizes
 
 /// Minimum IGMP message size (type + max_resp_time + checksum + group = 8).
 const IGMP_MIN_SIZE: usize = 8;
@@ -33,7 +33,7 @@ const IGMP_MIN_SIZE: usize = 8;
 /// IGMPv2 Membership Report sent as IPv4 multicast to the group address.
 const IGMP_ALL_ROUTERS: Ipv4Addr = [224, 0, 0, 2];
 
-// ─── IGMPv2 header ──────────────────────────────────────────────────────
+// IGMPv2 header
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IgmpMessage {
@@ -78,7 +78,7 @@ pub fn build_igmp_message(msg: &IgmpMessage) -> Vec<u8> {
     buf
 }
 
-// ─── Multicast group state ──────────────────────────────────────────────
+// Multicast group state
 
 /// Per-group state tracking: are we joined, and do we have a pending
 /// delayed response timer?
@@ -160,7 +160,7 @@ impl IgmpState {
     }
 }
 
-// ─── IGMP processing ────────────────────────────────────────────────────
+// IGMP processing
 
 /// Process an incoming IGMP message.
 ///
@@ -352,7 +352,7 @@ pub fn build_leave_message(group: Ipv4Addr) -> (Ipv4Header, Vec<u8>) {
     (ip_header, raw)
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

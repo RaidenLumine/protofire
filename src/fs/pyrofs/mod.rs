@@ -42,7 +42,7 @@ pub(crate) use types::OnDiskInode;
 pub(crate) use types::PyroFsFormatVersion;
 pub(crate) use types::XattrRecord;
 
-// ── Core struct definitions ──
+// Core struct definitions
 
 #[derive(Clone, Default)]
 pub(crate) struct UndoLog {
@@ -180,7 +180,7 @@ pub struct ImageEntry<'a> {
     pub data: &'a [u8],
 }
 
-// ── Re-exports ─────────────────────────────────────────────────────────
+// Re-exports
 
 pub use image_staging::StagingArea;
 pub use image_staging::VersionSwitch;

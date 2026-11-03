@@ -13,7 +13,7 @@
 pub mod association;
 pub mod chunk;
 
-// ─── Public re-exports ──────────────────────────────────────────────────────
+// Public re-exports
 
 pub use association::create_server_association;
 pub use association::process_incoming;

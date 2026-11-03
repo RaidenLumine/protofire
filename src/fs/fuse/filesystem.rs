@@ -27,7 +27,7 @@ use crate::fs::vfs::SecurityDescriptorMutationSupport;
 use crate::Error;
 use crate::Result;
 
-// ── Internal helpers ─────────────────────────────────────────────────────
+// Internal helpers
 
 /// Split a mount-relative path (e.g. "/foo/bar") into parent path and the
 /// final component name.  Returns `(parent_path, name)`.
@@ -46,7 +46,7 @@ fn split_parent_name(path: &str) -> (&str, &str) {
     }
 }
 
-// ── FuseFileSystem implementation ───────────────────────────────────────
+// FuseFileSystem implementation
 
 impl FuseFileSystem {
     /// Create a new FUSE-backed filesystem.
@@ -79,7 +79,7 @@ impl FuseFileSystem {
         Ok(ino)
     }
 
-    // ── Path resolution helpers ────────────────────────────────────────
+    // Path resolution helpers
 
     /// Best-effort handshake with the daemon: try to discover the real root
     /// inode via an initial `LOOKUP("/")`.  This runs once, lazily, on the
@@ -153,7 +153,7 @@ impl FuseFileSystem {
     }
 }
 
-// ── FileSystem trait implementation ─────────────────────────────────────
+// FileSystem trait implementation
 
 impl FileSystem for FuseFileSystem {
     fn name(&self) -> &str {

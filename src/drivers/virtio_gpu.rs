@@ -386,7 +386,7 @@ struct VirtioGpuCmdSubmit3D {
 // Driver state
 // ---------------------------------------------------------------------------
 
-// ─── Scanout backing memory ──────────────────────────────────────────────
+// Scanout backing memory
 
 // The buffer itself — how a device is handed a physical address — is the
 // machine's; see `crate::arch::scanout`.
@@ -542,7 +542,7 @@ impl VirtioGpuDevice {
         Ok(())
     }
 
-    // ─── High-level GPU operations ─────────────────────────────────
+    // High-level GPU operations
 
     /// Query display configuration from the device.
     ///
@@ -659,7 +659,7 @@ impl VirtioGpuDevice {
         self.do_command(&req, &mut resp, VIRTIO_GPU_RESP_OK_NODATA)
     }
 
-    // ─── VIRGL 3D operations (requires VIRTIO_GPU_F_VIRGL) ─────────
+    // VIRGL 3D operations (requires VIRTIO_GPU_F_VIRGL)
 
     /// Create a VIRGL 3D rendering context.
     pub fn ctx_create(&self, ctx_id: u32, name: &[u8]) -> Result<()> {
@@ -1004,7 +1004,7 @@ pub fn framebuffer_info() -> Option<FramebufferInfo> {
     *FB_INFO.lock()
 }
 
-// ─── Polled scanout flusher (bare metal) ──────────────────────────────────
+// Polled scanout flusher (bare metal)
 
 /// The GPU whose scanout framebuffer is installed as the console, used by the
 /// timer-tick poller to push dirty frames to the display.

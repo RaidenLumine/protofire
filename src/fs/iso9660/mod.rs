@@ -92,7 +92,7 @@ use crate::Result;
 
 use types::DirRecord;
 
-// ── Volume label helper ────────────────────────────────────────────────────
+// Volume label helper
 
 /// Extract the volume label from the PVD's volume_id field.
 fn pvd_volume_label(pvd: &types::Pvd) -> String {
@@ -112,7 +112,7 @@ fn pvd_volume_label(pvd: &types::Pvd) -> String {
     label.trim_end().into()
 }
 
-// ── Iso9660Volume ─────────────────────────────────────────────────────────
+// Iso9660Volume
 
 /// One of a volume's directory trees.
 ///
@@ -1054,7 +1054,7 @@ impl VfsFileSystem for Iso9660Volume {
     }
 }
 
-// ── Iso9660VNode ───────────────────────────────────────────────────────────
+// Iso9660VNode
 
 struct Iso9660VNode {
     name: String,
@@ -1245,7 +1245,7 @@ impl VNode for Iso9660VNode {
     }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// Helpers
 
 /// The ISO 9660 identifier for a file a caller names.
 fn is_self_or_parent(record: &DirRecord) -> bool {

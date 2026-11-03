@@ -133,30 +133,30 @@ impl NetworkStack {
             let _ = crate::network::tcp::send_tcp_segment(self, dst_ip, &seg);
         }
 
-        // ── SLAAC ───────────────────────────────────────────────────
+        // SLAAC
         // One step per tick: solicitations while there is no address, then the
         // DAD window for whatever an advertisement forms.
         self.drive_slaac(tick);
 
-        // ── Fragment reassembly eviction ────────────────────────────
+        // Fragment reassembly eviction
         {
             let mut frag_cache = self.fragment_cache.lock();
             fragments::evict_expired_fragments(&mut frag_cache, tick);
         }
 
-        // ── NAT connection-tracking expiry sweep ───────────────────
+        // NAT connection-tracking expiry sweep
         self.nat_table.lock().sweep_expired(tick);
 
-        // ── Packet filter flow-table expiry sweep ──────────────────
+        // Packet filter flow-table expiry sweep
         self.filter_table.lock().sweep_expired(tick);
 
-        // ── IPv6 fragment reassembly eviction ──────────────────────
+        // IPv6 fragment reassembly eviction
         {
             let mut frag_cache = self.ipv6_fragment_cache.lock();
             fragments::evict_expired_ipv6_fragments(&mut frag_cache, tick);
         }
 
-        // ── NTP periodic poll ──────────────────────────────────────
+        // NTP periodic poll
         {
             // Resolving the server's name can park the resolver on a UDP
             // socket, so it must happen with no lock held: the receive thread
@@ -207,7 +207,7 @@ impl NetworkStack {
             }
         }
 
-        // ── mDNS periodic tick (probe/announce/goodbye) ─────────────
+        // mDNS periodic tick (probe/announce/goodbye)
         {
             let mut mdns = self.mdns_responder.lock();
             if let Some(mdns_packet) = mdns.tick(tick) {
@@ -230,7 +230,7 @@ impl NetworkStack {
             }
         }
 
-        // ── IGMP / MLD periodic maintenance ──────────────────────────
+        // IGMP / MLD periodic maintenance
         {
             let mut igmp_state = self.igmp_state.lock();
             let igmp_pending = igmp::igmp_tick_maintenance(self, &mut igmp_state);
@@ -252,11 +252,11 @@ impl NetworkStack {
             }
         }
 
-        // ── Multicast routing (PIM-DM) maintenance ────────────────────
+        // Multicast routing (PIM-DM) maintenance
         // Age out stale PIM prune entries and neighbor state.
         self.mrt().lock().tick(tick, self);
 
-        // ── DHCP lease renewal check ─────────────────────────────────
+        // DHCP lease renewal check
         #[cfg(target_os = "none")]
         {
             let should_renew = {
@@ -285,7 +285,7 @@ impl NetworkStack {
             }
         }
 
-        // ── PPPoE periodic maintenance ─────────────────────────────────
+        // PPPoE periodic maintenance
         // Auto-establish the session (PADI with retransmit while in
         // Discovery) and, once PADS assigns a session, drive the PPP LCP
         // keepalive over the established session.  Zero-cost while the
@@ -345,7 +345,7 @@ impl NetworkStack {
                                 return Err(e);
                             }
                         };
-                        // ── Destination validation ──────────────────────
+                        // Destination validation
                         // Only process packets addressed to a local
                         // interface, a broadcast address, or multicast.
                         // Foreign-addressed packets are dropped before they
@@ -353,7 +353,7 @@ impl NetworkStack {
                         if !self.ipv4_destination_is_local(ip_packet.header.destination) {
                             return Ok(true); // silently drop
                         }
-                        // ── Fragment reassembly ─────────────────────────
+                        // Fragment reassembly
                         let ip_packet = {
                             let mut frag_cache = self.fragment_cache.lock();
                             match fragments::process_ipv4_fragment(
@@ -369,7 +369,7 @@ impl NetworkStack {
                             }
                         };
 
-                        // ── NAT inbound reverse translation (DNAT) ────────
+                        // NAT inbound reverse translation (DNAT)
                         // If NAT is enabled and this packet is addressed to
                         // our external IP, restore the original destination.
                         let ip_packet = {
@@ -406,7 +406,7 @@ impl NetworkStack {
                             }
                         };
 
-                        // ── Packet filter: inbound check (IPv4) ──────────
+                        // Packet filter: inbound check (IPv4)
                         {
                             let mut filter = self.filter_table.lock();
                             if !filter.check_inbound(
@@ -420,7 +420,7 @@ impl NetworkStack {
                             }
                         }
 
-                        // ── Raw socket delivery (IPv4) ─────────────────
+                        // Raw socket delivery (IPv4)
                         {
                             let proto = ip_packet.header.protocol.to_u8();
                             let mut raw_sockets = self.raw_sockets.lock();
@@ -491,7 +491,7 @@ impl NetworkStack {
                         } else if ip_packet.header.protocol
                             == ipv4::IpProtocol::Unknown(pim::PIM_PROTOCOL)
                         {
-                            // ── PIM dispatch (IP protocol 103) ────────────────
+                            // PIM dispatch (IP protocol 103)
                             // PIM-DM control messages (Hello / Join-Prune /
                             // Graft) reach the multicast-routing control plane.
                             // The MRT state lock is taken and released here;
@@ -519,7 +519,7 @@ impl NetworkStack {
                             }
                         } else if ip_packet.header.protocol == ipv4::IpProtocol::Udp {
                             if let Ok(udp_dgram) = udp::parse_datagram(&ip_packet.payload) {
-                                // ── mDNS handler (UDP port 5353) ───────────
+                                // mDNS handler (UDP port 5353)
                                 if udp_dgram.header.destination_port == mdns::MDNS_PORT {
                                     let mut mdns_responder = self.mdns_responder.lock();
                                     if let Some(reply) =
@@ -539,7 +539,7 @@ impl NetworkStack {
                                     // any
                                     // bound socket listening on port 5353.
                                 }
-                                // ── NTP response handler (UDP port 123) ────
+                                // NTP response handler (UDP port 123)
                                 if udp_dgram.header.destination_port == ntp::NTP_PORT {
                                     if let Some(rtc_secs) = crate::arch::timer::rtc_now_unix() {
                                         if let Ok(response) =
@@ -585,8 +585,8 @@ impl NetworkStack {
                                 }
                             }
                         } else if ip_packet.header.protocol == ipv4::IpProtocol::Sctp {
-                            // ── SCTP dispatch (IP protocol 132)
-                            // ───────────────── For
+                            // SCTP dispatch (IP protocol 132)
+                            // For
                             // v1 we look up the association by the SCTP common
                             // header ports.  The association table is
                             // per-stack; a
@@ -611,14 +611,14 @@ impl NetworkStack {
                         let ip_packet = ipv6::parse_packet(&frame.payload)?;
                         self.profiler.inc_ipv6_packets_rx();
 
-                        // ── Destination validation ──────────────────────
+                        // Destination validation
                         // Only process packets addressed to a local
                         // interface or multicast; foreign-addressed packets
                         // are dropped before any reply or NDP activity.
                         if !self.ipv6_destination_is_local(ip_packet.header.destination) {
                             return Ok(true); // silently drop
                         }
-                        // ── IPv6 fragment reassembly ────────────────────
+                        // IPv6 fragment reassembly
                         // If the next header is a Fragment extension header,
                         // reassemble before dispatching.
                         let (ipv6_next_header, ipv6_payload) =
@@ -655,7 +655,7 @@ impl NetworkStack {
                                 (ip_packet.header.next_header, ip_packet.payload.clone())
                             };
 
-                        // ── Extension header chain traversal ────────────
+                        // Extension header chain traversal
                         // Walk through any Hop-by-Hop, Destination Options,
                         // and Routing headers to reach the final protocol.
                         // (Fragment headers are already handled above.)
@@ -683,7 +683,7 @@ impl NetworkStack {
                             (nh, ipv6_payload[payload_offset..].to_vec())
                         };
 
-                        // ── Raw socket delivery (IPv6) ─────────────────
+                        // Raw socket delivery (IPv6)
                         {
                             let proto = ipv6_next_header.to_u8();
                             let mut raw_sockets = self.raw_sockets.lock();
@@ -722,7 +722,7 @@ impl NetworkStack {
                                 );
                             }
                         } else if ipv6_next_header == Ipv6NextHeader::Unknown(pim::PIM_PROTOCOL) {
-                            // ── PIM dispatch (IPv6 next header 103) ───────────
+                            // PIM dispatch (IPv6 next header 103)
                             // PIM messages are identical on the wire for IPv4
                             // and IPv6; route them to the same MRT control plane.
                             let mut mrt = self.mrt.lock();
@@ -750,7 +750,7 @@ impl NetworkStack {
                             }
                         } else if ipv6_next_header == Ipv6NextHeader::Udp {
                             if let Ok(udp_dgram) = udp::parse_datagram(&ipv6_payload) {
-                                // ── mDNS handler (UDP port 5353, IPv6) ─────
+                                // mDNS handler (UDP port 5353, IPv6)
                                 if udp_dgram.header.destination_port == mdns::MDNS_PORT {
                                     let mut mdns_responder = self.mdns_responder.lock();
                                     if let Some(reply) =

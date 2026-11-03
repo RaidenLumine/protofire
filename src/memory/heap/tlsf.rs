@@ -6,7 +6,7 @@
 
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
-// ─── Constants ────────────────────────────────────────────────────────────
+// Constants
 
 pub(crate) const KERNEL_HEAP_SIZE: usize = 64 * 1024 * 1024;
 
@@ -29,7 +29,7 @@ pub(crate) const SL_INDEX_LOG2: usize = 5; // log₂(SL_COUNT)
 
 pub(crate) const FREE_LISTS_COUNT: usize = FL_COUNT * SL_COUNT; // 704
 
-// ─── Block header — 16 bytes on 64‑bit ────────────────────────────────────
+// Block header — 16 bytes on 64‑bit
 
 /// `size` uses the least-significant bit as the free/used flag:
 ///   bit 0 = 0 → block is free
@@ -53,7 +53,7 @@ pub(crate) struct KernelHeap([u8; KERNEL_HEAP_SIZE]);
 pub(crate) static KERNEL_HEAP: SyncUnsafeCell<KernelHeap> =
     SyncUnsafeCell::new(KernelHeap([0; KERNEL_HEAP_SIZE]));
 
-// ─── Allocator state ──────────────────────────────────────────────────────
+// Allocator state
 
 #[derive(Debug)]
 pub(crate) struct AllocatorState {
@@ -87,7 +87,7 @@ impl AllocatorState {
     }
 }
 
-// ─── Utility ──────────────────────────────────────────────────────────────
+// Utility
 
 pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
     value
@@ -95,7 +95,7 @@ pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
         .map(|aligned| aligned & !(align - 1))
 }
 
-// ─── Raw block accessors ──────────────────────────────────────────────────
+// Raw block accessors
 //
 // All functions in this section operate on raw block addresses and are
 // inherently unsafe — the caller must ensure the address points to a valid
@@ -233,7 +233,7 @@ pub(crate) unsafe fn block_set_next_free(block: usize, next: usize) {
     }
 }
 
-// ─── TLSF mapping ─────────────────────────────────────────────────────────
+// TLSF mapping
 
 /// Map a block `size` to its (first‑level, second‑level) class.
 ///
@@ -358,7 +358,7 @@ pub(crate) unsafe fn report_heap_damage(state: &AllocatorState, caller: &str) {
     }
 }
 
-// ─── Post-operation audit ─────────────────────────────────────────────────
+// Post-operation audit
 
 /// Set while a damage report is being printed.
 ///
@@ -426,7 +426,7 @@ pub(crate) unsafe fn audit_after_operation(state: &AllocatorState, operation: &s
     }
 }
 
-// ─── Structural invariant checking ────────────────────────────────────────
+// Structural invariant checking
 
 /// Bytes reserved at the end of every allocation for a canary word.
 ///
@@ -614,7 +614,7 @@ pub(crate) unsafe fn check_invariants(state: &AllocatorState) -> Result<(), Heap
     }
 }
 
-// ─── Recent-operation trace ───────────────────────────────────────────────
+// Recent-operation trace
 
 /// How many recent heap operations are remembered for post-mortem reporting.
 pub(crate) const HEAP_TRACE_DEPTH: usize = 32;
@@ -724,7 +724,7 @@ pub(crate) unsafe fn validate_block(
     }
 }
 
-// ─── Free‑list management ─────────────────────────────────────────────────
+// Free‑list management
 
 /// Insert `block` into the appropriate free list.
 pub(crate) unsafe fn insert_free_block(state: &mut AllocatorState, block: usize) {
@@ -902,7 +902,7 @@ pub(crate) fn find_suitable_block(state: &AllocatorState, min_size: usize) -> us
     // Clamp fl to our range.
     let start_fl = fl.clamp(FL_MIN, FL_MAX);
 
-    // ── Search within the same first‑level class ──
+    // Search within the same first‑level class
     let fl_idx = start_fl - FL_MIN; // safely in 0..FL_COUNT-1
     let sl_mask = state.sl_bitmaps[fl_idx] & !((1u32 << sl) - 1);
     if sl_mask != 0 {
@@ -912,7 +912,7 @@ pub(crate) fn find_suitable_block(state: &AllocatorState, min_size: usize) -> us
         return state.free_lists[idx];
     }
 
-    // ── Search higher first‑level classes ──
+    // Search higher first‑level classes
     // Mask out all bits at or below the current FL class, then scan upwards.
     // We only consider bits 0..FL_COUNT-1; any bits beyond FL_COUNT are stale
     // and must be ignored to avoid out-of-bounds accesses.
@@ -935,7 +935,7 @@ pub(crate) fn find_suitable_block(state: &AllocatorState, min_size: usize) -> us
     0
 }
 
-// ─── Coalescing ──────────────────────────────────────────────────────────
+// Coalescing
 
 /// Validate that `candidate` looks like a genuine free block that physically
 /// follows `predecessor`.  Returns the candidate's size if it passes all
@@ -996,7 +996,7 @@ pub(crate) unsafe fn coalesce(state: &mut AllocatorState, block: usize) -> usize
         let heap_start = state.start;
         let heap_end = state.end;
 
-        // ── Merge with the previous physical block (if free) ──
+        // Merge with the previous physical block (if free)
         if start > heap_start {
             let prev = block_prev_phys(start);
             if prev >= heap_start && prev < start {
@@ -1014,7 +1014,7 @@ pub(crate) unsafe fn coalesce(state: &mut AllocatorState, block: usize) -> usize
             }
         }
 
-        // ── Merge with the next physical block (if free) ──
+        // Merge with the next physical block (if free)
         let end = start.wrapping_add(size);
         if end < heap_end {
             let next = end;

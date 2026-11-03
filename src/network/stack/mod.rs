@@ -122,7 +122,7 @@ pub struct NetworkStack {
     /// Network stack operation profiler (zero-cost when `net_profiler`
     /// feature is disabled).
     pub profiler: NetProfiler,
-    // ── IPv6 fields ──────────────────────────────────────────────────
+    // IPv6 fields
     /// Our IPv6 link-local address (derived from MAC at init time).
     local_ip_v6: Ipv6Addr,
     /// Our IPv6 global unicast address (configured by SLAAC).  `None`
@@ -145,7 +145,7 @@ pub struct NetworkStack {
     dad_conflict: AtomicBool,
     /// The one SLAAC attempt a boot makes, driven by the tick path.
     slaac: Mutex<SlaacState>,
-    // ── Transport / security / multicast routing tables ─────────────
+    // Transport / security / multicast routing tables
     /// DCCP connection table (keyed by local port).
     dccp_table: Mutex<DccpConnectionTable>,
     /// IPsec security policy database.
@@ -158,7 +158,7 @@ pub struct NetworkStack {
     pmtu_cache_v6: Mutex<PmtuCache>,
     /// Link MTU for IPv6 learned from Router Advertisements.
     link_mtu_v6: AtomicU64,
-    // ── Phase 4 fields ───────────────────────────────────────────────
+    // Phase 4 fields
     /// IPv4 reassembly buffer cache (fragmented datagrams in flight).
     fragment_cache: Mutex<FragmentCache>,
     /// Policy routing table (prefix / gateway / interface).

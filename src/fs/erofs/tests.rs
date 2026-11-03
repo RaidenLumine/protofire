@@ -54,7 +54,7 @@ const OFF_LINK: usize = 128;
 const OFF_LARGE: usize = 160;
 const OFF_DEEP: usize = 192;
 
-// ── Image builder ───────────────────────────────────────────────────────────
+// Image builder
 
 fn build_erofs_image() -> Vec<u8> {
     let mut img = vec![0u8; 128 * BLOCK_SIZE];
@@ -221,7 +221,7 @@ fn write_file_data(img: &mut [u8]) {
     img[deep_off..deep_off + DEEP_CONTENT.len()].copy_from_slice(DEEP_CONTENT);
 }
 
-// ── Test helper ─────────────────────────────────────────────────────────────
+// Test helper
 
 fn open_test_volume() -> EroFsVolume {
     let img = build_erofs_image();
@@ -229,7 +229,7 @@ fn open_test_volume() -> EroFsVolume {
     EroFsVolume::open(dev).expect("open EROFS volume")
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[allow(clippy::module_inception)]
 mod tests {

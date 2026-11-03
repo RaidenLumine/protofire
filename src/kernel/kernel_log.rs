@@ -17,7 +17,7 @@ use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
 
-// ─── Ring buffer ───
+// Ring buffer
 
 const RING_CAPACITY: usize = 65536; // 64 KB
 
@@ -146,7 +146,7 @@ pub fn log_len() -> usize {
     KLOG.len()
 }
 
-// ─── Virtual file node ───
+// Virtual file node
 
 /// A VNode that represents either the `/system/logs` root directory or the
 /// `kernel` file within it.
@@ -185,7 +185,7 @@ impl VNode for LogNode {
     }
 }
 
-// ─── Lightweight filesystem ───
+// Lightweight filesystem
 
 /// A read-only virtual filesystem that hosts a single `kernel` log file.
 pub struct KernelLogFileSystem;
@@ -263,7 +263,7 @@ pub fn mount_kernel_logs(mount_path: &str) -> Result<()> {
     )
 }
 
-// ─── tests ───
+// tests
 
 #[cfg(test)]
 mod tests {

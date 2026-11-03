@@ -16,7 +16,7 @@ use alloc::sync::Arc;
 use super::process::scheduler::load_current_scheduler_ptr;
 use super::process::Process;
 
-// ── Badness scoring ─────────────────────────────────────────────────────────
+// Badness scoring
 
 /// Compute an OOM-badness score for a single process.
 ///
@@ -58,7 +58,7 @@ fn oom_badness(process: &Process) -> u64 {
     score.max(1)
 }
 
-// ── Victim selection ────────────────────────────────────────────────────────
+// Victim selection
 
 /// Select the process with the highest OOM badness score from the scheduler's
 /// process list.  Returns `None` if every process scored 0 (nothing killable).
@@ -88,7 +88,7 @@ pub fn select_victim() -> Option<(Arc<Process>, u64)> {
     best
 }
 
-// ── OOM kill entry point ────────────────────────────────────────────────────
+// OOM kill entry point
 
 /// Attempt to free memory by killing the worst-scoring process.
 ///

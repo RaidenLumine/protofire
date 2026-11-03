@@ -20,7 +20,7 @@ pub mod types;
 
 use buffer::AuditBuffer;
 
-// ── Global audit buffer ───────────────────────────────────────────────────
+// Global audit buffer
 
 static GLOBAL_AUDIT_BUFFER: AtomicPtr<AuditBuffer> = AtomicPtr::new(ptr::null_mut());
 

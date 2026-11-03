@@ -15,7 +15,7 @@
 
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
-// ── PerCpuData struct ────────────────────────────────────────────────────
+// PerCpuData struct
 
 /// Per-CPU data block, aligned to a cache line (64 bytes).
 ///
@@ -104,7 +104,7 @@ impl PerCpuData {
     }
 }
 
-// ── Public accessors ────────────────────────────────────────────────────
+// Public accessors
 
 /// Return a reference to the current CPU's [`PerCpuData`].
 ///

@@ -253,28 +253,27 @@ rather than to omit it — obviousness is what makes an invariant worth recordin
 
 ## 6. Section separators
 
-Long files are divided into labelled sections with a rule made of Unicode box
-drawing characters. This is the dominant style in the tree, and it is what new
-code should follow:
+Long files are divided into labelled sections with a **plain comment line**:
 
 ```rust
-// ── Syscall number ─────────────────────────────────────────────────────────
-// ── Rule actions ──────────────────────────────────────────────────────────
-// ── Public API ────────────────────────────────────────────────────────────
+// Syscall number
+// Rule actions
+// Public API
 ```
 
-- Use `─` (U+2500, light horizontal). A double-line variant built from `═`
-  (U+2550) exists for major divisions in a handful of files; it is not needed
-  in new code.
-- **Two leading dashes, one space, the label, one space, then fill to roughly
-  the 100-column limit** configured in [`.rustfmt.toml`](../../.rustfmt.toml).
-  The exact fill length does not matter; lining several separators up does.
-- Section names are short and noun-like: `Constants`, `Public API`,
-  `Tests`, `Request codes`.
+- One `//`, one space, the label.  Nothing else: a rule of Unicode box-drawing
+  characters is a line of ink a reader has to skip past to read four words, and
+  it costs the same vertical space as the label it decorates.
+- Section names are short and noun-like: `Constants`, `Public API`, `Tests`,
+  `Request codes`.
+- A file short enough to need no sections does not get any.  A label is a claim
+  that what follows is a distinct part of the file; a file with one part has
+  nothing to divide.
 
-ASCII rules made of `=` or `-` characters survive in older files, mostly under
-`src/arch/` and `src/drivers/`. They are **legacy**: do not copy them into new
-code, and prefer the box-drawing form when you touch a file that mixes both.
+The box-drawing style (`// ── Label ───────`) was this tree's convention and is
+gone from it: every separator was converted in one change, and the two trees
+that share this document agree on the plain form.  A rule that did not carry a
+label was decoration over an empty section and was removed outright.
 
 ---
 

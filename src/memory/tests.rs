@@ -51,7 +51,7 @@ fn init_remains_uninitialized_when_heap_bootstrap_mapping_conflicts() {
     assert!(memory.page_table.lookup(heap_start).is_some());
 }
 
-// ── register_user_pages ──────────────────────────────────────────────
+// register_user_pages
 
 #[test]
 fn register_user_pages_adds_anonymous_mappings() {
@@ -224,7 +224,7 @@ fn register_user_pages_skips_kernel_mapping_conflicts() {
     assert_eq!(kind, MappingKind::KernelHeap);
 }
 
-// ── memory-manager lock owner ───────────────────────────────────────────
+// memory-manager lock owner
 //
 // The x86_64 page-fault handler cannot resolve a fault without the memory
 // manager, and the fault may have been raised *by* a critical section that

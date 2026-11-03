@@ -37,7 +37,7 @@ const TOTAL_SECTORS: u32 = 240;
 const ROOT_CLUSTER: u32 = 2;
 const ATTR_DIRECTORY: u8 = 0x10;
 
-// ── Image builder ───────────────────────────────────────────────────────────
+// Image builder
 
 fn put_u16(img: &mut [u8], off: usize, val: u16) {
     img[off..off + 2].copy_from_slice(&val.to_le_bytes());
@@ -54,7 +54,7 @@ fn build_writable_fat32_image() -> Vec<u8> {
     let total = TOTAL_SECTORS as usize * BYTES_PER_SECTOR;
     let mut img = vec![0u8; total];
 
-    // ── Boot sector ───────────────────────────────────────────────────────
+    // Boot sector
     let boot = &mut img[..BYTES_PER_SECTOR];
     boot[0..3].copy_from_slice(b"\xEB\x3C\x90"); // jump (not validated)
     boot[3..11].copy_from_slice(b"MSDOS5.0"); // OEM name (not validated)
@@ -78,7 +78,7 @@ fn build_writable_fat32_image() -> Vec<u8> {
     boot[510] = 0x55;
     boot[511] = 0xAA;
 
-    // ── FAT tables (two identical copies) ─────────────────────────────────
+    // FAT tables (two identical copies)
     let fat_base = RESERVED_SECTORS as usize * BYTES_PER_SECTOR;
     for fat in 0..NUM_FATS as usize {
         let base = fat_base + fat * SECTORS_PER_FAT as usize * BYTES_PER_SECTOR;
@@ -87,7 +87,7 @@ fn build_writable_fat32_image() -> Vec<u8> {
         put_u32(&mut img, base + 8, 0x0FFF_FFFF); // FAT[2] root dir EOC
     }
 
-    // ── Root directory (cluster 2) ────────────────────────────────────────
+    // Root directory (cluster 2)
     let root_off = data_start_lba() as usize * BYTES_PER_SECTOR;
     let dot = *b".          ";
     write_short_entry(&mut img, root_off, &dot, ATTR_DIRECTORY, ROOT_CLUSTER, 0);
@@ -105,14 +105,14 @@ fn build_writable_fat32_image() -> Vec<u8> {
     img
 }
 
-// ── Test helper ─────────────────────────────────────────────────────────────
+// Test helper
 
 fn make_writable_volume(image: Vec<u8>) -> FatVolume {
     let dev: Arc<dyn BlockDevice> = MemoryBlockDevice::new("test-fat32-rw", image, false);
     FatVolume::open(dev).expect("open FAT32 volume")
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// Tests
 
 #[allow(clippy::module_inception)]
 mod tests {

@@ -284,7 +284,7 @@ pub fn driver() -> Arc<dyn Driver> {
     Arc::new(AhciDriver)
 }
 
-// ─── AHCI controller ─────────────────────────────────────────────────────
+// AHCI controller
 
 /// A fully initialised AHCI controller port that implements `BlockDevice`.
 ///
@@ -366,13 +366,13 @@ impl AhciPort {
             let bar5_size = 0x8000_usize;
             let hba = map_device_mmio(bar5_phys, bar5_size).ok_or(crate::Error::NotFound)?;
 
-            // ── 1. Verify AHCI mode is enabled ────────────────────────────
+            // 1. Verify AHCI mode is enabled
             let ghc: u32 = read_volatile(hba.add(AHCI_REG_GHC) as *const u32);
             if (ghc & GHC_AE) == 0 {
                 write_volatile(hba.add(AHCI_REG_GHC) as *mut u32, ghc | GHC_AE);
             }
 
-            // ── 2. Allocate port DMA buffers ──────────────────────────────
+            // 2. Allocate port DMA buffers
             let clb_frames = AHCI_CL_TOTAL_SIZE.div_ceil(4096);
             let fb_frames = AHCI_RFIS_SIZE.div_ceil(4096);
             let ct_frames = AHCI_CT_TOTAL_SIZE.div_ceil(4096);
@@ -402,7 +402,7 @@ impl AhciPort {
             // for clarity.
             core::ptr::write_bytes(fb.as_ptr(), 0, AHCI_RFIS_SIZE);
 
-            // ── 3. Stop port command engine (if running) ──────────────────
+            // 3. Stop port command engine (if running)
             let cmd_addr = port_reg(hba, port, PORT_CMD);
             let mut cmd: u32 = read_volatile(cmd_addr as *const u32);
 
@@ -442,12 +442,12 @@ impl AhciPort {
                 core::hint::spin_loop();
             }
 
-            // ── 4. Clear port error status ────────────────────────────────
+            // 4. Clear port error status
             write_volatile(port_reg(hba, port, PORT_SERR) as *mut u32, PX_SERR_CLEAR);
             // Clear pending interrupts.
             write_volatile(port_reg(hba, port, PORT_IS) as *mut u32, 0xFFFF_FFFF);
 
-            // ── 5. Set up port DMA pointers ───────────────────────────────
+            // 5. Set up port DMA pointers
             let clb_phys = clb.phys_addr() as u64;
             let fb_phys = fb.phys_addr() as u64;
 
@@ -462,7 +462,7 @@ impl AhciPort {
                 (fb_phys >> 32) as u32,
             );
 
-            // ── 6. Start port command engine ──────────────────────────────
+            // 6. Start port command engine
             // Set FRE first, then ST, per the AHCI init sequence.
             cmd = read_volatile(cmd_addr as *const u32);
             cmd |= CMD_FRE | CMD_ST;
@@ -482,7 +482,7 @@ impl AhciPort {
                 core::hint::spin_loop();
             }
 
-            // ── 7. Identify device ────────────────────────────────────────
+            // 7. Identify device
             let mut port_ctrl = Self {
                 hba,
                 port,
@@ -673,7 +673,7 @@ impl AhciPort {
 
             let data_byte_count = (block_count as usize) * 512;
 
-            // ── 1. Build the H2D Register FIS ──────────────────────────────
+            // 1. Build the H2D Register FIS
             let fis = H2dRegisterFis {
                 fis_type: FIS_TYPE_H2D,
                 flags: if is_write { 0x80 | (1 << 6) } else { 0x80 }, // C=1, W=write
@@ -693,7 +693,7 @@ impl AhciPort {
             };
             write_volatile(self.ct.as_ptr() as *mut H2dRegisterFis, fis);
 
-            // ── 2. Build the PRDT entry ───────────────────────────────────
+            // 2. Build the PRDT entry
             let prdt_entry = AhciPrdtEntry {
                 dba: buf_phys as u32,
                 dbau: (buf_phys >> 32) as u32,
@@ -705,7 +705,7 @@ impl AhciPort {
                 prdt_entry,
             );
 
-            // ── 3. Set up the Command List entry (slot 0) ──────────────────
+            // 3. Set up the Command List entry (slot 0)
             let cl_entry =
                 self.clb.as_ptr().add(cmd_slot * AHCI_CL_ENTRY_SIZE) as *mut AhciCmdHeader;
             write_volatile(
@@ -721,7 +721,7 @@ impl AhciPort {
                 },
             );
 
-            // ── 4. Ring the doorbell ──────────────────────────────────────
+            // 4. Ring the doorbell
             // Clear any stale completion status first.
             write_volatile(
                 port_reg(self.hba, self.port, PORT_IS) as *mut u32,
@@ -732,7 +732,7 @@ impl AhciPort {
                 1 << cmd_slot,
             );
 
-            // ── 5. Poll for completion ────────────────────────────────────
+            // 5. Poll for completion
             let mut waited = 0;
             loop {
                 let ci: u32 = read_volatile(port_reg(self.hba, self.port, PORT_CI) as *const u32);
@@ -746,7 +746,7 @@ impl AhciPort {
                 core::hint::spin_loop();
             }
 
-            // ── 6. Check for errors ───────────────────────────────────────
+            // 6. Check for errors
             let tfd: u32 = read_volatile(port_reg(self.hba, self.port, PORT_TFD) as *const u32);
             if (tfd & 0x01) != 0 {
                 // ERR bit set — read the error register for diagnostics.
@@ -765,7 +765,7 @@ impl AhciPort {
     }
 }
 
-// ─── BlockDevice implementation ──────────────────────────────────────────
+// BlockDevice implementation
 
 #[cfg(target_os = "none")]
 impl BlockDevice for AhciPort {
@@ -876,7 +876,7 @@ impl BlockDevice for AhciPort {
     }
 }
 
-// ─── Probe and boot-disk selection ───────────────────────────────────────
+// Probe and boot-disk selection
 
 /// Enumerate AHCI PCI devices and store the first one for later
 /// initialisation by `probe_boot_disk`.

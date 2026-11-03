@@ -106,7 +106,7 @@ fn table() -> Table {
     table
 }
 
-// ── signals ─────────────────────────────────────────────────────────────
+// signals
 
 #[test]
 fn a_denied_signal_is_not_delivered() {
@@ -197,7 +197,7 @@ fn a_signal_to_an_unknown_pid_stays_not_found_under_a_denying_policy() {
     );
 }
 
-// ── network ─────────────────────────────────────────────────────────────
+// network
 
 #[test]
 fn a_denied_connect_does_not_reach_a_listener() {
@@ -289,7 +289,7 @@ fn a_denied_bind_is_refused_before_the_stack_is_asked() {
     );
 }
 
-// ── ptrace ──────────────────────────────────────────────────────────────
+// ptrace
 
 #[test]
 fn a_denied_attach_leaves_the_tracer_link_unset() {

@@ -202,7 +202,7 @@ pub fn fragment_packet(
     Some(fragments)
 }
 
-// ─── Checksum helpers ───────────────────────────────────────────────────
+// Checksum helpers
 
 /// Add the 40-byte IPv6 pseudo-header to a running checksum accumulator.
 ///
@@ -255,7 +255,7 @@ pub fn pseudo_header_checksum_input(
     buf
 }
 
-// ─── Parse / build ──────────────────────────────────────────────────────
+// Parse / build
 
 /// Parse an IPv6 packet from a byte slice.
 ///
@@ -344,7 +344,7 @@ pub fn build_packet(header: &Ipv6Header, payload: &[u8]) -> Vec<u8> {
     buf
 }
 
-// ─── Well-known addresses & helpers ─────────────────────────────────────
+// Well-known addresses & helpers
 
 /// IPv6 unspecified address `::`.
 pub const IPV6_UNSPECIFIED: Ipv6Addr = [0u8; 16];
@@ -403,7 +403,7 @@ pub fn multicast_mac_from_ipv6(ip: Ipv6Addr) -> [u8; 6] {
     [0x33, 0x33, ip[12], ip[13], ip[14], ip[15]]
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────
+// tests
 
 #[cfg(test)]
 mod tests {

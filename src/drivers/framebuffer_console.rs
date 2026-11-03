@@ -324,7 +324,7 @@ static FALLBACK_GLYPH: &[u8; 16] = &[
     0xDB,0xDB,0xC3,0xDB,0xDB,0xC3,0xFF,0x00,
 ];
 
-// ─── Console state ────────────────────────────────────────────────────────
+// Console state
 
 pub struct FramebufferConsole {
     fb_ptr: *mut u8,
@@ -585,7 +585,7 @@ impl FramebufferConsole {
     }
 }
 
-// ─── Global console ──────────────────────────────────────────────────────
+// Global console
 
 static CONSOLE: SpinLock<Option<FramebufferConsole>> = SpinLock::new(None);
 

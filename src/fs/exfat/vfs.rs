@@ -30,7 +30,7 @@ use super::types::*;
 use super::ExfatFs;
 use super::ExfatVolume;
 
-// ─── Public volume entry point ─────────────────────────────────────────────
+// Public volume entry point
 
 impl ExfatVolume {
     /// Open an exFAT volume from the given block device.
@@ -54,7 +54,7 @@ impl ExfatVolume {
     }
 }
 
-// ─── VFS trait implementation ──────────────────────────────────────────────
+// VFS trait implementation
 
 impl VfsTrait for ExfatVolume {
     fn name(&self) -> &str {
@@ -486,7 +486,7 @@ impl VfsTrait for ExfatVolume {
     }
 }
 
-// ─── exFAT VNode ───────────────────────────────────────────────────────────
+// exFAT VNode
 
 struct ExfatVNode {
     /// File/directory name (immutable after creation).

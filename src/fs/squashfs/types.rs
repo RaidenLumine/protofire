@@ -17,7 +17,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// ── Superblock ──────────────────────────────────────────────────────────────
+// Superblock
 
 pub const SQUASHFS_MAGIC: u32 = 0x7371_7368; // "hsqs"
 pub const SUPERBLOCK_SIZE: usize = 96;
@@ -69,7 +69,7 @@ impl Superblock {
     }
 }
 
-// ── Inode types ─────────────────────────────────────────────────────────────
+// Inode types
 
 #[derive(Debug, Clone)]
 pub enum Inode {
@@ -191,7 +191,7 @@ pub fn parse_inode(table: &[u8], offset: u32) -> Option<(Inode, usize)> {
     }
 }
 
-// ── Directory entries ───────────────────────────────────────────────────────
+// Directory entries
 
 #[derive(Debug, Clone)]
 pub struct ParsedDirEntry {
@@ -243,7 +243,7 @@ pub fn parse_dir_entries(data: &[u8]) -> Vec<ParsedDirEntry> {
     entries
 }
 
-// ── Extended attributes ──────────────────────────────────────────────────────
+// Extended attributes
 
 /// Each xattr ID table entry is 16 bytes: u64 position + u32 count + u32 size.
 pub const XATTR_ID_TABLE_ENTRY_SIZE: usize = 16;
@@ -374,7 +374,7 @@ pub fn parse_extended_inode_xattr_idx(
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// Helpers
 
 fn get_u16(buf: &[u8], off: usize) -> u16 {
     u16::from_le_bytes([buf[off], buf[off + 1]])

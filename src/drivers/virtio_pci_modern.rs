@@ -39,7 +39,7 @@ use crate::drivers::virtio::REG_VENDOR_ID;
 use crate::drivers::virtio::REG_VERSION;
 use crate::drivers::virtio::VIRTIO_VERSION;
 
-// ─── Modern PCI BAR layout (QEMU) ───────────────────────────────
+// Modern PCI BAR layout (QEMU)
 
 /// Offset of the common config structure within the MMIO BAR.
 const COMMON_CFG_OFFSET: u64 = 0x0000;
@@ -56,7 +56,7 @@ const NOTIFY_OFF_MULTIPLIER: u64 = 4;
 /// the cache is indexed by queue index and consulted on every doorbell kick.
 const MAX_QUEUES: usize = 64;
 
-// ─── Common config field offsets (VirtIO 1.0 §4.1.4) ────────────
+// Common config field offsets (VirtIO 1.0 §4.1.4)
 
 const CFG_DEVICE_FEATURE_SELECT: u64 = 0x00; // le32
 const CFG_DEVICE_FEATURE: u64 = 0x04; // le32, read-only
@@ -73,7 +73,7 @@ const CFG_QUEUE_DESC: u64 = 0x20; // le64
 const CFG_QUEUE_DRIVER: u64 = 0x28; // le64
 const CFG_QUEUE_DEVICE: u64 = 0x30; // le64
 
-// ─── Transport ───────────────────────────────────────────────────
+// Transport
 
 /// Modern (VirtIO 1.0) PCI transport wrapping a memory-mapped BAR.
 ///
@@ -151,7 +151,7 @@ impl PciModernRegion {
         }
     }
 
-    // ── Low-level MMIO helpers ──────────────────────────────────
+    // Low-level MMIO helpers
 
     /// Read a 32-bit register of the BAR.
     ///

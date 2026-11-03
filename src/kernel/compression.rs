@@ -12,7 +12,7 @@
 
 use crate::Error;
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// Constants
 
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
@@ -23,7 +23,7 @@ const BLOCK_RAW: u32 = 0;
 const BLOCK_RLE: u32 = 1;
 const BLOCK_COMPRESSED: u32 = 2;
 
-// ── Public API ─────────────────────────────────────────────────────────────
+// Public API
 
 /// Decompress a single ZSTD frame from `src` into `dst`.
 ///

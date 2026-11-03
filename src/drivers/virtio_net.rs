@@ -33,7 +33,7 @@ use crate::network::link::device::NetworkDevice;
 use crate::Error;
 use crate::Result;
 
-// ─── VirtIO net feature bits (spec section 5.1.3) ───
+// VirtIO net feature bits (spec section 5.1.3)
 
 /// Device provides a MAC address in config space.
 const VIRTIO_NET_F_MAC: u32 = 1 << 5;
@@ -44,12 +44,12 @@ const VIRTIO_NET_F_STATUS: u32 = 1 << 16;
 #[cfg_attr(not(any(target_os = "none", test)), allow(dead_code))]
 const SUPPORTED_FEATURES: u32 = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
 
-// ─── VirtIO net header flags (spec section 5.1.6) ───
+// VirtIO net header flags (spec section 5.1.6)
 
 /// No checksum / offload needed; packet data is bare.
 const VIRTIO_NET_HDR_F_NONE: u8 = 0;
 
-// ─── VirtIO net header (spec section 5.1.6) ───
+// VirtIO net header (spec section 5.1.6)
 
 /// The 10-byte header prepended to every packet on both TX and RX queues.
 /// We use it in "none" mode (no checksum / GSO offload).
@@ -65,21 +65,21 @@ struct VirtioNetHdr {
 
 const VIRTIO_NET_HDR_SIZE: usize = core::mem::size_of::<VirtioNetHdr>();
 
-// ─── Default VirtIO queue assignments ───
+// Default VirtIO queue assignments
 
 const RECEIVE_QUEUE: u16 = 0;
 const TRANSMIT_QUEUE: u16 = 1;
 #[allow(dead_code)]
 const DEFAULT_QUEUE_SIZE: u16 = 128;
 
-// ─── Descriptor chain slot counts ───
+// Descriptor chain slot counts
 
 /// TX descriptor count: [header (device-readable), data (device-readable)]
 const TX_DESC_COUNT: u16 = 2;
 /// RX descriptor count: [header (device-writable), data (device-writable)]
 const RX_DESC_COUNT: u16 = 2;
 
-// ─── RX buffer pool ───
+// RX buffer pool
 
 /// Number of pre-allocated receive buffers kept in the available ring so the
 /// device always has somewhere to deliver incoming packets.
@@ -96,7 +96,7 @@ struct RxPacketBuffer {
     data: [u8; RX_DATA_SIZE],
 }
 
-// ─── Device-specific config space offsets ───
+// Device-specific config space offsets
 
 /// MAC address lives at offset 0x100 in device-specific config (section 5.1.4).
 const NET_CONFIG_MAC_LO: u64 = 0x100;
@@ -239,7 +239,7 @@ fn queue_msi_handler(
 static MSI_WOKEN_WAITS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 #[cfg(target_os = "none")]
 static MSI_IDLE_WAKEUPS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-// ─── VirtIO net driver ───
+// VirtIO net driver
 
 /// A VirtIO network device driver.
 ///
@@ -404,7 +404,7 @@ impl VirtIoNet {
             .write32(REG_QUEUE_NOTIFY, queue_index as u32);
     }
 
-    // ─── RX buffer priming ───
+    // RX buffer priming
 
     /// Ensure the RX available ring holds at least one empty buffer so the
     /// device can deliver an incoming packet.
@@ -462,7 +462,7 @@ impl VirtIoNet {
         Ok(())
     }
 
-    // ─── TX path ───
+    // TX path
 
     /// Internal: transmit a packet through the TX virtqueue.
     fn do_send(&self, packet: &[u8]) -> Result<()> {
@@ -526,7 +526,7 @@ impl VirtIoNet {
         Ok(())
     }
 
-    // ─── RX path ───
+    // RX path
 
     /// Internal: try to receive one packet through the RX virtqueue.
     /// Returns `Ok(0)` when no packet is available (non-blocking poll).
@@ -543,7 +543,7 @@ impl VirtIoNet {
             }
         }
 
-        // ── virtqueue path (host and bare-metal) ──────────────────────
+        // virtqueue path (host and bare-metal)
         // Prime the available ring so the device has somewhere to write.
         self.prime_rx_ring()?;
 
@@ -627,7 +627,7 @@ impl VirtIoNet {
         Ok(copy_len)
     }
 
-    // ─── Polling (bare-metal only) ───
+    // Polling (bare-metal only)
 
     #[cfg(target_os = "none")]
     fn poll_completion(&self, queue_index: u16) -> Result<()> {
@@ -714,7 +714,7 @@ impl VirtIoNet {
     }
 }
 
-// ─── NetworkDevice impl ───
+// NetworkDevice impl
 
 impl NetworkDevice for VirtIoNet {
     fn name(&self) -> &str {
@@ -753,7 +753,7 @@ impl NetworkDevice for VirtIoNet {
     }
 }
 
-// ─── Mock virtqueue processing for host-side testing ───
+// Mock virtqueue processing for host-side testing
 
 #[cfg(not(target_os = "none"))]
 fn process_net_tx_virtqueue(
@@ -874,9 +874,9 @@ fn process_net_rx_virtqueue(queue: &mut VirtQueue, packet: &[u8]) -> Result<()> 
     Ok(())
 }
 
-// ─── Device discovery ───
+// Device discovery
 
-// ── Driver registration ──
+// Driver registration
 
 struct VirtIoNetDriver;
 
@@ -1156,7 +1156,7 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
     None
 }
 
-// ─── tests ───
+// tests
 
 #[cfg(test)]
 mod tests {

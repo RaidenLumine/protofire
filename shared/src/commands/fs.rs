@@ -25,11 +25,11 @@ use crate::path_util::resolve_path;
 use crate::syscall;
 use crate::types::CmdResult;
 
-// ── Buffer size for file reads ─────────────────────────────────────────
+// Buffer size for file reads
 
 const CAT_BUF_SIZE: usize = 4096;
 
-// ── Error message helper ────────────────────────────────────────────────
+// Error message helper
 // Error codes match crate::Error discriminant encoding (see syscall_bridge.rs):
 //   InvalidArgument(0)→-1  NotFound(1)→-2  AlreadyExists(2)→-3
 //   PermissionDenied(3)→-4  etc.
@@ -82,14 +82,14 @@ fn hint_for(error_str: &str, command: &str) -> &'static str {
     }
 }
 
-// ─── pwd ────────────────────────────────────────────────────────────────
+// pwd
 
 /// `pwd` — print the current working directory.
 pub fn cmd_pwd(cwd: &str) -> CmdResult {
     CmdResult::from_output(format!("{cwd}\n"))
 }
 
-// ─── cd ─────────────────────────────────────────────────────────────────
+// cd
 
 /// `cd` — change the current working directory.
 ///
@@ -138,7 +138,7 @@ pub fn cmd_cd(cwd: &mut String, argv: &[String], home_dir: Option<&str>) -> CmdR
     }
 }
 
-// ─── ls ─────────────────────────────────────────────────────────────────
+// ls
 
 pub fn cmd_ls(cwd: &str, argv: &[String]) -> CmdResult {
     // Parse flags and target path.
@@ -220,7 +220,7 @@ pub fn cmd_ls(cwd: &str, argv: &[String]) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ─── cat ────────────────────────────────────────────────────────────────
+// cat
 
 pub fn cmd_cat(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     if argv.len() < 2 && stdin.is_none() {
@@ -288,7 +288,7 @@ pub fn cmd_cat(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ─── mkdir ──────────────────────────────────────────────────────────────
+// mkdir
 
 pub fn cmd_mkdir(cwd: &str, argv: &[String]) -> CmdResult {
     // Parse optional -p flag.
@@ -369,7 +369,7 @@ fn cmd_mkdir_parents(path_str: &str, full_path: &str) -> CmdResult {
     CmdResult::empty()
 }
 
-// ─── rm ─────────────────────────────────────────────────────────────────
+// rm
 
 pub fn cmd_rm(cwd: &str, argv: &[String]) -> CmdResult {
     // Parse optional -r flag.
@@ -459,7 +459,7 @@ fn remove_recursive(path: &str) -> Result<(), isize> {
     Ok(())
 }
 
-// ─── touch ──────────────────────────────────────────────────────────────
+// touch
 
 pub fn cmd_touch(cwd: &str, argv: &[String]) -> CmdResult {
     if argv.len() < 2 {
@@ -483,7 +483,7 @@ pub fn cmd_touch(cwd: &str, argv: &[String]) -> CmdResult {
     }
 }
 
-// ─── cp ─────────────────────────────────────────────────────────────────
+// cp
 
 pub fn cmd_cp(cwd: &str, argv: &[String]) -> CmdResult {
     // Parse optional -r flag.
@@ -660,7 +660,7 @@ fn copy_recursive(src_dir: &str, dst_dir: &str, dst_str: &str) -> CmdResult {
     CmdResult::empty()
 }
 
-// ─── mv ─────────────────────────────────────────────────────────────────
+// mv
 
 pub fn cmd_mv(cwd: &str, argv: &[String]) -> CmdResult {
     if argv.len() < 3 {
@@ -690,7 +690,7 @@ pub fn cmd_mv(cwd: &str, argv: &[String]) -> CmdResult {
     }
 }
 
-// ─── human_size ──────────────────────────────────────────────────────────
+// human_size
 
 /// Format a byte count as a human-readable size string ("3.2M", "1.5K", "42B").
 pub fn human_size(bytes: usize) -> String {
@@ -744,7 +744,7 @@ fn cstr_field(field: &[u8]) -> &str {
     core::str::from_utf8(&field[..end]).unwrap_or("")
 }
 
-// ─── chmod ───────────────────────────────────────────────────────────────
+// chmod
 
 pub fn cmd_chmod(cwd: &str, argv: &[String]) -> CmdResult {
     let mut recursive = false;
@@ -836,7 +836,7 @@ fn chmod_recursive(dir_path: &str, mode: u16) {
     }
 }
 
-// ─── df ──────────────────────────────────────────────────────────────────
+// df
 
 pub fn cmd_df(_argv: &[String]) -> CmdResult {
     let mut buf = [0u8; 8192];
@@ -868,7 +868,7 @@ pub fn cmd_df(_argv: &[String]) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ─── du ──────────────────────────────────────────────────────────────────
+// du
 
 pub fn cmd_du(cwd: &str, argv: &[String]) -> CmdResult {
     let mut human = false;

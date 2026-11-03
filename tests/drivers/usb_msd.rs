@@ -27,7 +27,7 @@ use protofire::fs::vfs::FileSystem;
 use protofire::Error;
 use protofire::Result;
 
-// ── Mock USB Controller ─────────────────────────────────────────────────
+// Mock USB Controller
 
 /// Mock USB controller mirroring the bulk endpoint routing the MSD driver
 /// uses: one bulk OUT endpoint that accumulates writes, and one bulk IN
@@ -80,7 +80,7 @@ impl Default for MockUsbController {
     }
 }
 
-// ── Mock Block Device for Testing ───────────────────────────────────────
+// Mock Block Device for Testing
 
 /// Mock block device that simulates a USB mass storage device.  The
 /// [`BlockDevice`] methods take `&self`, so the backing store uses interior
@@ -184,7 +184,7 @@ impl BlockDevice for MockBlockDevice {
     }
 }
 
-// ── Test Cases ─────────────────────────────────────────────────────────
+// Test Cases
 
 /// Test that the mock USB controller routes bulk OUT writes to the OUT data
 /// buffer and drains the IN buffer on reads, rejecting wrong endpoints.
@@ -436,7 +436,7 @@ fn test_usb_msd_performance() {
     assert!(read_elapsed.as_millis() < 10_000);
 }
 
-// ── MBR partition scan + mount workflow ──────────────────────────────────
+// MBR partition scan + mount workflow
 
 /// A block device that reports a non-512-byte sector size (e.g. a 4K-native
 /// USB stick).  Used to verify the partition scanner refuses — rather than

@@ -55,7 +55,7 @@ pub(crate) fn and_init() -> Option<()> {
         );
     }
 
-    // ── Try modern PCI transport via MMIO BAR ──
+    // Try modern PCI transport via MMIO BAR
     let result = if let Some(mmio_bar) = device
         .bars
         .iter()
@@ -99,7 +99,7 @@ pub(crate) fn and_init() -> Option<()> {
         }
         initialised
     } else {
-        // ── Fallback: legacy IO-port BAR ──
+        // Fallback: legacy IO-port BAR
         let io_bar = device
             .bars
             .first()

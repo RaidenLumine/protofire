@@ -26,7 +26,7 @@ use protofire::fs::pyrofs::PyroFsVolume;
 use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::Error;
 
-// ── Deterministic PRNG ─────────────────────────────────────────────────────
+// Deterministic PRNG
 
 struct Lcg {
     state: u64,
@@ -51,7 +51,7 @@ impl Lcg {
     }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// Helpers
 
 fn open_volume(device: Arc<MemoryBlockDevice>) -> (Arc<PyroFs>, PyroFsVolume) {
     let fs = PyroFs::open(device, true).expect("open writable pyrofs");
@@ -76,7 +76,7 @@ fn seed_content(volume: &PyroFsVolume) -> Vec<u8> {
     support::read_all(&*node)
 }
 
-// ── Test ───────────────────────────────────────────────────────────────────
+// Test
 
 #[test]
 fn failed_transactions_leave_no_trace() {

@@ -10,7 +10,7 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-// ─── Conditional chaining (&& / ||) ───────────────────────────────────
+// Conditional chaining (&& / ||)
 
 /// A segment of a conditionally-chained command line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,7 +95,7 @@ pub fn tokenize_conditionals(line: &str) -> Vec<CondToken> {
     tokens
 }
 
-// ─── Pipeline and redirect parsing helpers ────────────────────────────
+// Pipeline and redirect parsing helpers
 
 /// Returns `true` if the line contains any shell operator (`|`, `>`, `<`).
 pub fn has_shell_operator(line: &str) -> bool {

@@ -18,7 +18,7 @@ use core::sync::atomic::Ordering;
 /// Always available even when profiling is compiled out (returns all zeros).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FaultProfilerSnapshot {
-    // ─── fault type counters ───
+    // fault type counters
     pub faults_total: u64,
     pub page_faults_total: u64,
     pub page_faults_user: u64,
@@ -34,7 +34,7 @@ pub struct FaultProfilerSnapshot {
     pub general_protection_total: u64,
     pub device_not_available_total: u64,
     pub other_exceptions_total: u64,
-    // ─── outcome counters ───
+    // outcome counters
     pub faults_delivered_to_handler: u64,
     pub faults_no_handler: u64,
     pub faults_terminated: u64,
@@ -149,7 +149,7 @@ impl FaultProfiler {
         }
     }
 
-    // ─── fault type counters ───
+    // fault type counters
 
     #[inline]
     pub fn inc_faults_total(&self) {
@@ -273,7 +273,7 @@ impl FaultProfiler {
         let _ = self;
     }
 
-    // ─── outcome counters ───
+    // outcome counters
 
     #[inline]
     pub fn inc_faults_delivered_to_handler(&self) {

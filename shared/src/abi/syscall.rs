@@ -14,7 +14,7 @@ pub const SYSCALL_ABI_VERSION_MINOR: u32 = 6;
 pub const SYSCALL_COUNT: usize = 196;
 pub const MAX_SYSCALLS: usize = 256;
 
-// ── Status encoding ──────────────────────────────────────────────────
+// Status encoding
 //
 // A syscall returns one word.  Success is the value itself; failure is
 // `usize::MAX - code` for a small code, which leaves the top of the range for
@@ -40,7 +40,7 @@ pub const ERROR_CODE_MAX: usize = 10;
 /// Every status at or above this is an error.
 pub const ERROR_STATUS_FLOOR: usize = usize::MAX - ERROR_CODE_MAX;
 
-// ── Syscall numbers (0-191) ──────────────────────────────────────────
+// Syscall numbers (0-191)
 
 pub const SYS_YIELD: usize = 0;
 pub const SYS_WRITE_DEBUG: usize = 1;
@@ -266,7 +266,7 @@ pub const SYS_INSTALL_PACKAGE: usize = 192;
 /// argument.
 pub const SYS_FALLOCATE: usize = 193;
 
-// ── Stability classification ────────────────────────────────────────
+// Stability classification
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyscallStability {
@@ -285,7 +285,7 @@ pub const fn syscall_stability(number: usize) -> SyscallStability {
     }
 }
 
-// ── Name lookup (audit trails + tests) ───────────────────────────────
+// Name lookup (audit trails + tests)
 
 /// Human-readable name for a syscall number, or `None` outside [0,
 /// SYSCALL_COUNT).

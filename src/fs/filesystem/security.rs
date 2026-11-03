@@ -340,7 +340,7 @@ impl FileSystem {
             context.access.allowed = required_access & !context.access.granted_mode_bits == 0;
         }
 
-        // ── MAC (type enforcement) check ────────────────────────────────
+        // MAC (type enforcement) check
         // Runs after the DAC + Biba result, on the same single hook that all
         // file operations flow through.  When the loaded MAC policy denies the
         // (subject type, object type, class, perms) request, the access is

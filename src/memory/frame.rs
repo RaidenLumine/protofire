@@ -583,7 +583,7 @@ mod tests {
         assert!(allocator.allocate(1).is_none());
     }
 
-    // ── compaction / defragmentation ──────────────────────────────────────
+    // compaction / defragmentation
 
     /// Helper: build a fragmented pool with `total` single frames, then free
     /// every even-indexed frame so the free ranges interleave with live

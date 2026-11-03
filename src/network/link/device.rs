@@ -194,7 +194,7 @@ pub mod mock {
     }
 }
 
-// ─── tests ───
+// tests
 
 /// The loopback device: what a frame sent to it is received from.
 ///

@@ -133,7 +133,7 @@ pub fn utf8_to_oem(input: &str, code_page: OemCodePage) -> Vec<u8> {
     v
 }
 
-// ── CP437 upper half (0x80–0xFF) → Unicode scalar values ────────────────
+// CP437 upper half (0x80–0xFF) → Unicode scalar values
 // Derived from the IBM CP437 character set.
 // <https://en.wikipedia.org/wiki/Code_page_437>
 
@@ -156,7 +156,7 @@ const CP437_UPPER: [u16; 128] = [
     0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0, 0x00A0, //
 ];
 
-// ── CP850 upper half (0x80–0xFF) → Unicode scalar values ────────────────
+// CP850 upper half (0x80–0xFF) → Unicode scalar values
 // Derived from the IBM CP850 (Latin-1 / Western European) character set.
 
 const CP850_UPPER: [u16; 128] = [

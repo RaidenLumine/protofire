@@ -31,7 +31,7 @@ use super::constants;
 #[cfg(any(feature = "demo-disk", test))]
 use super::demo_runtime::resolve_program_proxy;
 
-// ── segment / image-plan types ────────────────────────────────────────
+// segment / image-plan types
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserImageSegmentPlan {
@@ -215,7 +215,7 @@ impl UserImageLoadPlan {
     }
 }
 
-// ── internal runtime-preparation types ────────────────────────────────
+// internal runtime-preparation types
 
 pub(crate) struct PreparedLoadedProgramRuntime {
     machine: u16,
@@ -228,7 +228,7 @@ pub(crate) struct PreparedLoadedProgramRuntime {
     process_address_space_summary: Option<ProcessAddressSpaceSummary>,
 }
 
-// ── LoadedProgramDescriptor ───────────────────────────────────────────
+// LoadedProgramDescriptor
 
 pub(crate) struct LoadedProgramDescriptor {
     catalog_path: String,
@@ -328,7 +328,7 @@ impl LoadedProgramDescriptor {
     }
 }
 
-// ── LoadedProgram / LoadedProgramInstallState / LaunchedProgram ───────
+// LoadedProgram / LoadedProgramInstallState / LaunchedProgram
 
 pub struct LoadedProgram {
     pub catalog_path: String,
@@ -506,7 +506,7 @@ pub struct LaunchedProgram {
     pub process: Arc<Process>,
 }
 
-// ── public load functions ─────────────────────────────────────────────
+// public load functions
 
 /// Phase 1 of [`load_from_filesystem`]: read the program image.
 ///
@@ -626,11 +626,11 @@ fn load_from_catalog_with_appended_arguments_at_depth(
     finish_loading_program(descriptor, image)
 }
 
-// ── submodules ────────────────────────────────────────────────────
+// submodules
 
 pub(crate) mod plan;
 
-// ── re-exports ──────────────────────────────────────────────────────
+// re-exports
 
 pub use plan::plan_user_image_load;
 pub(crate) use plan::*;
@@ -640,7 +640,7 @@ pub(crate) use plan::*;
 // loader reads as one module: `crate::user::program::loader::<entry point>`.
 pub(crate) use crate::arch::user_loader::*;
 
-// ── catalog-program validation (depends on loader types) ──────────────
+// catalog-program validation (depends on loader types)
 
 pub(crate) fn validate_catalog_program(
     program: &str,

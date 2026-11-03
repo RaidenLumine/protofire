@@ -13,7 +13,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// ── Public API ────────────────────────────────────────────────────────────
+// Public API
 
 /// Convert a single UTF-16LE code unit (BMP only) to a Rust `char`.
 ///

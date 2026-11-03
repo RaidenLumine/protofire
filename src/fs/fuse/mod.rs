@@ -32,7 +32,7 @@ use crate::fs::vfs::VNode;
 use crate::fs::NodeKind;
 use crate::kernel::sync::Mutex;
 
-// ── Submodules ──────────────────────────────────────────────────────────
+// Submodules
 
 pub mod connection;
 pub mod error;
@@ -40,7 +40,7 @@ pub mod filesystem;
 pub mod protocol;
 pub mod vnode;
 
-// ── Wire protocol types ────────────────────────────────────────────────
+// Wire protocol types
 
 /// Fixed 24-byte request/response header shared by both directions.
 #[repr(C)]
@@ -119,7 +119,7 @@ pub enum FuseError {
     EInval = 8,
 }
 
-// ── Connection ──────────────────────────────────────────────────────────
+// Connection
 
 /// Per-mount FUSE channel: kernel-end pipe pair + sequential dispatch.
 pub struct FuseConnection {
@@ -129,7 +129,7 @@ pub struct FuseConnection {
     lock: Mutex<()>,
 }
 
-// ── Filesystem ──────────────────────────────────────────────────────────
+// Filesystem
 
 /// FUSE-backed filesystem implementing the kernel `FileSystem` trait.
 pub struct FuseFileSystem {
@@ -139,7 +139,7 @@ pub struct FuseFileSystem {
     handshake_done: AtomicBool,
 }
 
-// ── VNode ───────────────────────────────────────────────────────────────
+// VNode
 
 /// Per-node wrapper for FUSE-backed files.
 pub struct FuseVNode {

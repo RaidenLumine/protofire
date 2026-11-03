@@ -34,7 +34,7 @@ const MAX_BUFFERED_CHARS: usize = 256;
 /// driver's `init`).  Never removed once installed.
 static KEYBOARD_CORE: Mutex<Option<Arc<KeyboardCore>>> = Mutex::new(None);
 
-// ─── PS/2 scancode set 1 decode tables ─────────────────────────────────
+// PS/2 scancode set 1 decode tables
 //
 // `SCANCODE_BASE[i]` is the unshifted character for make code `i`;
 // `SCANCODE_SHIFT[i]` is the shifted character.  `0` means "no printable
@@ -79,7 +79,7 @@ const BREAK_BIT: u8 = 0x80;
 /// Extended (two-byte) scancode prefix.
 const EXTENDED_PREFIX: u8 = 0xE0;
 
-// ─── Key event types ───────────────────────────────────────────────────
+// Key event types
 
 /// A key identity from PS/2 scancode set 1 (plus the E0-extended keys).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,7 +186,7 @@ pub struct KeyEvent {
     pub modifiers: KeyModifiers,
 }
 
-// ─── Wait stats ────────────────────────────────────────────────────────
+// Wait stats
 
 /// Which input queue a wait/stats observation applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,7 +246,7 @@ impl WaitStatsBookkeeping<WaitKind> for KeyboardWaitStats {
     }
 }
 
-// ─── Decode state ──────────────────────────────────────────────────────
+// Decode state
 
 #[derive(Debug, Clone, Copy, Default)]
 struct DecodeState {
@@ -258,7 +258,7 @@ struct DecodeState {
     e0_pending: bool,
 }
 
-// ─── Scancode → KeyCode mapping ────────────────────────────────────────
+// Scancode → KeyCode mapping
 
 /// Map a PS/2 set-1 make code (break bit stripped) to a [`KeyCode`].
 fn keycode_for(code: u8) -> KeyCode {
@@ -366,7 +366,7 @@ fn modifiers_from(decode: &DecodeState) -> KeyModifiers {
     }
 }
 
-// ─── Keyboard core ─────────────────────────────────────────────────────
+// Keyboard core
 
 pub struct KeyboardCore {
     /// Raw PS/2 set-1 scancodes (for the keyboard-raw device).
@@ -812,7 +812,7 @@ impl KeyboardCore {
     }
 }
 
-// ─── Driver ─────────────────────────────────────────────────────────────
+// Driver
 
 struct KeyboardDriver;
 
@@ -850,7 +850,7 @@ fn core() -> Arc<KeyboardCore> {
     init_device()
 }
 
-// ─── Public API used by the PS/2 IRQ handler, USB-HID, and device layer ─
+// Public API used by the PS/2 IRQ handler, USB-HID, and device layer
 
 /// Feed a raw scancode from the PS/2 keyboard IRQ handler.
 pub fn handle_scancode(scancode: u8) {

@@ -24,7 +24,7 @@ use super::types::ATTR_TYPE_FILENAME;
 use super::types::ATTR_TYPE_STANDARD_INFO;
 use super::types::BLOCK_SIZE;
 
-// ── Boot sector ─────────────────────────────────────────────────────────
+// Boot sector
 
 /// Read and parse the NTFS boot sector at LBA 0.
 pub fn read_boot_sector(device: &Arc<dyn BlockDevice>) -> Result<BootSector, Error> {
@@ -33,7 +33,7 @@ pub fn read_boot_sector(device: &Arc<dyn BlockDevice>) -> Result<BootSector, Err
     BootSector::parse(&buf).ok_or(Error::InvalidArgument)
 }
 
-// ── Volume info ──────────────────────────────────────────────────────────
+// Volume info
 
 #[derive(Clone)]
 pub struct NtfsInfo {
@@ -105,7 +105,7 @@ impl NtfsInfo {
     }
 }
 
-// ── Cluster I/O ──────────────────────────────────────────────────────────
+// Cluster I/O
 
 /// Read `count` clusters at LCN into `buf`. Kept as a convenience primitive;
 /// the driver currently reaches the device through `read_device_bytes`.
@@ -249,7 +249,7 @@ pub fn next_extent_in_runs(
     }
 }
 
-// ── MFT record reading ──────────────────────────────────────────────────
+// MFT record reading
 
 /// Write a byte range by following data runs — the mirror of
 /// [`read_from_runs`].
@@ -752,7 +752,7 @@ pub fn get_standard_info(attrs: &[ParsedAttr]) -> Option<StandardInfoAttr> {
     None
 }
 
-// ── Directory operations ──────────────────────────────────────────────────
+// Directory operations
 
 /// One entry of an `$ATTRIBUTE_LIST`: an attribute, and the record that holds
 /// it.
@@ -1361,7 +1361,7 @@ fn put_u64_le(buf: &mut [u8], off: usize, value: u64) {
     buf[off..off + 8].copy_from_slice(&value.to_le_bytes());
 }
 
-// ── Byte I/O ──────────────────────────────────────────────────────────────
+// Byte I/O
 
 pub fn read_device_bytes(
     device: &Arc<dyn BlockDevice>,

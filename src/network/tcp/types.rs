@@ -9,7 +9,7 @@ use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 use crate::network::internet::ip::IpAddress;
 
-// ─── Socket options ─────────────────────────────────────────────────────────
+// Socket options
 
 /// Socket-level and protocol-level options set via `setsockopt` syscall.
 #[derive(Debug, Clone)]
@@ -61,7 +61,7 @@ impl Default for SocketOptions {
     }
 }
 
-// ─── TCP constants ───
+// TCP constants
 
 /// Minimum TCP header size (no options).
 pub const TCP_MIN_HEADER_SIZE: usize = 20;
@@ -99,7 +99,7 @@ pub(super) const MAX_BACKOFF_MULTIPLIER: u32 = 3;
 /// TimeWait duration (2 × MSL ≈ 60 seconds → 6000 ticks).
 pub(super) const TIME_WAIT_TICKS: u64 = 6000;
 
-// ─── TCP flags ───
+// TCP flags
 
 pub(super) const TCP_FLAG_FIN: u8 = 0x01;
 pub(super) const TCP_FLAG_SYN: u8 = 0x02;
@@ -159,12 +159,12 @@ pub(super) fn advertised_mss_v6(mtu: usize) -> u16 {
         .min(u16::MAX as usize) as u16
 }
 
-// ─── Ephemeral port range ───
+// Ephemeral port range
 
 pub(crate) const EPHEMERAL_PORT_START: u16 = 49152;
 pub(crate) const EPHEMERAL_PORT_END: u16 = 65535;
 
-// ─── TCP state ───
+// TCP state
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcpState {
@@ -181,7 +181,7 @@ pub enum TcpState {
     TimeWait,
 }
 
-// ─── TCP header ───
+// TCP header
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TcpHeader {
@@ -197,7 +197,7 @@ pub struct TcpHeader {
     pub options: Vec<u8>,
 }
 
-// ─── Retransmit state ───
+// Retransmit state
 
 pub(super) struct RetransmitState {
     /// Tick when the retransmit timer was started.
@@ -208,7 +208,7 @@ pub(super) struct RetransmitState {
     pub(super) pending_segments: VecDeque<(u32, Vec<u8>)>,
 }
 
-// ─── TCP connection state ───
+// TCP connection state
 
 /// Per-connection TCP state machine.
 /// A handle on one connection's read readiness.
@@ -627,14 +627,14 @@ impl TcpConnectionState {
     }
 }
 
-// ─── Connection key type ───
+// Connection key type
 
 /// Uniquely identifies a TCP connection by (local_port, remote_ip,
 /// remote_port).  `remote_ip` is dual-stack: an `IpAddress` so the same table
 /// holds IPv4 and IPv6 connections (RFC 793 / RFC 2460).
 pub(super) type ConnKey = (u16, IpAddress, u16);
 
-// ─── Helpers ───
+// Helpers
 
 pub(super) fn simple_initial_seq(tick: u64) -> u32 {
     (tick as u32).wrapping_mul(0x9E37_79B9)

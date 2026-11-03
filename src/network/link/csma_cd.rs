@@ -25,7 +25,7 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// Constants
 
 /// Transmit attempts (including the first) before a frame is discarded.
 pub const MAX_ATTEMPTS: u32 = 16;
@@ -42,7 +42,7 @@ pub const SFD: u8 = 0xD5;
 /// Jam byte emitted after a detected collision (all ones).
 pub const JAM_BYTE: u8 = 0xFF;
 
-// ── Shared medium ──────────────────────────────────────────────────────────
+// Shared medium
 
 /// The shared coaxial medium: who holds the wire, and whether a collision
 /// was just detected.
@@ -95,7 +95,7 @@ impl Bus {
     }
 }
 
-// ── Station ────────────────────────────────────────────────────────────────
+// Station
 
 /// A CSMA/CD station: a FIFO of pending frames plus per-frame transmission
 /// and backoff state.
@@ -243,7 +243,7 @@ impl Station {
     }
 }
 
-// ── Helper: build a CSMA/CD frame with preamble and SFD ────────────────────
+// Helper: build a CSMA/CD frame with preamble and SFD
 
 /// Build an Ethernet frame: 7 bytes of preamble (`10101010`), the start
 /// frame delimiter (`10101011`), then the payload.
@@ -255,7 +255,7 @@ pub fn build_frame(payload: &[u8]) -> Vec<u8> {
     frame
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

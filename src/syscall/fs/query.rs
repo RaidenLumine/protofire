@@ -17,7 +17,7 @@ use super::validate_zeroed_args;
 use super::SyscallContext;
 use super::SyscallDispatch;
 
-// ── ListMounts (slot 86) ──────────────────────────────────────────────────
+// ListMounts (slot 86)
 
 pub(super) fn list_mounts(context: &mut SyscallContext) -> Result<SyscallDispatch> {
     let buffer_ptr = context.arg(0) as *mut u8;
@@ -54,7 +54,7 @@ pub(super) fn list_mounts(context: &mut SyscallContext) -> Result<SyscallDispatc
     write_record_slice_to_user(&records, buffer_ptr, buffer_len)
 }
 
-// ── ListBlockDevices (slot 87) ────────────────────────────────────────────
+// ListBlockDevices (slot 87)
 
 pub(super) fn list_block_devices(context: &mut SyscallContext) -> Result<SyscallDispatch> {
     let buffer_ptr = context.arg(0) as *mut u8;
@@ -89,7 +89,7 @@ pub(super) fn list_block_devices(context: &mut SyscallContext) -> Result<Syscall
     write_record_slice_to_user(&records, buffer_ptr, buffer_len)
 }
 
-// ── SetSecurityDescriptor (slot 88) ───────────────────────────────────────
+// SetSecurityDescriptor (slot 88)
 
 pub(super) fn set_security_descriptor(context: &mut SyscallContext) -> Result<SyscallDispatch> {
     let path_ptr = context.arg(0) as *const u8;
@@ -129,7 +129,7 @@ pub(super) fn set_security_descriptor(context: &mut SyscallContext) -> Result<Sy
     })
 }
 
-// ── RepairVolume (slot 94) ───────────────────────────────────────────────
+// RepairVolume (slot 94)
 
 /// Volume check-and-repair report packed for user-space consumption.
 #[repr(C)]
@@ -202,7 +202,7 @@ pub(super) fn repair_volume(context: &mut SyscallContext) -> Result<SyscallDispa
     Ok(SyscallDispatch::complete(report_size))
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// Helpers
 
 /// Copy bytes from `src` into each fixed-size field, truncating or
 /// zero-padding as needed.

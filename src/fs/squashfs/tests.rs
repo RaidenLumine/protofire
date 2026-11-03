@@ -47,7 +47,7 @@ fn build_squashfs_image() -> Vec<u8> {
     img
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// Helpers
 
 fn put_u16(buf: &mut [u8], off: usize, val: u16) {
     buf[off..off + 2].copy_from_slice(&val.to_le_bytes());
@@ -68,7 +68,7 @@ fn write_meta_block(img: &mut [u8], block_idx: u64, data: &[u8]) -> usize {
     off
 }
 
-// ── Superblock ─────────────────────────────────────────────────────────────
+// Superblock
 
 fn write_superblock(img: &mut [u8]) {
     let sb = &mut img[..96];
@@ -82,7 +82,7 @@ fn write_superblock(img: &mut [u8]) {
     put_u32(sb, 68, 0); // root_inode_offset = 0
 }
 
-// ── Inode table (metadata block 0) ─────────────────────────────────────────
+// Inode table (metadata block 0)
 
 fn write_inode_table(img: &mut [u8]) {
     // Root dir inode at offset 0 (type 1, 20 bytes total)
@@ -151,7 +151,7 @@ fn write_inode_table(img: &mut [u8]) {
     write_meta_block(img, 0, &table);
 }
 
-// ── Root directory metadata (metadata block 1) ─────────────────────────────
+// Root directory metadata (metadata block 1)
 //
 // Each entry is its own group because the parser shares inode_offset within a
 // group.  Group header = entry_data_bytes - 1.
@@ -185,7 +185,7 @@ fn write_dir_group(data: &mut Vec<u8>, inode_offset: u32, etype: u16, name: &[u8
     // null terminator at start+10+name.len() already 0
 }
 
-// ── Subdir directory metadata (metadata block 2) ───────────────────────────
+// Subdir directory metadata (metadata block 2)
 
 fn write_subdir_directory(img: &mut [u8]) {
     let mut data = Vec::new();
@@ -196,7 +196,7 @@ fn write_subdir_directory(img: &mut [u8]) {
     write_meta_block(img, 2, &data);
 }
 
-// ── File data ──────────────────────────────────────────────────────────────
+// File data
 
 fn write_file_data(img: &mut [u8]) {
     // Data blocks: each block has a 2-byte uncompressed-size header.
@@ -211,7 +211,7 @@ fn write_file_data(img: &mut [u8]) {
     write_data_block(img, 22, FILE3_CONTENT);
 }
 
-// ── Test helpers ───────────────────────────────────────────────────────────
+// Test helpers
 
 fn open_volume() -> SquashfsVolume {
     let img = build_squashfs_image();
@@ -219,7 +219,7 @@ fn open_volume() -> SquashfsVolume {
     SquashfsVolume::open(dev).expect("open SquashFS volume")
 }
 
-// ── Basic tests ────────────────────────────────────────────────────────────
+// Basic tests
 
 #[test]
 fn squashfs_open_and_name() {
@@ -234,7 +234,7 @@ fn squashfs_root_is_directory() {
     assert_eq!(vnode.kind(), NodeKind::Directory);
 }
 
-// ── File read tests ────────────────────────────────────────────────────────
+// File read tests
 
 #[test]
 fn squashfs_read_root_file() {
@@ -299,7 +299,7 @@ fn squashfs_empty_buffer_read() {
     assert_eq!(n, 0);
 }
 
-// ── Directory tests ────────────────────────────────────────────────────────
+// Directory tests
 
 #[test]
 fn squashfs_read_dir_root() {
@@ -309,7 +309,7 @@ fn squashfs_read_dir_root() {
     assert_eq!(entry.kind, NodeKind::File);
 }
 
-// ── Subdirectory tests ─────────────────────────────────────────────────────
+// Subdirectory tests
 
 #[test]
 fn squashfs_subdir_lookup() {
@@ -345,7 +345,7 @@ fn squashfs_subdir_stat() {
     assert_eq!(meta.size, FILE3_CONTENT.len());
 }
 
-// ── Symlink tests ──────────────────────────────────────────────────────────
+// Symlink tests
 
 #[test]
 fn squashfs_symlink_lookup() {
@@ -370,7 +370,7 @@ fn squashfs_symlink_not_followed() {
     assert_eq!(vnode.kind(), NodeKind::Symlink);
 }
 
-// ── Stat tests ─────────────────────────────────────────────────────────────
+// Stat tests
 
 #[test]
 fn squashfs_stat() {
@@ -412,7 +412,7 @@ fn squashfs_not_found_in_subdir() {
     ));
 }
 
-// ── Permission denied tests ────────────────────────────────────────────────
+// Permission denied tests
 
 #[test]
 fn squashfs_write_permission_denied() {
@@ -458,9 +458,7 @@ fn squashfs_symlink_write_permission_denied() {
     assert!(matches!(result, Err(Error::PermissionDenied)));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // ZSTD compression tests
-// ═══════════════════════════════════════════════════════════════════════════════
 
 const ZSTD_FILE_CONTENT: &[u8] = b"Hello from SquashFS ZSTD!\n";
 

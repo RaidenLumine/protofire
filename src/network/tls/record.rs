@@ -22,7 +22,7 @@ use crate::kernel::crypto::chacha20_poly1305_encrypt;
 use crate::Error;
 use crate::Result;
 
-// ── Record constants ──────────────────────────────────────────────────────
+// Record constants
 
 /// TLS 1.3 record content types.
 pub const CONTENT_TYPE_INVALID: u8 = 0;
@@ -41,7 +41,7 @@ pub const TLS_MAX_FRAGMENT_LEN: usize = 16384;
 /// ChaCha20-Poly1305).
 const AEAD_TAG_LEN: usize = 16;
 
-// ── Cipher suite ──────────────────────────────────────────────────────────
+// Cipher suite
 
 /// Supported TLS 1.3 cipher suites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +72,7 @@ impl CipherSuite {
     }
 }
 
-// ── Traffic keys ──────────────────────────────────────────────────────────
+// Traffic keys
 
 /// Per-direction traffic keys derived during the TLS 1.3 handshake.
 pub struct TrafficKeys {
@@ -113,7 +113,7 @@ impl TrafficKeys {
     }
 }
 
-// ── Record protection ──────────────────────────────────────────────────────
+// Record protection
 
 /// Build the additional-data input for AEAD (RFC 8446 §5.2).
 ///
@@ -228,7 +228,7 @@ fn decrypt_record_content(
     }
 }
 
-// ── Record framing ────────────────────────────────────────────────────────
+// Record framing
 
 /// Build a complete TLS record (header + encrypted content).
 ///
@@ -291,7 +291,7 @@ pub fn build_alert(keys: &mut TrafficKeys, level: u8, description: u8) -> Result
     build_tls_record(keys, CONTENT_TYPE_ALERT, &alert)
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

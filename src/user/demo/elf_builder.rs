@@ -12,7 +12,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-// ── ELF64 layout constants ──────────────────────────────────────────────
+// ELF64 layout constants
 
 const ELF64_HEADER_SIZE: usize = 64;
 const ELF64_PROGRAM_HEADER_SIZE: usize = 56;
@@ -21,14 +21,14 @@ const ELF64_LOAD_SEGMENT_OFFSET: usize = 0x1000;
 const ELF64_LOAD_SEGMENT_ALIGNMENT: usize = 0x1000;
 const ELF64_LOAD_SEGMENT_FLAGS: u32 = 0b101; // R+X
 
-// ── public types ─────────────────────────────────────────────────────────
+// public types
 
 /// A ready-to-write ELF64 executable image.
 pub struct DemoProgramArtifact {
     pub bytes: Vec<u8>,
 }
 
-// ── full-ELF builder (payload with PT_LOAD segment) ─────────────────────
+// full-ELF builder (payload with PT_LOAD segment)
 
 /// Build an ELF64 executable artifact from a raw binary payload.
 ///
@@ -89,7 +89,7 @@ pub fn build_artifact_from_payload(
     DemoProgramArtifact { bytes: image }
 }
 
-// ── metadata-only ELF builder (no PT_LOAD — falls back to host proxy) ───
+// metadata-only ELF builder (no PT_LOAD — falls back to host proxy)
 
 /// Build a metadata-only ELF64 header (no program headers, entry = 0).
 ///
@@ -114,7 +114,7 @@ pub fn build_metadata_only_artifact(machine: u16) -> DemoProgramArtifact {
     DemoProgramArtifact { bytes: image }
 }
 
-// ── payload-optional builder ─────────────────────────────────────────────
+// payload-optional builder
 
 /// Build a loadable artifact from a payload, or a metadata-only one when the
 /// payload is absent.
@@ -138,7 +138,7 @@ pub fn build_artifact_or_metadata_only(
     build_artifact_from_payload(payload, entry_offset, entry_base, machine)
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────
+// helpers
 
 fn write_u16(image: &mut [u8], offset: usize, value: u16) {
     image[offset..offset + 2].copy_from_slice(&value.to_le_bytes());

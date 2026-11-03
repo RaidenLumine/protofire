@@ -48,7 +48,7 @@ use types::Superblock;
 use types::SQUASHFS_MAGIC;
 use types::XATTR_ID_TABLE_ENTRY_SIZE;
 
-// ── SquashfsVolume ─────────────────────────────────────────────────────────
+// SquashfsVolume
 
 pub struct SquashfsVolume {
     device: Arc<dyn BlockDevice>,
@@ -227,7 +227,7 @@ impl VfsFileSystem for SquashfsVolume {
     }
 }
 
-// ── SquashfsVNode ──────────────────────────────────────────────────────────
+// SquashfsVNode
 
 struct SquashfsVNode {
     name: String,
@@ -384,7 +384,7 @@ impl VNode for SquashfsVNode {
     }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// Helpers
 
 fn clean_path(path: &str) -> String {
     if path.is_empty() || path == "/" {

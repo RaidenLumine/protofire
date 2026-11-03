@@ -923,7 +923,7 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::RestartSyscall as usize,
         process_restart_syscall::restart_syscall,
     ),
-    // ── POSIX per-process timers (#137–140) ────────────────────────────────
+    // POSIX per-process timers (#137–140)
     (
         SyscallNumber::TimerCreate as usize,
         posix_timer::timer_create,
@@ -943,7 +943,7 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
     // Gap filler for unused slots (#141–#142).
     (141, |_| Err(Error::NotImplemented)),
     (142, |_| Err(Error::NotImplemented)),
-    // ── Audit subsystem (#143–144) ─────────────────────────────────────────
+    // Audit subsystem (#143–144)
     (
         SyscallNumber::AuditSetEnable as usize,
         audit_handler::audit_set_enable,
@@ -952,7 +952,7 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::AuditReadLog as usize,
         audit_handler::audit_read_log,
     ),
-    // ── CPU frequency scaling (#145–149) ───────────────────────────────────
+    // CPU frequency scaling (#145–149)
     (
         SyscallNumber::CpufreqGet as usize,
         power_handler::cpufreq_get,
@@ -973,12 +973,12 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::CpufreqGetTemp as usize,
         power_handler::cpufreq_get_temp,
     ),
-    // ── Memory defragmentation (#150) ──────────────────────────────────────
+    // Memory defragmentation (#150)
     (
         SyscallNumber::CompactMemory as usize,
         diagnostic::compact_memory,
     ),
-    // ── Extended attributes + per-file data-reduction flags (#151-156) ───
+    // Extended attributes + per-file data-reduction flags (#151-156)
     (SyscallNumber::SetXattr as usize, fs_xattr::set_xattr),
     (SyscallNumber::GetXattr as usize, fs_xattr::get_xattr),
     (SyscallNumber::ListXattr as usize, fs_xattr::list_xattr),
@@ -991,7 +991,7 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::GetFileFlags as usize,
         fs_xattr::get_file_flags,
     ),
-    // ── DCCP transport (#157-163) ─────────────────────────────────────────
+    // DCCP transport (#157-163)
     (SyscallNumber::DccpBind as usize, network::dccp_bind),
     (SyscallNumber::DccpListen as usize, network::dccp_listen),
     (SyscallNumber::DccpConnect as usize, network::dccp_connect),
@@ -999,7 +999,7 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
     (SyscallNumber::DccpSend as usize, network::dccp_send),
     (SyscallNumber::DccpRecv as usize, network::dccp_recv),
     (SyscallNumber::DccpClose as usize, network::dccp_close),
-    // ── IPsec SPD/SAD (#164-168) ───────────────────────────────────────
+    // IPsec SPD/SAD (#164-168)
     (
         SyscallNumber::IpsecAddSp as usize,
         ipsec_handler::ipsec_add_sp,
@@ -1020,14 +1020,14 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::IpsecGetStats as usize,
         ipsec_handler::ipsec_get_stats,
     ),
-    // ── Multicast routing (#169-174) ────────────────────────────────────
+    // Multicast routing (#169-174)
     (SyscallNumber::MrtInit as usize, mrt_handler::mrt_init),
     (SyscallNumber::MrtDone as usize, mrt_handler::mrt_done),
     (SyscallNumber::MrtAddVif as usize, mrt_handler::mrt_add_vif),
     (SyscallNumber::MrtDelVif as usize, mrt_handler::mrt_del_vif),
     (SyscallNumber::MrtAddMfc as usize, mrt_handler::mrt_add_mfc),
     (SyscallNumber::MrtDelMfc as usize, mrt_handler::mrt_del_mfc),
-    // ── MAC type enforcement (#175-178) ──────────────────────────────────
+    // MAC type enforcement (#175-178)
     (
         SyscallNumber::MacSetMode as usize,
         mac_handler::mac_set_mode,
@@ -1044,11 +1044,11 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::MacGetStatus as usize,
         mac_handler::mac_get_status,
     ),
-    // ── fcntl descriptor control (#179) ─────────────────────────────────
+    // fcntl descriptor control (#179)
     (SyscallNumber::Fcntl as usize, fcntl_handler::fcntl),
-    // ── Global filesystem sync (#180) ──────────────────────────────────
+    // Global filesystem sync (#180)
     (SyscallNumber::Sync as usize, sync_handler::sync),
-    // ── VIRGL 3D userspace interface (#181-189) ────────────────────────
+    // VIRGL 3D userspace interface (#181-189)
     (
         SyscallNumber::GpuCtxCreate as usize,
         gpu_handler::gpu_ctx_create,
@@ -1129,7 +1129,7 @@ impl Table {
     pub fn dispatch_with_action(&self, context: &mut SyscallContext) -> Result<SyscallDispatch> {
         let number = context.number;
 
-        // ── Seccomp pre-dispatch check ────────────────────────────────────────
+        // Seccomp pre-dispatch check
         // Check the seccomp filter before calling the syscall handler so that
         // blocked syscalls are never executed.  KILL terminates the process
         // immediately; TRAP returns an error (SIGSYS semantics); ALLOW continues.
@@ -1152,7 +1152,7 @@ impl Table {
             .and_then(|entry| *entry)
             .ok_or(Error::NotImplemented)?(context);
 
-        // ── Ptrace syscall-exit hook ────────────────────────────────────────
+        // Ptrace syscall-exit hook
         // When the tracee is being syscall-traced, notify ptrace after every
         // syscall completes.  If the tracee was suspended we yield the CPU
         // so the tracer can process the event.
@@ -1173,7 +1173,7 @@ impl Table {
             }
         }
 
-        // ── Audit syscall-exit hook ───────────────────────────────────────────
+        // Audit syscall-exit hook
         // When the current process has enabled SYSCALL auditing, emit an audit
         // record with the syscall number, arguments, and status.
         if let Ok(process) = runtime::current_process() {

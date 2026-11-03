@@ -156,12 +156,12 @@ extern "C" fn interrupt_dispatch(context: &mut InterruptContext) {
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     crate::kernel::smp::apply_remote_tlb_invalidations();
 
-    // ── Softirq processing ───────────────────────────────────────────
+    // Softirq processing
     // Process any pending softirqs (deferred interrupt work) before
     // checking for signal delivery or returning to user mode.
     crate::kernel::softirq::process_softirqs();
 
-    // ── Async signal delivery check ──────────────────────────────────
+    // Async signal delivery check
     // If the current process has pending signals with async handlers and
     // we are returning to user mode, inject a signal frame on the user
     // stack and redirect execution to the handler.
@@ -391,7 +391,7 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
     // Consume the signal from the queue.
     let _ = process.take_pending_signal();
 
-    // ── SA_RESTART logic ───────────────────────────────────────────
+    // SA_RESTART logic
     // If the signal handler was installed with SA_RESTART and the
     // signal interrupted a syscall (int 0x80), arrange for the syscall
     // to be re-issued after the handler returns by rewinding the saved
@@ -399,7 +399,7 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
     let restart_pending = (process.signal_sa_flags(signal_num) & SA_RESTART) != 0
         && context.vector == SYSCALL_VECTOR as u64;
 
-    // ── Build the SignalFrame on the user stack ────────────────────
+    // Build the SignalFrame on the user stack
     //
     // Stack layout (addresses descending):
     //
@@ -460,7 +460,7 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
         crate::arch::user_access::write_user_value_untracked(trampoline_ret_addr, &trampoline_addr);
     }
 
-    // ── Rewrite InterruptContext for handler entry ──────────────────
+    // Rewrite InterruptContext for handler entry
     context.rip = handler_addr;
     context.saved_stack_pointer = trampoline_ret_addr;
     context.rdi = signal_num as u64;

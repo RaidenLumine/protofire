@@ -32,7 +32,7 @@ use crate::kernel::process::process::constants::HANDLE_RIGHT_WRITE;
 use crate::Result;
 
 pub(super) fn fuse_mount(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
-    // ── 1. Read arguments ──────────────────────────────────────────────
+    // 1. Read arguments
     let mount_path = super::user_memory::user_path_arg(context, 0, 1)?;
     let fs_name = super::user_memory::user_path_arg(context, 2, 3)?;
     let buffer_ptr = context.arg(4) as *mut u8;
@@ -40,17 +40,17 @@ pub(super) fn fuse_mount(context: &mut super::SyscallContext) -> Result<super::S
 
     super::validate_zeroed_args(context, 6)?;
 
-    // ── 2. Create two pipe channels ─────────────────────────────────────
+    // 2. Create two pipe channels
     let (req_daemon_read, req_kernel_write) = pipe::pipe_channel();
     let (resp_kernel_read, resp_daemon_write) = pipe::pipe_channel();
 
-    // ── 3. Create FUSE connection ──────────────────────────────────────
+    // 3. Create FUSE connection
     let conn = Arc::new(FuseConnection::new(req_kernel_write, resp_kernel_read));
 
-    // ── 4. Create FUSE filesystem ──────────────────────────────────────
+    // 4. Create FUSE filesystem
     let fs = Arc::new(FuseFileSystem::new(fs_name.clone(), conn));
 
-    // ── 5. Register and mount in the global VFS ────────────────────────
+    // 5. Register and mount in the global VFS
     {
         let global_fs = crate::fs::global().ok_or(crate::Error::InternalError)?;
         let mut fs_guard = global_fs.lock();
@@ -60,7 +60,7 @@ pub(super) fn fuse_mount(context: &mut super::SyscallContext) -> Result<super::S
         fs_guard.mount(&device, &mount_path, &fs_name, 0)?;
     }
 
-    // ── 6. Convert daemon-end VNodes to FDs ────────────────────────────
+    // 6. Convert daemon-end VNodes to FDs
     super::runtime::with_current_process(|process| {
         // Allocate two consecutive handle numbers from the global filesystem.
         let read_handle = crate::fs::global()

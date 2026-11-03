@@ -4,7 +4,7 @@
 
 use alloc::vec::Vec;
 
-// ── Superblock ──────────────────────────────────────────────────────────────
+// Superblock
 
 pub const XFS_SUPER_MAGIC: u32 = 0x5846_5342; // "XFSB"
 
@@ -123,7 +123,7 @@ impl Superblock {
     }
 }
 
-// ── Journal info ─────────────────────────────────────────────────────────────
+// Journal info
 
 /// Parsed journal metadata.
 #[derive(Debug, Clone)]
@@ -141,13 +141,13 @@ pub struct JournalInfo {
     pub log_version: u8,
 }
 
-// ── AG structures ───────────────────────────────────────────────────────────
+// AG structures
 
 // Spec constant — reserved for AGF parsing.
 #[allow(dead_code)]
 pub const XFS_AGF_MAGIC: u32 = 0x5841_4746; // "XAGF"
 
-// ── B+tree structures ───────────────────────────────────────────────────────
+// B+tree structures
 
 #[derive(Debug, Clone)]
 pub struct BtreeBlock {
@@ -205,7 +205,7 @@ pub fn parse_btree_records(data: &[u8], num_recs: usize, rec_size: usize) -> Vec
     recs
 }
 
-// ── Inode ───────────────────────────────────────────────────────────────────
+// Inode
 
 pub const XFS_INODE_MAGIC: u16 = 0x494E;
 pub const XFS_DINODE_FMT_LOCAL: u8 = 0;
@@ -302,7 +302,7 @@ impl InodeCore {
     }
 }
 
-// ── Extents ─────────────────────────────────────────────────────────────────
+// Extents
 
 #[derive(Debug, Clone)]
 pub struct Extent {
@@ -347,7 +347,7 @@ pub fn parse_extents(buf: &[u8], fork_offset: usize, num_extents: u32) -> Vec<Ex
     extents
 }
 
-// ── Directory entries ───────────────────────────────────────────────────────
+// Directory entries
 
 /// Directory DA-blkinfo magic constants (u16 at offset 8 in xfs_da_blkinfo_t).
 #[allow(dead_code)]
@@ -437,7 +437,7 @@ pub fn parse_block_dir(data: &[u8]) -> Vec<DirEntry> {
     entries
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// Helpers
 
 fn be16(buf: &[u8], off: usize) -> u16 {
     u16::from_be_bytes([buf[off], buf[off + 1]])

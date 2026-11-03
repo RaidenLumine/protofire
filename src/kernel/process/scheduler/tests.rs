@@ -39,7 +39,7 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    // ── Deterministic PRNG for property tests ───────────────────────────────
+    // Deterministic PRNG for property tests
     // Same LCG family as tests/pyrofs/property.rs and tests/parsers/fuzz.rs,
     // kept local because the queue helpers behind `pub(crate)` are only
     // reachable from in-crate unit tests.
@@ -702,7 +702,7 @@ mod tests {
         ));
     }
 
-    // ── Process registry: registration, query, reap, signal ─────────────
+    // Process registry: registration, query, reap, signal
 
     #[test]
     fn spawn_registers_process_and_pid_roundtrip() {
@@ -807,7 +807,7 @@ mod tests {
         assert_eq!(scheduler.continue_process(999), Err(crate::Error::NotFound));
     }
 
-    // ── Property tests (model oracle + fixed-seed LCG) ─────────────────────
+    // Property tests (model oracle + fixed-seed LCG)
 
     /// Random enqueue / dispatch / suspend+prune sequences against a model of
     /// the ready set.  Invariants checked after every operation:

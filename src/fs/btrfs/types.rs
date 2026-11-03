@@ -17,7 +17,7 @@
 
 use alloc::vec::Vec;
 
-// ── Superblock ────────────────────────────────────────────────────────────
+// Superblock
 
 pub const BTRFS_MAGIC: [u8; 8] = *b"_BHRfS_M";
 pub const SUPERBLOCK_OFFSET: u64 = 0x10000; // 64 KiB
@@ -74,7 +74,7 @@ impl Superblock {
     }
 }
 
-// ── B-tree structures ─────────────────────────────────────────────────────
+// B-tree structures
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Key {
@@ -144,7 +144,7 @@ impl NodeHeader {
     }
 }
 
-// ── Key types ─────────────────────────────────────────────────────────────
+// Key types
 
 pub const KEY_INODE_ITEM: u8 = 1;
 pub const KEY_EXTENT_DATA: u8 = 108;
@@ -155,11 +155,11 @@ pub const KEY_ROOT_REF: u8 = 156;
 pub const KEY_DEV_ITEM: u8 = 216;
 pub const KEY_CHUNK_ITEM: u8 = 228;
 
-// ── Object IDs ───────────────────────────────────────────────────────────
+// Object IDs
 
 pub const FS_TREE_OBJECTID: u64 = 5;
 
-// ── Items ─────────────────────────────────────────────────────────────────
+// Items
 
 #[derive(Debug, Clone)]
 pub struct InodeItem {
@@ -322,7 +322,7 @@ impl ExtentData {
     }
 }
 
-// ── Root item (subvolume metadata) ────────────────────────────────────────
+// Root item (subvolume metadata)
 
 /// Parsed btrfs_root_item — key fields for subvolume traversal.
 #[derive(Debug, Clone)]

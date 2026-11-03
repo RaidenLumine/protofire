@@ -72,7 +72,7 @@ fn advertised_mss(stack: &NetworkStack, remote: IpAddress) -> u16 {
     }
 }
 
-// ─── Active open: connect ─────────────────────────────────────────────
+// Active open: connect
 
 /// Initiate an active TCP connection to a remote endpoint.
 ///
@@ -187,7 +187,7 @@ pub fn connect(
     })
 }
 
-// ─── Output (proactive TX) ────────────────────────────────────────────
+// Output (proactive TX)
 
 /// Drain queued data from `state.send_buffer`, build TCP segments, and
 /// return them as `(dst_ip, segment_bytes)` tuples.  Must be called with
@@ -260,7 +260,7 @@ pub(crate) fn try_flush_tcp_output(
     pending
 }
 
-// ─── Process segment (IPv4) ───────────────────────────────────────────
+// Process segment (IPv4)
 
 /// Advance the send state in response to an incoming acknowledgement:
 /// move `send_unacked` forward, pop acknowledged segments from the
@@ -547,7 +547,7 @@ pub fn process_segment(
                 return Ok(pending);
             }
 
-            // ── ECN: process received ECN flags ────────────────────
+            // ECN: process received ECN flags
             if flags & TCP_FLAG_CWR != 0 {
                 state.ecn.on_cwr_received();
             }
@@ -862,7 +862,7 @@ pub fn process_segment(
     Ok(pending)
 }
 
-// ─── Retransmission ───────────────────────────────────────────────────
+// Retransmission
 
 /// Check for and retransmit any timed-out segments for a connection.
 pub fn retransmit_check(
@@ -929,7 +929,7 @@ pub fn retransmit_check(
     Ok(pending)
 }
 
-// ─── Close ────────────────────────────────────────────────────────────
+// Close
 
 /// Close a TCP connection gracefully.
 pub fn close(
@@ -1021,7 +1021,7 @@ pub fn close(
     }
 }
 
-// ─── Out-of-order reassembly ──────────────────────────────────────────
+// Out-of-order reassembly
 
 /// Attempt to deliver any out-of-order queued segments that are now in-order.
 fn deliver_ooo(state: &mut TcpConnectionState) -> usize {

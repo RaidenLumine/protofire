@@ -14,7 +14,7 @@ use crate::abi::diagnostic;
 use crate::syscall;
 use crate::types::CmdResult;
 
-// ── ABI diagnostic decode helpers ───────────────────────────────────────
+// ABI diagnostic decode helpers
 
 fn decode_process_state(state: u64) -> &'static str {
     match state {
@@ -57,7 +57,7 @@ fn process_name_from_record(record: &diagnostic::ProcessInfoRecord) -> &str {
     core::str::from_utf8(&record.name[..nul_pos]).unwrap_or("?")
 }
 
-// ── Signal name table ───────────────────────────────────────────────────
+// Signal name table
 
 const SIGNAL_NAMES: &[(&str, usize)] = &[
     ("HUP", 1),
@@ -99,7 +99,7 @@ fn signal_number(name: &str) -> Option<usize> {
         .map(|(_, num)| *num)
 }
 
-// ─── true / false ───────────────────────────────────────────────────────
+// true / false
 
 /// `true` — do nothing, exit 0.
 pub fn cmd_true() -> CmdResult {
@@ -111,7 +111,7 @@ pub fn cmd_false() -> CmdResult {
     CmdResult::error(1, String::new())
 }
 
-// ─── ps ─────────────────────────────────────────────────────────────────
+// ps
 
 pub fn cmd_ps(argv: &[String]) -> CmdResult {
     // Parse flags.
@@ -285,7 +285,7 @@ fn cmd_ps_threads(pid: u32) -> CmdResult {
     CmdResult::from_output(out)
 }
 
-// ─── kill ───────────────────────────────────────────────────────────────
+// kill
 
 pub fn cmd_kill(argv: &[String]) -> CmdResult {
     if argv.len() < 2 {

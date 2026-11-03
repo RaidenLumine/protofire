@@ -12,7 +12,7 @@ use crate::fs::vfs::NodeKind;
 
 use super::constants::*;
 
-// ─── F2FS Superblock ──────────────────────────────────────────────────
+// F2FS Superblock
 
 /// Parsed F2FS superblock from block 0.
 #[derive(Debug, Clone)]
@@ -282,7 +282,7 @@ pub(crate) fn write_f2fs_superblock(sb: &F2fsSuperblock, raw: &mut [u8]) {
         .copy_from_slice(&sb.node_count.to_le_bytes());
 }
 
-// ─── NAT Entry ────────────────────────────────────────────────────────
+// NAT Entry
 
 /// A NAT (Node Address Table) entry — maps a NID to its physical block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,7 +307,7 @@ pub(crate) fn write_nat_entry(entry: &F2fsNatEntry, raw: &mut [u8]) {
     raw[4..8].copy_from_slice(&entry.ino.to_le_bytes());
 }
 
-// ─── SIT Entry ────────────────────────────────────────────────────────
+// SIT Entry
 
 /// A SIT (Segment Information Table) entry — tracks validity of blocks in
 /// one segment.
@@ -365,7 +365,7 @@ pub(crate) fn write_sit_entry(entry: &F2fsSitEntry, raw: &mut [u8]) {
     raw[2..66].copy_from_slice(&entry.valid_map);
 }
 
-// ─── Checkpoint ───────────────────────────────────────────────────────
+// Checkpoint
 
 /// Parsed F2FS checkpoint.
 #[derive(Debug, Clone)]
@@ -572,7 +572,7 @@ pub(crate) fn write_f2fs_checkpoint(cp: &F2fsCheckpoint, raw: &mut [u8]) {
         .copy_from_slice(&cp.sit_journal_entries.to_le_bytes());
 }
 
-// ─── F2FS Inode ───────────────────────────────────────────────────────
+// F2FS Inode
 
 /// An F2FS inode, occupying exactly one 4 KiB block on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -793,7 +793,7 @@ pub(crate) fn write_f2fs_inode(inode: &F2fsInode, raw: &mut [u8]) {
     }
 }
 
-// ─── Directory Entry ──────────────────────────────────────────────────
+// Directory Entry
 
 /// Parsed F2FS directory entry.
 #[derive(Debug, Clone)]
@@ -897,7 +897,7 @@ pub(crate) fn write_f2fs_dir_entry(
     rec_len
 }
 
-// ─── Memory Caches ────────────────────────────────────────────────────
+// Memory Caches
 
 /// In-memory NAT cache — maps NID → block address.
 #[derive(Debug, Clone)]

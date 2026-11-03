@@ -38,7 +38,7 @@ use crate::network::internet::ipv4::IpProtocol;
 use crate::network::internet::ipv4::Ipv4Addr;
 use crate::network::internet::ipv4::Ipv4Header;
 
-// ─── Constants ───────────────────────────────────────────────────────────
+// Constants
 
 /// Maximum number of rules in the filter.
 const MAX_FILTER_RULES: usize = 256;
@@ -59,7 +59,7 @@ const DEFAULT_FLOW_TIMEOUT: u64 = 6_000;
 /// Interval between expired-flow sweep checks (30 seconds in ticks).
 const SWEEP_INTERVAL: u64 = 3_000;
 
-// ─── Direction ───────────────────────────────────────────────────────────
+// Direction
 
 /// Packet direction relative to this host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +82,7 @@ impl FilterDirection {
     }
 }
 
-// ─── Action ──────────────────────────────────────────────────────────────
+// Action
 
 /// What to do when a rule matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl FilterAction {
     }
 }
 
-// ─── IP address / CIDR helpers ──────────────────────────────────────────
+// IP address / CIDR helpers
 
 /// Check whether `addr` matches a CIDR prefix `(prefix_addr, prefix_len)`.
 /// A prefix_len of 0 matches any address.
@@ -128,7 +128,7 @@ fn port_match(port: u16, start: u32, end: u32) -> bool {
     port_u32 >= start && port_u32 <= end_actual
 }
 
-// ─── Flow key for connection tracking ────────────────────────────────────
+// Flow key for connection tracking
 
 /// Key that identifies a bidirectional flow.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -204,7 +204,7 @@ fn make_flow_key(
     }
 }
 
-// ─── FilterRule ──────────────────────────────────────────────────────────
+// FilterRule
 
 /// A single packet filter rule.
 #[derive(Debug)]
@@ -299,7 +299,7 @@ impl FilterRule {
     }
 }
 
-// ─── PacketFilter ────────────────────────────────────────────────────────
+// PacketFilter
 
 /// The central packet filter holding rules, connection tracking, and
 /// default policy.
@@ -343,7 +343,7 @@ impl PacketFilter {
         }
     }
 
-    // ── Public API ────────────────────────────────────────────────────
+    // Public API
 
     /// Enable the packet filter.
     pub fn enable(&mut self) {
@@ -441,7 +441,7 @@ impl PacketFilter {
         self.packets_allowed.load(Ordering::Relaxed)
     }
 
-    // ── Filter check (inbound) ────────────────────────────────────────
+    // Filter check (inbound)
 
     /// Check an inbound packet (arriving from the network).
     ///
@@ -478,7 +478,7 @@ impl PacketFilter {
         self.check_packet(FilterDirection::Outbound, header, payload, tick)
     }
 
-    // ── Core check logic ──────────────────────────────────────────────
+    // Core check logic
 
     fn check_packet(
         &mut self,
@@ -489,7 +489,7 @@ impl PacketFilter {
     ) -> bool {
         let byte_count = header.total_length as usize;
 
-        // ── Connection tracking: allow established flows ──────────
+        // Connection tracking: allow established flows
         // For TCP/UDP, check if this packet belongs to a tracked flow.
         let protocol = header.protocol;
         if protocol == IpProtocol::Tcp || protocol == IpProtocol::Udp {
@@ -511,7 +511,7 @@ impl PacketFilter {
             }
         }
 
-        // ── Walk rules in order ───────────────────────────────────
+        // Walk rules in order
         for rule in self.rules.iter() {
             if rule.rule_matches(direction, header, payload) {
                 rule.record_match(byte_count);
@@ -553,7 +553,7 @@ impl PacketFilter {
             }
         }
 
-        // ── No rule matched → apply default action ────────────────
+        // No rule matched → apply default action
         self.apply_default_action(byte_count)
     }
 
@@ -571,7 +571,7 @@ impl PacketFilter {
         }
     }
 
-    // ── Flow table maintenance ──────────────────────────────────────
+    // Flow table maintenance
 
     /// Sweep expired flow entries.  Should be called periodically from
     /// `advance_tick()`.
@@ -603,7 +603,7 @@ impl PacketFilter {
     }
 }
 
-// ─── Port extraction helper ──────────────────────────────────────────────
+// Port extraction helper
 
 /// Extract TCP or UDP source and destination ports from a transport-layer
 /// segment.  Returns `None` if the payload is too short.
@@ -637,7 +637,7 @@ impl FilterRuleDef {
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

@@ -23,7 +23,7 @@ mod segment;
 pub mod table;
 mod types;
 
-// ─── Public re-exports ────────────────────────────────────────────────
+// Public re-exports
 
 pub use ops::close;
 pub use ops::connect;
@@ -44,7 +44,7 @@ pub use types::TcpState;
 pub use types::TcpWriteWait;
 pub use types::TCP_MIN_HEADER_SIZE;
 
-// ─── tests ───
+// tests
 
 #[cfg(test)]
 mod tests {
@@ -407,7 +407,7 @@ mod tests {
     use alloc::sync::Arc;
     use alloc::vec::Vec;
 
-    // ─── helpers ───
+    // helpers
 
     fn make_test_stack() -> (Arc<MockNetworkDevice>, &'static NetworkStack) {
         // SAFETY: the caller's contract is that nothing is using the stack; this
@@ -429,7 +429,7 @@ mod tests {
         super::segment::parse_mss_option(opts)
     }
 
-    // ─── header parse/build tests ───
+    // header parse/build tests
 
     #[test]
     fn tcp_header_parse_and_build_round_trip() {
@@ -488,7 +488,7 @@ mod tests {
         assert!(parse_tcp_header(&[0u8; 10]).is_err());
     }
 
-    // ─── state machine unit tests ───
+    // state machine unit tests
 
     #[test]
     fn connection_state_transitions_syn_sent_to_established() {
@@ -587,7 +587,7 @@ mod tests {
         assert!(state.retransmit.pending_segments.is_empty());
     }
 
-    // ─── Phase 1: process_segment RST & FIN state transitions ───
+    // Phase 1: process_segment RST & FIN state transitions
 
     #[test]
     fn process_segment_rst_in_syn_sent_closes_connection() {
@@ -996,7 +996,7 @@ mod tests {
         assert_eq!(state.peer_mss, 1460);
     }
 
-    // ─── Phase 2: ACK, retransmit, close, TIME-WAIT ───
+    // Phase 2: ACK, retransmit, close, TIME-WAIT
 
     #[test]
     fn process_segment_ack_advances_send_unacked() {
@@ -1300,7 +1300,7 @@ mod tests {
         assert!(table.lookup(port, peer_ip, 80).is_none());
     }
 
-    // ─── Phase 3: MSS option parsing edge cases ───
+    // Phase 3: MSS option parsing edge cases
 
     #[test]
     fn mss_option_parsing_handles_preceding_options() {
@@ -1344,7 +1344,7 @@ mod tests {
         assert_eq!(mss, MIN_PEER_MSS);
     }
 
-    // ─── Phase 4: process_segment integration with real stack ───
+    // Phase 4: process_segment integration with real stack
 
     #[test]
     fn process_segment_via_poll_syn_ack_establishes_connection() {
@@ -1500,7 +1500,7 @@ mod tests {
         assert!(pending.is_empty(), "no RST in response to an incoming RST");
     }
 
-    // ─── Phase 5: edge cases ───
+    // Phase 5: edge cases
 
     #[test]
     fn port_exhaustion_returns_error() {
@@ -1564,7 +1564,7 @@ mod tests {
         assert_eq!(state.send_unacked, 1000);
     }
 
-    // ─── Phase 6: listen / accept ───
+    // Phase 6: listen / accept
 
     #[test]
     fn listen_binds_port_and_holds_listener() {
@@ -2012,7 +2012,7 @@ mod tests {
         assert_eq!(st.state, TcpState::FinWait1);
     }
 
-    // ─── P144: throughput stress test ───
+    // P144: throughput stress test
 
     /// Exercise many data segments through the send and receive paths,
     /// verifying byte-level correctness end-to-end.
@@ -2121,7 +2121,7 @@ mod tests {
         );
     }
 
-    // ─── P144: NetProfiler validation test ───
+    // P144: NetProfiler validation test
 
     #[test]
     #[cfg(feature = "net_profiler")]

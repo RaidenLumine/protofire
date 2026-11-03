@@ -2,7 +2,7 @@
 //!
 //! Network ABI status records and flag constants shared with user space.
 
-// ── Backend class ──
+// Backend class
 
 /// Classifies the network backend reported through the status ABI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +18,7 @@ pub enum NetworkBackendClass {
     NativePending = 3,
 }
 
-// ── Status flags ──
+// Status flags
 
 pub const NETWORK_STATUS_FLAG_AVAILABLE: u32 = 1 << 0;
 pub const NETWORK_STATUS_FLAG_REQUIRES_HOST_RUNTIME: u32 = 1 << 1;
@@ -30,7 +30,7 @@ pub const NETWORK_STATUS_FLAG_TCP_LISTEN: u32 = 1 << 6;
 pub const NETWORK_STATUS_FLAG_UDP_DATAGRAM: u32 = 1 << 7;
 pub const NETWORK_STATUS_FLAG_IPV6: u32 = 1 << 8;
 
-// ── NetworkStatus ──
+// NetworkStatus
 
 /// Capability bitmask returned by the `network_status` ABI.
 #[repr(C)]
@@ -66,7 +66,7 @@ impl NetworkStatus {
         self.flags & flag != 0
     }
 
-    // ─── Capability accessors (const, usable in const fns) ──────────
+    // Capability accessors (const, usable in const fns)
 
     /// Short identifier for the active backend.
     pub const fn backend_id(self) -> &'static str {
@@ -167,7 +167,7 @@ pub const NETWORK_RECVFROM_UDP_FLAG_NONE: usize = 0;
 pub const NETWORK_RECVFROM_UDP_FLAG_IPV6: usize = 1 << 0;
 pub const NETWORK_RECVFROM_UDP_KNOWN_FLAGS: usize = NETWORK_RECVFROM_UDP_FLAG_IPV6;
 
-// ─── DCCP (RFC 4340) flags ────────────────────────────────────────────
+// DCCP (RFC 4340) flags
 
 pub const NETWORK_DCCP_FLAG_NONE: usize = 0;
 /// When set in `dccp_connect`, `arg0` is a pointer to a 16-byte IPv6

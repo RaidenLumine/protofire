@@ -190,7 +190,7 @@ impl PyroFs {
         Ok(())
     }
 
-    // ─── block-cache helpers ───
+    // block-cache helpers
 
     pub(crate) fn cached_read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
         if self.device.device_health() == DeviceHealth::Failed {

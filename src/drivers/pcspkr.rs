@@ -20,7 +20,7 @@ use crate::Result;
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
 
-// ── IO port constants ──────────────────────────────────────────────────────
+// IO port constants
 
 /// PIT command register (mode/command).
 const PIT_COMMAND: u16 = 0x43;
@@ -33,7 +33,7 @@ const SPEAKER_PORT: u16 = 0x61;
 /// PIT command: channel 2, mode 3 (square wave generator), LSB then MSB.
 const PIT_CMD_CHANNEL2_MODE3: u8 = 0xB6;
 
-// ── Driver struct ──────────────────────────────────────────────────────────
+// Driver struct
 
 struct PcspkrDriver;
 
@@ -58,7 +58,7 @@ pub fn driver() -> Arc<dyn Driver> {
     Arc::new(PcspkrDriver)
 }
 
-// ── Hardware control ───────────────────────────────────────────────────────
+// Hardware control
 
 /// Play a tone at the given frequency (in Hz) using PIT channel 2.
 ///
@@ -104,7 +104,7 @@ fn stop_inner() {
     }
 }
 
-// ── Device node handlers ───────────────────────────────────────────────────
+// Device node handlers
 
 /// Device-node read handler for `/system/dev/pcspkr`.
 ///

@@ -43,7 +43,7 @@
 
 use alloc::vec::Vec;
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// Constants
 
 /// Default bridge priority.
 pub const DEFAULT_BRIDGE_PRIORITY: u16 = 32768;
@@ -62,7 +62,7 @@ pub const DEFAULT_MAX_AGE: u16 = 20;
 /// Default Forward Delay (seconds).
 pub const DEFAULT_FORWARD_DELAY: u16 = 15;
 
-// ── BPDU types ─────────────────────────────────────────────────────────────
+// BPDU types
 
 /// BPDU Type for configuration BPDU (802.1D).
 pub const BPDU_TYPE_CONFIG: u8 = 0x00;
@@ -93,7 +93,7 @@ pub mod bpdu_flags {
     pub const FORWARDING: u8 = 0x20;
 }
 
-// ── Data structures ────────────────────────────────────────────────────────
+// Data structures
 
 /// Bridge Identifier (8 bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -229,7 +229,7 @@ impl ConfigBpdu {
     }
 }
 
-// ── Port states ────────────────────────────────────────────────────────────
+// Port states
 
 /// STP port state (802.1D).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,7 +300,7 @@ impl StpPort {
     }
 }
 
-// ── STP bridge ─────────────────────────────────────────────────────────────
+// STP bridge
 
 /// STP bridge instance.
 #[derive(Debug)]
@@ -469,7 +469,7 @@ fn is_better_bpdu(a: &ConfigBpdu, b: &ConfigBpdu) -> bool {
     a.port_id < b.port_id
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

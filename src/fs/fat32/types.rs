@@ -13,7 +13,7 @@ pub(crate) use crate::fs::vfs::NodeKind;
 use crate::Error;
 use crate::Result;
 
-// ─── FAT type classification ───────────────────────────────────────────────
+// FAT type classification
 
 /// FAT type determined from data cluster count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +55,7 @@ impl FatType {
     }
 }
 
-// ─── FAT constants ─────────────────────────────────────────────────────────
+// FAT constants
 
 /// FAT32 end-of-cluster-chain marker (high bits).
 /// Kept for documentation and potential use in write support.
@@ -112,7 +112,7 @@ pub(crate) const BPB_FS_TYPE: usize = 82; // 8 bytes ("FAT32   ")
 /// Size of a directory entry in bytes.
 pub(crate) const DIR_ENTRY_SIZE: usize = 32;
 
-// ─── FAT32 FSInfo structure ─────────────────────────────────────────────────
+// FAT32 FSInfo structure
 
 /// FAT32 FSInfo lead signature (bytes 0–3) — "RRaA".
 pub(crate) const FSINFO_LEAD_SIGNATURE: u32 = 0x4161_5252;
@@ -131,7 +131,7 @@ pub(crate) const FSINFO_TRAIL_SIGNATURE: [u8; 2] = [0x55, 0xAA];
 /// Value in the FSInfo free-count / next-free fields meaning "unknown".
 pub(crate) const FSINFO_UNKNOWN: u32 = 0xFFFF_FFFF;
 
-// ─── FAT geometry (parsed from BPB) ────────────────────────────────────────
+// FAT geometry (parsed from BPB)
 
 #[derive(Debug, Clone)]
 pub(crate) struct FatGeometry {
@@ -282,7 +282,7 @@ impl FatGeometry {
     }
 }
 
-// ─── Helper: read little-endian values from byte slices ────────────────────
+// Helper: read little-endian values from byte slices
 
 pub(crate) fn read_u16(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]])
@@ -297,7 +297,7 @@ pub(crate) fn read_u32(data: &[u8], offset: usize) -> u32 {
     ])
 }
 
-// ─── Date / time conversion ──────────────────────────────────────────────────
+// Date / time conversion
 
 /// Convert a DOS date+time pair to Unix epoch seconds.
 ///
@@ -350,7 +350,7 @@ fn days_since_epoch(year: u32, month: u32, day: u32) -> u32 {
     era as u32 * 146097 + doe - 719468
 }
 
-// ─── Directory entry ───────────────────────────────────────────────────────
+// Directory entry
 
 #[derive(Debug, Clone)]
 pub(crate) struct FatDirEntry {
@@ -552,7 +552,7 @@ pub(crate) fn build_lfn_name(fragments: &[(u8, [u16; 13])]) -> String {
     unicode::utf16le_to_utf8(&code_units)
 }
 
-// ─── Directory entry serialization (write path) ────────────────────────────
+// Directory entry serialization (write path)
 
 /// Compute the LFN checksum over the 11-byte 8.3 short name.
 pub(crate) fn lfn_checksum(short_name: &[u8; 11]) -> u8 {

@@ -112,7 +112,7 @@ const SECTOR_COUNT_1: u8 = 1;
 #[cfg(target_os = "none")]
 const IO_WAIT_READS: usize = 4;
 
-// ── Bus Master IDE (BMIDE) DMA constants ─────────────────────────────
+// Bus Master IDE (BMIDE) DMA constants
 #[cfg(target_os = "none")]
 const ATA_CMD_READ_DMA: u8 = 0xC8;
 #[cfg(target_os = "none")]
@@ -769,7 +769,7 @@ fn program_sector_io(
     wait_for_data_request(ports)
 }
 
-// ── BMIDE DMA sector I/O ───────────────────────────────────────────────
+// BMIDE DMA sector I/O
 
 /// Try a single-sector DMA read on `disk`.  Returns `Ok(())` on success, or
 /// an error if DMA is unavailable or the transfer fails (caller falls back to

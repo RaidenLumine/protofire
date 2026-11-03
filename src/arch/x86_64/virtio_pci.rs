@@ -17,7 +17,7 @@ use crate::arch::x86_64::port::Port;
 #[cfg(target_os = "none")]
 use crate::drivers::virtio::MmioRegion;
 
-// ─── Re-exported MMIO register offsets (MUST match virtio.rs) ──────────
+// Re-exported MMIO register offsets (MUST match virtio.rs)
 // We redeclare these as match-arm patterns require numeric literals.
 // The values are verified against virtio.rs at compile time via static
 // assertions below.
@@ -72,7 +72,7 @@ const MAGIC_VALUE: u32 = 0x7472_6976;
 #[allow(dead_code)]
 const VIRTIO_VERSION: u32 = 2;
 
-// ─── PCI legacy IO-port register offsets (relative to BAR0 base) ───────
+// PCI legacy IO-port register offsets (relative to BAR0 base)
 
 /// DeviceFeatures (32-bit, read-only).
 #[allow(dead_code)]
@@ -101,7 +101,7 @@ const PCI_DEVICE_STATUS: u16 = 0x12;
 #[allow(dead_code)]
 const PCI_ISR_STATUS: u16 = 0x13;
 
-// ─── Adapter ────────────────────────────────────────────────────────────
+// Adapter
 
 /// Adapts the VirtIO PCI legacy IO-port register set to the MMIO-like
 /// [`MmioRegion`] trait expected by [`VirtIoMmio`](super::virtio::VirtIoMmio).
@@ -176,7 +176,7 @@ impl PciLegacyMmioRegion {
         }
     }
 
-    // ── IO-port helpers ──────────────────────────────────────────────
+    // IO-port helpers
 
     unsafe fn io_read32(&self, offset: u16) -> u32 {
         // SAFETY: `io_base` is BAR0 of a PCI function the scan enumerated and
@@ -421,7 +421,7 @@ impl MmioRegion for PciLegacyMmioRegion {
     }
 }
 
-// ─── Stub for non-x86_64 / host targets ─────────────────────────────────
+// Stub for non-x86_64 / host targets
 
 /// A host build has no IO-port BAR to read, so the adapter stands in for one
 /// without registers behind it — enough for the callers to compile, and for

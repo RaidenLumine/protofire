@@ -44,13 +44,13 @@ pub use super::certificate::verify_chain;
 pub use super::certificate::ChainVerifyStatus;
 pub use super::certificate::X509Certificate;
 
-// ── Handshake message type constants ────────────────────────────────────────
+// Handshake message type constants
 
 const HS_SERVER_HELLO: u8 = 2;
 const HS_CERTIFICATE: u8 = 11;
 const HS_FINISHED: u8 = 20;
 
-// ── HKDF-Expand-Label (RFC 8446 §7.1) ───────────────────────────────────────
+// HKDF-Expand-Label (RFC 8446 §7.1)
 
 /// HKDF-Expand-Label(Secret, Label, Context, Length) as defined in RFC 8446
 /// §7.1.
@@ -105,7 +105,7 @@ fn derive_finished_key(base_key: &[u8; 32]) -> [u8; 32] {
     key
 }
 
-// ── Key schedule (RFC 8446 §7.1) ────────────────────────────────────────────
+// Key schedule (RFC 8446 §7.1)
 
 /// Secrets produced at each stage of the TLS 1.3 key schedule.
 pub struct HandshakeSecrets {
@@ -221,7 +221,7 @@ impl ApplicationSecrets {
     }
 }
 
-// ── ServerHello parsing ─────────────────────────────────────────────────────
+// ServerHello parsing
 
 /// A parsed TLS 1.3 ServerHello message.
 pub struct ParsedServerHello {
@@ -376,7 +376,7 @@ pub fn parse_server_hello(data: &[u8]) -> Result<ParsedServerHello> {
     })
 }
 
-// ── Server handshake message parsing ─────────────────────────────────────────
+// Server handshake message parsing
 
 /// Parsed server Finished message.
 pub struct ParsedServerFinished {
@@ -432,7 +432,7 @@ pub fn build_client_finished(finished_key: &[u8; 32], transcript_hash: &[u8; 32]
     finished
 }
 
-// ── TLS 1.3 record I/O helpers ──────────────────────────────────────────────
+// TLS 1.3 record I/O helpers
 
 /// Parse a plaintext (unencrypted) TLS record.
 ///
@@ -506,7 +506,7 @@ pub fn read_tls_record(
     Ok((content_type, buf.clone()))
 }
 
-// ── Handshake message accumulator ────────────────────────────────────────────
+// Handshake message accumulator
 
 /// Accumulate decrypted handshake messages and feed them to the transcript.
 ///
@@ -545,7 +545,7 @@ pub fn parse_handshake_messages_from_stream(
     Ok(messages)
 }
 
-// ── Certificate types (minimal X.509) ────────────────────────────────────────
+// Certificate types (minimal X.509)
 
 /// Verification status for a TLS server certificate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -738,13 +738,13 @@ pub fn verify_certificate_verify_signature(
     }
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── HKDF-Expand-Label test vector (RFC 8448 §3) ──────────────────────
+    // HKDF-Expand-Label test vector (RFC 8448 §3)
 
     #[test]
     fn hkdf_expand_label_produces_known_output() {
@@ -763,7 +763,7 @@ mod tests {
         assert_ne!(&output[..12], &output3);
     }
 
-    // ── Key schedule end-to-end ─────────────────────────────────────────
+    // Key schedule end-to-end
 
     #[test]
     fn key_schedule_roundtrip() {
@@ -807,7 +807,7 @@ mod tests {
         assert_ne!(app.client_application_secret, hs.client_handshake_secret);
     }
 
-    // ── ServerHello parsing ─────────────────────────────────────────────
+    // ServerHello parsing
 
     #[test]
     fn parse_server_hello_extracts_fields() {
@@ -895,7 +895,7 @@ mod tests {
         assert!(parse_server_hello(&sh).is_err());
     }
 
-    // ── Finished verification ───────────────────────────────────────────
+    // Finished verification
 
     #[test]
     fn server_finished_verifies_and_rejects_bad_hmac() {
@@ -934,7 +934,7 @@ mod tests {
         assert_eq!(&client_finished[4..4 + 32], &expected);
     }
 
-    // ── Plaintext record I/O ────────────────────────────────────────────
+    // Plaintext record I/O
 
     #[test]
     fn parse_plaintext_tls_record_roundtrip() {
@@ -950,7 +950,7 @@ mod tests {
         assert_eq!(data, payload);
     }
 
-    // ── Handshake message stream parsing ───────────────────────────────
+    // Handshake message stream parsing
 
     #[test]
     fn parse_handshake_messages_from_stream_multiple() {
@@ -977,7 +977,7 @@ mod tests {
         assert_ne!(digest, [0u8; 32]);
     }
 
-    // ── Certificate message parsing ──────────────────────────────────────
+    // Certificate message parsing
 
     /// Build a minimal DER-encoded certificate for testing.
     fn build_minimal_der_cert(cn: &str) -> Vec<u8> {

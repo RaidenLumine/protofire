@@ -43,7 +43,7 @@ const HS_CERTIFICATE: u8 = 11;
 const HS_CERTIFICATE_VERIFY: u8 = 15;
 const HS_FINISHED: u8 = 20;
 
-// ── Transcript hash ───────────────────────────────────────────────────────
+// Transcript hash
 
 /// Accumulates handshake message hashes for the TLS 1.3 key schedule.
 pub struct TranscriptHash {
@@ -73,7 +73,7 @@ impl TranscriptHash {
     }
 }
 
-// ── TLS connection ────────────────────────────────────────────────────────
+// TLS connection
 
 /// A TLS 1.3 client connection.
 ///
@@ -535,7 +535,7 @@ fn build_sni_extension(hostname: &str) -> Vec<u8> {
     ext
 }
 
-// ── TlsWrappedConnection ──────────────────────────────────────────────────
+// TlsWrappedConnection
 
 use crate::kernel::sync::Mutex;
 

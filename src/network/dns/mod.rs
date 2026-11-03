@@ -52,7 +52,7 @@ pub use resolve::resolve_v6;
 pub(crate) use resolve::resolve_within;
 pub(crate) use resolve::DNS_BACKGROUND_TIMEOUT_TICKS;
 
-// ── DNS message constants (shared across query, parse, and tests) ──
+// DNS message constants (shared across query, parse, and tests)
 
 pub(crate) const DNS_HEADER_SIZE: usize = 12;
 pub(crate) const DNS_FLAGS_QR_RESPONSE: u16 = 0x8000;

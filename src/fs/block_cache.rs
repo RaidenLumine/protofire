@@ -710,7 +710,7 @@ impl BlockCache {
             .map(|entry| entry.data)
     }
 
-    // ─── internal helpers ───
+    // internal helpers
 
     fn next_generation(&self) -> u64 {
         let mut gen = self.generation.lock();
@@ -820,7 +820,7 @@ impl BlockCache {
         slot.dirty_since = dirty_since;
     }
 
-    // ─── stats helpers ───
+    // stats helpers
 
     fn inc_hits(&self) {
         self.stats.lock().hits += 1;
@@ -1140,7 +1140,7 @@ mod tests {
         assert_eq!(buf, make_test_data(0x99));
     }
 
-    // ─── write-back tests ───
+    // write-back tests
 
     #[test]
     fn write_back_does_not_touch_device() {
@@ -1507,7 +1507,7 @@ mod tests {
         assert!(found, "no dirty block was written back to the device");
     }
 
-    // ─── read-ahead tests ──────────────────────────────────────────────
+    // read-ahead tests
 
     #[test]
     fn prefetch_populates_cache() {
@@ -1599,7 +1599,7 @@ mod tests {
         assert_eq!(cache.stats().prefetches_issued, 3);
     }
 
-    // ─── aged (persistent) write-back tests ─────────────────────────────
+    // aged (persistent) write-back tests
 
     /// Serializes tests that manipulate the shared global cache clock.
     static AGED_TEST_LOCK: TestMutex<()> = TestMutex::new(());

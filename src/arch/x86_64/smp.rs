@@ -20,7 +20,7 @@ use crate::kernel::process::scheduler::registry::register;
 use crate::kernel::smp::MAX_CPUS;
 use crate::kernel::MAX_APS;
 
-// ── Constants ───────────────────────────────────────────────────────────
+// Constants
 
 /// Physical base address for the AP trampoline.
 /// Must be page-aligned, identity-mapped, and below 1 MiB (real-mode
@@ -43,7 +43,7 @@ struct ApStack([u8; AP_STACK_SIZE]);
 static AP_STACKS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[ApStack; MAX_APS]> =
     crate::util::sync_unsafe_cell::SyncUnsafeCell::new([ApStack([0; AP_STACK_SIZE]); MAX_APS]);
 
-// ── Trampoline data layout at TRAMPOLINE_DATA_BASE ──────────────────────
+// Trampoline data layout at TRAMPOLINE_DATA_BASE
 
 /// Data passed from BSP to AP through the trampoline data page.
 /// Each field sits at a known offset from `TRAMPOLINE_DATA_BASE`.
@@ -80,7 +80,7 @@ impl TrampolineData {
     }
 }
 
-// ── Boot page-table root ───────────────────────────────────────────────
+// Boot page-table root
 
 /// Boot Page Table root (PML4) physical address.  Saved before
 /// [`crate::arch::mmu::activate_prepared_runtime_kernel_page_tables`]
@@ -101,7 +101,7 @@ pub fn save_boot_cr3() {
     BOOT_CR3.store(cr3, Ordering::Release);
 }
 
-// ── IPI delivery ───────────────────────────────────────────────────────
+// IPI delivery
 
 /// BSP LAPIC ID, set during early SMP init.  Needed so APs can send
 /// TLB-shootdown IPIs back to the BSP.
@@ -232,7 +232,7 @@ fn wait_icr_ready() {
     }
 }
 
-// ── AP trampoline ──────────────────────────────────────────────────────
+// AP trampoline
 
 // Symbols from the trampoline assembly (ap_trampoline.asm, included by
 // `main.rs` — the binary crate owns the assembly, so this only links in the
@@ -277,7 +277,7 @@ unsafe fn install_trampoline() {
     }
 }
 
-// ── AP entry point ─────────────────────────────────────────────────────
+// AP entry point
 
 /// Entry point called from the AP trampoline once the AP reaches 64-bit
 /// long mode.
@@ -387,7 +387,7 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
     }
 }
 
-// ── SMP bring-up orchestration ─────────────────────────────────────────
+// SMP bring-up orchestration
 
 /// Bring up all discovered APs.
 ///
@@ -487,7 +487,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
         (*percpu_ptr).tss = ap_tss_ptr as *mut u8;
     }
 
-    // ── Pre-create the AP's scheduler and idle process from the BSP ───
+    // Pre-create the AP's scheduler and idle process from the BSP
     // The AP would otherwise need the heap lock and MEMORY_MANAGER_LOCK
     // during ap_entry, racing with the BSP's spawn_demo_threads.  By
     // creating everything here (single-threaded, BSP only) the AP can
@@ -546,7 +546,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     unsafe { tdata.write_to() };
     crate::println!("[smp   ] trampoline data written, sending INIT assert...");
 
-    // ── INIT-SIPI-SIPI sequence (Intel SDM Vol 3 § 10.6) ────────────────
+    // INIT-SIPI-SIPI sequence (Intel SDM Vol 3 § 10.6)
     // Step 1: Assert INIT.  Trigger Mode must be Level (bit 15) for INIT;
     // Level=Assert (bit 14) combined with Trigger Mode=Level is the
     // canonical INIT assert per Intel SDM § 10.6.1 Table 10-19.
@@ -638,7 +638,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     }
 }
 
-// ── Calibrated busy-wait helpers (unused with short inline delays above) ──
+// Calibrated busy-wait helpers (unused with short inline delays above)
 // Keep for future use with configurable delay durations.
 
 #[allow(dead_code)]

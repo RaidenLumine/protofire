@@ -126,26 +126,26 @@ impl PyroFsState {
     /// Rollback all mutations recorded in the undo log.  LIFO order ensures
     /// that dependent mutations are unwound correctly.
     pub(crate) fn rollback_undo(&mut self) {
-        // ── Full dirent-table restore (saved on first insert/remove) ──
+        // Full dirent-table restore (saved on first insert/remove)
         if let Some(ref all) = self.undo.all_dirents {
             self.dir_entries = all.clone();
         }
         if let Some(ref all) = self.undo.all_inode_to_entry_index {
             self.inode_to_entry_index = all.clone();
         }
-        // ── Restore individual dirents on top (for pre-insert mutations) ──
+        // Restore individual dirents on top (for pre-insert mutations)
         for (idx, old) in self.undo.dirents.iter().rev() {
             if let Some(slot) = self.dir_entries.get_mut(*idx) {
                 *slot = old.clone();
             }
         }
-        // ── Restore inodes (reverse order) ──
+        // Restore inodes (reverse order)
         for &(idx, old) in self.undo.inodes.iter().rev() {
             if let Some(slot) = self.inodes.get_mut(idx) {
                 *slot = old;
             }
         }
-        // ── Restore xattr records (reverse order, V4+) ──
+        // Restore xattr records (reverse order, V4+)
         for (idx, old) in self.undo.xattrs.iter().rev() {
             if let Some(slot) = self.xattrs.get_mut(*idx) {
                 *slot = *old;
@@ -154,7 +154,7 @@ impl PyroFsState {
         if let Some(len) = self.undo.xattr_len {
             self.xattrs.truncate(len);
         }
-        // ── Truncate vectors that grew via push (new inode allocation) ──
+        // Truncate vectors that grew via push (new inode allocation)
         if let Some(len) = self.undo.inodes_len {
             self.inodes.truncate(len);
         }
@@ -164,7 +164,7 @@ impl PyroFsState {
         if let Some(len) = self.undo.inode_to_entry_index_len {
             self.inode_to_entry_index.truncate(len);
         }
-        // ── Restore fixed-size auxiliary state ──
+        // Restore fixed-size auxiliary state
         if let Some(ref extents) = self.undo.free_data_extents {
             self.free_data_extents = extents.clone();
         }
@@ -442,4 +442,4 @@ impl TransactionContext<'_> {
     }
 }
 
-// ── PyroFs core implementation ─────────────────────────────────────
+// PyroFs core implementation

@@ -33,7 +33,7 @@ use crate::user::program::UserImageLoadPlan;
 use crate::Error;
 use crate::Result;
 
-// ── Per-architecture halves ────────────────────────────────────────────
+// Per-architecture halves
 //
 // Each module defines the same entry points, so the picker below re-exports
 // whichever half this target has: a call site names what it wants, not which
@@ -144,7 +144,7 @@ pub(crate) fn build_initial_user_thread_start(
     }
 }
 
-// ── auxiliary vector keys ──────────────────────────────────────────────
+// auxiliary vector keys
 //
 // What a user program finds on its initial stack: the ELF standard's `AT_*`
 // keys, put there by the architecture's own half below, which is why they
@@ -166,7 +166,7 @@ pub(crate) const AUXV_AT_PAGESZ: u64 = 6;
 )]
 pub(crate) const AUXV_AT_ENTRY: u64 = 9;
 
-// ── the initial stack ──────────────────────────────────────────────────
+// the initial stack
 //
 // The stack a user program starts on, built the way a C runtime reads it: the
 // argument and environment strings pushed downwards from the top, then

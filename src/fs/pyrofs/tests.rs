@@ -41,7 +41,7 @@ use super::ImageEntry;
 use super::PyroFs;
 use super::PyroFsVolume;
 
-// ── V4 image helpers ──────────────────────────────────────────────────
+// V4 image helpers
 
 /// Build a writable V4 SimpleFS image with a single `/README.txt` seed file
 /// and generous headroom, wrapped in an in-memory block device.
@@ -98,7 +98,7 @@ fn read_full_test(node: &dyn VNode) -> Vec<u8> {
     buffer
 }
 
-// ── Metadata write-failure injection ──────────────────────────────────
+// Metadata write-failure injection
 
 /// Block-device wrapper that counts the blocks each write puts on the device.
 ///
@@ -270,7 +270,7 @@ impl BlockDevice for MetadataFailingBlockDevice {
     }
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────
+// Tests
 
 #[test]
 fn v4_volume_opens_and_reads_seed_file() {

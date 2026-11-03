@@ -22,7 +22,7 @@ use super::types::KEY_INODE_ITEM;
 use super::types::KEY_ROOT_ITEM;
 use super::types::SUPERBLOCK_OFFSET;
 
-// ── shared constants ──────────────────────────────────────────────────────
+// shared constants
 
 const NODE_SIZE: u32 = 4096;
 const ROOT_DIR_INO: u64 = 6;
@@ -49,7 +49,7 @@ const MDEV_FILE2_CONTENT: &[u8] = b"Hello from device 1\n";
 const MDEV_FILE1_INO: u64 = 256;
 const MDEV_FILE2_INO: u64 = 257;
 
-// ── Multi-device test layout ─────────────────────────────────────────────
+// Multi-device test layout
 // Device 0 carries the superblock, chunk tree, root tree, fs tree, and the
 // data for `dev0.txt`.  Device 1 carries only data for `dev1.txt`, reached
 // through chunk B.
@@ -61,13 +61,13 @@ const DEV1_CHUNK_SIZE: u64 = 0x2000;
 const DEV1_FILE_LOGICAL: u64 = 0x31000;
 const DEV1_FILE_PHYS_OFFSET: u64 = 0x1000;
 
-// ── Compressed single-device test layout ─────────────────────────────────
+// Compressed single-device test layout
 const ROOT_TREE_ADDR: u64 = 0x11000;
 const FS_TREE_ADDR: u64 = 0x12000;
 const COMPRESSED_DATA_ADDR: u64 = 0x20000;
 const FILE_INO: u64 = 256;
 
-// ── low-level byte writers ───────────────────────────────────────────────
+// low-level byte writers
 
 fn put_u16(buf: &mut [u8], off: usize, value: u16) {
     buf[off..off + 2].copy_from_slice(&value.to_le_bytes());
@@ -161,13 +161,13 @@ fn fixup_node_csum(dev: &mut [u8], addr: usize, size: usize) {
     put_u32(node, 0, computed);
 }
 
-// ── Compressed single-device volume ──────────────────────────────────────
+// Compressed single-device volume
 
 fn build_compressed_volume_image() -> Vec<u8> {
     let dev_size = 0x22000usize;
     let mut dev = vec![0u8; dev_size];
 
-    // ── Superblock ───────────────────────────────────────────────────────
+    // Superblock
     {
         let off = SUPERBLOCK_OFFSET as usize;
         let sb = &mut dev[off..off + 4096];
@@ -187,7 +187,7 @@ fn build_compressed_volume_image() -> Vec<u8> {
         put_u64(sb, 0xB0, 1); // chunk_root_gen
     }
 
-    // ── Root tree leaf (1 ROOT_ITEM for FS_TREE) ─────────────────────────
+    // Root tree leaf (1 ROOT_ITEM for FS_TREE)
     {
         let off = ROOT_TREE_ADDR as usize;
         let leaf = &mut dev[off..off + NODE_SIZE as usize];
@@ -198,7 +198,7 @@ fn build_compressed_volume_image() -> Vec<u8> {
         write_root_item_data(&mut leaf[d1 as usize..], ROOT_DIR_INO, FS_TREE_ADDR, 0);
     }
 
-    // ── FS tree leaf (4 items) ───────────────────────────────────────────
+    // FS tree leaf (4 items)
     //
     // Items:
     //  1. {6,   1,   0}   INODE_ITEM root dir
@@ -244,7 +244,7 @@ fn build_compressed_volume_image() -> Vec<u8> {
         );
     }
 
-    // ── File data (compressed blob) ──────────────────────────────────────
+    // File data (compressed blob)
     let blob_off = COMPRESSED_DATA_ADDR as usize;
     dev[blob_off..blob_off + COMPRESSED_FILE_BLOB.len()].copy_from_slice(COMPRESSED_FILE_BLOB);
 
@@ -288,7 +288,7 @@ fn btrfs_compressed_file_stat() {
     assert_eq!(meta.size, COMPRESSED_FILE_CONTENT.len());
 }
 
-// ── Multi-device tests ──────────────────────────────────────────────────────
+// Multi-device tests
 
 /// Write a chunk item (btrfs_chunk) into `buf`.
 ///
@@ -326,7 +326,7 @@ fn build_btrfs_multi_device_images() -> (Vec<u8>, Vec<u8>) {
     let mut dev0 = vec![0u8; dev0_size];
     let mut dev1 = vec![0u8; dev1_size];
 
-    // ── Device 0: Superblock ───────────────────────────────────────────────
+    // Device 0: Superblock
     {
         let off = SUPERBLOCK_OFFSET as usize;
         let sb = &mut dev0[off..off + 4096];
@@ -349,7 +349,7 @@ fn build_btrfs_multi_device_images() -> (Vec<u8>, Vec<u8>) {
         put_u64(sb, 0xC0, 0);
     }
 
-    // ── Device 0: Chunk tree leaf (2 CHUNK_ITEMs) ──────────────────────────
+    // Device 0: Chunk tree leaf (2 CHUNK_ITEMs)
     {
         let off = DEV0_CHUNK_TREE_ADDR as usize;
         let leaf = &mut dev0[off..off + NODE_SIZE as usize];
@@ -377,7 +377,7 @@ fn build_btrfs_multi_device_images() -> (Vec<u8>, Vec<u8>) {
         write_chunk_item(&mut leaf[d2 as usize..], DEV1_CHUNK_SIZE, (1, 0));
     }
 
-    // ── Device 0: Root tree leaf (1 ROOT_ITEM for FS_TREE) ─────────────────
+    // Device 0: Root tree leaf (1 ROOT_ITEM for FS_TREE)
     {
         let off = DEV0_ROOT_TREE_ADDR as usize;
         let leaf = &mut dev0[off..off + NODE_SIZE as usize];
@@ -388,7 +388,7 @@ fn build_btrfs_multi_device_images() -> (Vec<u8>, Vec<u8>) {
         write_root_item_data(&mut leaf[d1 as usize..], ROOT_DIR_INO, DEV0_FS_TREE_ADDR, 0);
     }
 
-    // ── Device 0: FS tree leaf (6 items) ───────────────────────────────────
+    // Device 0: FS tree leaf (6 items)
     //
     // Items:
     //  1. {6,   1,   0}  INODE_ITEM root dir
@@ -466,15 +466,15 @@ fn build_btrfs_multi_device_images() -> (Vec<u8>, Vec<u8>) {
         );
     }
 
-    // ── Device 0: File data ────────────────────────────────────────────────
+    // Device 0: File data
     let f1_off = 0x20000usize;
     dev0[f1_off..f1_off + MDEV_FILE1_CONTENT.len()].copy_from_slice(MDEV_FILE1_CONTENT);
 
-    // ── Device 1: File data ────────────────────────────────────────────────
+    // Device 1: File data
     let f2_off = DEV1_FILE_PHYS_OFFSET as usize;
     dev1[f2_off..f2_off + MDEV_FILE2_CONTENT.len()].copy_from_slice(MDEV_FILE2_CONTENT);
 
-    // ── Fix up CRC32C checksums ────────────────────────────────────────────
+    // Fix up CRC32C checksums
     fixup_node_csum(&mut dev0, DEV0_CHUNK_TREE_ADDR as usize, NODE_SIZE as usize);
     fixup_node_csum(&mut dev0, DEV0_ROOT_TREE_ADDR as usize, NODE_SIZE as usize);
     fixup_node_csum(&mut dev0, DEV0_FS_TREE_ADDR as usize, NODE_SIZE as usize);
@@ -489,7 +489,7 @@ fn open_multi_device_volume() -> BtrfsVolume {
     BtrfsVolume::open(vec![dev0, dev1]).expect("open multi-device Btrfs volume")
 }
 
-// ── Multi-device tests ──────────────────────────────────────────────────────
+// Multi-device tests
 
 #[test]
 fn btrfs_multi_device_open_and_name() {

@@ -213,7 +213,7 @@ where
         .map(|value| value.into_dispatch())
 }
 
-// ── Poll: multi-fd readiness ────────────────────────────────────────────────
+// Poll: multi-fd readiness
 
 /// Poll flags (matching typical POSIX poll.h values).
 const POLLIN: u16 = 0x001;

@@ -858,7 +858,7 @@ fn topology_from_srat(numa: &crate::arch::x86_64::acpi::EarlyNumaData) -> Topolo
     use crate::kernel::topology::MAX_NUMA_NODES;
     use crate::kernel::topology::NUMA_NODE_NONE;
 
-    // ── Build cpu_to_node mapping ──
+    // Build cpu_to_node mapping
     let cpu_count = numa.cpu_apic_ids.len();
     let mut cpu_to_node: alloc::vec::Vec<NodeId> = alloc::vec![0u8; cpu_count];
 
@@ -887,7 +887,7 @@ fn topology_from_srat(numa: &crate::arch::x86_64::acpi::EarlyNumaData) -> Topolo
         cpu_to_node[idx] = node_id;
     }
 
-    // ── Collect unique node IDs ──
+    // Collect unique node IDs
     let mut node_ids: [NodeId; MAX_NUMA_NODES] = [NUMA_NODE_NONE; MAX_NUMA_NODES];
     let mut unique_count = 0usize;
     for &nid in &cpu_to_node {
@@ -904,7 +904,7 @@ fn topology_from_srat(numa: &crate::arch::x86_64::acpi::EarlyNumaData) -> Topolo
         }
     }
 
-    // ── Build NumaNode list ──
+    // Build NumaNode list
     let mut nodes: alloc::vec::Vec<NumaNode> = alloc::vec::Vec::with_capacity(unique_count);
     for nid in node_ids.iter().take(unique_count) {
         let nid = *nid;
@@ -921,7 +921,7 @@ fn topology_from_srat(numa: &crate::arch::x86_64::acpi::EarlyNumaData) -> Topolo
         });
     }
 
-    // ── Add memory ranges from SRAT ──
+    // Add memory ranges from SRAT
     for aff in &numa.memory_affinities {
         if !aff.enabled {
             continue;
@@ -945,7 +945,7 @@ fn topology_from_srat(numa: &crate::arch::x86_64::acpi::EarlyNumaData) -> Topolo
         }
     }
 
-    // ── Distance matrix from SLIT ──
+    // Distance matrix from SLIT
     let distance_matrix = numa.slit_matrix.clone().unwrap_or_default();
 
     Topology {

@@ -63,13 +63,13 @@ fn seed_csprng(key: [u8; 32], nonce: [u8; 12]) {
 fn collect_entropy_seed() -> [u8; 32] {
     let mut material = Vec::with_capacity(128);
 
-    // ── The machine's own hardware entropy, where it has any ──
+    // The machine's own hardware entropy, where it has any
     // RDRAND and RDSEED on x86_64, RNDR and RNDRRS on AArch64, nothing on
     // RISC-V: which of those this machine offers is the architecture's answer,
     // and an empty one simply leaves the fallback below as the only source.
     material.extend_from_slice(&crate::arch::hardware_rand::hardware_entropy());
 
-    // ── Fallback: RTC time + monotonic ticks ──
+    // Fallback: RTC time + monotonic ticks
     // Always include these as an additional entropy source, even when
     // hardware RNG is available.  This provides defense-in-depth and
     // is the sole entropy source on platforms without hardware RNG.

@@ -52,7 +52,7 @@ use types::Extent;
 use types::InodeCore;
 use types::Superblock;
 
-// ── XfsVolume ─────────────────────────────────────────────────────────────
+// XfsVolume
 
 pub struct XfsVolume {
     device: Arc<dyn BlockDevice>,
@@ -292,7 +292,7 @@ impl VfsFileSystem for XfsVolume {
     }
 }
 
-// ── XfsVNode ──────────────────────────────────────────────────────────────
+// XfsVNode
 
 struct XfsVNode {
     name: String,
@@ -403,7 +403,7 @@ impl VNode for XfsVNode {
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// Helpers
 
 fn clean_xfs_path(path: &str) -> String {
     if path.is_empty() || path == "/" {

@@ -46,7 +46,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-// ── Enable-mask bit constants ─────────────────────────────────────────────
+// Enable-mask bit constants
 //
 // These bits are used in the per-process `audit_enable_mask` to selectively
 // enable/disable audit event types, avoiding any overhead when auditing is
@@ -74,7 +74,7 @@ pub const fn audit_enable_bit(event_type: AuditEventType) -> u64 {
     1 << (event_type as u8)
 }
 
-// ── AuditRecord ───────────────────────────────────────────────────────────
+// AuditRecord
 //
 // Fixed-size (256-byte) record stored in the kernel's audit ring buffer.
 // The ring buffer uses lock-free atomics and needs deterministic entry sizes.

@@ -16,7 +16,7 @@ use protofire::kernel::process::wait::Event;
 use protofire::kernel::process::wait::Semaphore;
 use protofire::kernel::process::Scheduler;
 
-// ── Test serialisation ─────────────────────────────────────────────────────
+// Test serialisation
 
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -25,7 +25,7 @@ fn test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
-// ── Concurrency stress tests ────────────────────────────────────────────────
+// Concurrency stress tests
 
 #[test]
 fn stress_spawn_many_threads_and_schedule_all() {
@@ -273,7 +273,7 @@ fn stress_semaphore_multi_release_does_not_panic() {
     assert_eq!(semaphore.permits(), 0);
 }
 
-// ── Memory pressure tests ───────────────────────────────────────────────────
+// Memory pressure tests
 
 #[test]
 fn memory_allocate_until_oom_then_free_all() {

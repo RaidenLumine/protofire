@@ -48,7 +48,7 @@ fn scheduled_current_thread(name: &str) -> (Box<Scheduler>, Arc<Thread>, Arc<Pro
     (scheduler, thread, process)
 }
 
-// ── Construction ───────────────────────────────────────────────────────
+// Construction
 
 #[test]
 fn new_kernel_thread_starts_ready_with_allocated_tid() {
@@ -165,7 +165,7 @@ fn new_thread_on_terminated_process_is_terminated() {
     assert_eq!(thread.state(), ThreadState::Terminated);
 }
 
-// ── State transitions ──────────────────────────────────────────────────
+// State transitions
 
 #[test]
 fn set_state_transitions_are_observable() {
@@ -356,7 +356,7 @@ fn terminating_last_thread_terminates_process() {
     );
 }
 
-// ── Join / termination event ───────────────────────────────────────────
+// Join / termination event
 
 #[test]
 fn join_on_live_thread_blocks_and_registers_waiter() {
@@ -430,7 +430,7 @@ fn process_wait_for_termination_blocks_then_wakes() {
     assert_eq!(process.termination_waiter_count(), 0);
 }
 
-// ── Scheduling metadata accessors ──────────────────────────────────────
+// Scheduling metadata accessors
 
 #[test]
 fn priority_accessors_roundtrip() {
@@ -552,7 +552,7 @@ fn wait_outcome_defaults_to_completed_for_fresh_thread() {
     assert_eq!(thread.wait_outcome(), ThreadWaitOutcome::Completed);
 }
 
-// ── Process handle lifecycle ───────────────────────────────────────────
+// Process handle lifecycle
 
 #[test]
 fn terminated_process_handle_operations_return_busy() {
@@ -635,7 +635,7 @@ fn terminated_process_handle_operations_return_busy() {
     );
 }
 
-// ── riscv64 user-exception handler installation ─────────────────────────
+// riscv64 user-exception handler installation
 //
 // The trap glue that *delivers* an exception runs only on the machine, so the
 // evidence for that half is `make check-riscv64-runtime`'s boot.  What a host

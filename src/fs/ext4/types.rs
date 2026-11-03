@@ -13,7 +13,7 @@ use crate::fs::vfs::NodeKind;
 
 use super::constants::*;
 
-// ─── Ext4 inode ─────────────────────────────────────────────────────────
+// Ext4 inode
 
 /// Parsed ext2/ext4 inode.  The 256-byte extension fields (`size_high`,
 /// `block_high`) are zero when the volume uses 128-byte inodes.
@@ -84,7 +84,7 @@ impl Ext4Inode {
     }
 }
 
-// ─── Ext4 superblock ────────────────────────────────────────────────────
+// Ext4 superblock
 
 /// Parsed ext2/ext4 superblock (subset of fields the driver uses).
 #[derive(Debug, Clone)]
@@ -135,7 +135,7 @@ impl Ext4Superblock {
     }
 }
 
-// ─── Block group descriptor ─────────────────────────────────────────────
+// Block group descriptor
 
 /// Parsed block-group descriptor.
 #[derive(Debug, Clone)]
@@ -148,7 +148,7 @@ pub(crate) struct Ext4BgDescriptor {
     pub(crate) bg_used_dirs_count: u16,
 }
 
-// ─── Extent tree ────────────────────────────────────────────────────────
+// Extent tree
 
 /// On-disk extent-tree node header (12 bytes).
 #[derive(Debug, Clone, Copy)]
@@ -197,7 +197,7 @@ impl Ext4ExtentIdx {
     }
 }
 
-// ─── Directory entries ──────────────────────────────────────────────────
+// Directory entries
 
 pub(crate) struct Ext4DirEntry {
     pub(crate) inode: u32,
@@ -205,7 +205,7 @@ pub(crate) struct Ext4DirEntry {
     pub(crate) file_type: u8,
 }
 
-// ─── Inode serialisation ────────────────────────────────────────────────
+// Inode serialisation
 
 /// Parse a raw inode (128- or 256-byte) into an [`Ext4Inode`].
 pub(crate) fn read_ext4_inode(raw: &[u8], inode_size: u16) -> Ext4Inode {
@@ -281,7 +281,7 @@ pub(crate) fn write_inode_block_bytes(inode: &mut Ext4Inode, bytes: &[u8; 60]) {
     }
 }
 
-// ─── Extent-tree node parsing / writing ────────────────────────────────
+// Extent-tree node parsing / writing
 
 /// Parse a 12-byte extent-tree node header.
 pub(crate) fn parse_extent_header(raw: &[u8]) -> Ext4ExtentHeader {

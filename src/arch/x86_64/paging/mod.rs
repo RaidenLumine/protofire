@@ -1239,7 +1239,7 @@ mod tests {
         assert!(prepare_process_address_space(&kernel_spec, &plan, &[0_u8; 0x2000]).is_none());
     }
 
-    // ── Huge page tests ────────────────────────────────────────────────────
+    // Huge page tests
 
     #[test]
     fn kernel_page_table_spec_detects_huge_pages_for_2mib_aligned_regions() {

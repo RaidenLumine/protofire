@@ -18,14 +18,14 @@ pub use crate::user::shared::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ALLOW_N
 pub use crate::user::shared::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
 pub use crate::user::shared::abi::exception::USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
-// ── submodules ────────────────────────────────────────────────────
+// submodules
 
 mod fs;
 mod gpu;
 mod payload;
 mod process;
 
-// ── invocation primitives ──────────────────────────────────────────
+// invocation primitives
 //
 // The instruction that enters the kernel from user mode is the machine's:
 // `int` with the interrupt registers on x86_64, `svc` with `x8` and `x0..x5`
@@ -119,7 +119,7 @@ impl UserSyscall {
     }
 }
 
-// ── payload-runtime macros ──────────────────────────────────────────
+// payload-runtime macros
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[allow(unused_imports)]

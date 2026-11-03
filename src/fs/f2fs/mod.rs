@@ -39,7 +39,7 @@ mod tests;
 pub(crate) mod types;
 pub(crate) mod vfs;
 
-// ─── Public Volume Wrapper ────────────────────────────────────────────
+// Public Volume Wrapper
 
 /// A mounted F2FS volume that implements [`VfsFileSystem`].
 ///
@@ -50,7 +50,7 @@ pub struct F2fsVolume {
     fs: Arc<F2fsFs>,
 }
 
-// ─── Internal Filesystem State ────────────────────────────────────────
+// Internal Filesystem State
 
 /// Internal F2FS filesystem state, shared between [`F2fsVolume`] and every
 /// [`F2VNode`] it hands out.
@@ -83,7 +83,7 @@ pub(crate) struct F2fsFs {
     pub(crate) next_nid: Mutex<u32>,
 }
 
-// ─── Re-exports ───────────────────────────────────────────────────────
+// Re-exports
 
 // Re-export types, constants, and helpers needed by sibling modules
 // (and tests via `use super::*`).

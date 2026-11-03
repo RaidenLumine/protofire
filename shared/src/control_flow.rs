@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use crate::types::CmdResult;
 
-// ─── Control flow types ───────────────────────────────────────────────
+// Control flow types
 
 /// Keywords recognised by the control-flow parser.
 #[derive(Clone, PartialEq, Debug)]
@@ -196,7 +196,7 @@ pub fn needs_continuation(line: &str) -> bool {
     openers > closers
 }
 
-// ─── Control flow executor ────────────────────────────────────────────
+// Control flow executor
 
 /// Execute a control-flow block (single-line or accumulated multi-line).
 ///

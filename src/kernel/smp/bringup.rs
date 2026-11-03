@@ -15,7 +15,7 @@
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
-// ── Constants ───────────────────────────────────────────────────────────
+// Constants
 
 /// Maximum total CPUs (BSP + APs).
 ///
@@ -27,7 +27,7 @@ pub use crate::kernel::MAX_CPUS;
 /// The online-CPU mask is a `u32`, so every CPU has to fit in it.
 const _: () = assert!(MAX_CPUS <= 32);
 
-// ── The CPU registry ───────────────────────────────────────────────────
+// The CPU registry
 
 /// Bit `N` is set once logical CPU `N` is running kernel code.
 ///
@@ -104,7 +104,7 @@ pub fn send_reschedule_ipi(cpu_id: u32) {
     crate::arch::ipi::send_reschedule_ipi(cpu_id);
 }
 
-// ── Waiting for a started CPU to report in ──────────────────────────────
+// Waiting for a started CPU to report in
 
 /// How long a bring-up waits, in spin-loop iterations, for a CPU it started
 /// to report itself online.

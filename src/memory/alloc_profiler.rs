@@ -117,7 +117,7 @@ impl AllocProfiler {
         }
     }
 
-    // ─── heap counters ───
+    // heap counters
 
     #[inline]
     pub fn inc_heap_allocs(&self) {
@@ -165,7 +165,7 @@ impl AllocProfiler {
         let _ = (self, bytes);
     }
 
-    // ─── frame counters ───
+    // frame counters
 
     #[inline]
     pub fn inc_frame_allocs(&self) {
@@ -209,7 +209,7 @@ impl AllocProfiler {
         let _ = (self, bytes);
     }
 
-    // ─── page table counters ───
+    // page table counters
 
     #[inline]
     pub fn inc_page_table_maps(&self) {

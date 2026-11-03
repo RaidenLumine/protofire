@@ -189,7 +189,7 @@ impl MemoryManager {
         self.fault_profiler.snapshot()
     }
 
-    // ── register / unregister user pages ─────────────────────────────────
+    // register / unregister user pages
     /// Register a process's user pages in the software page table.
     ///
     /// Each entry is `(virtual_address, physical_address, permissions, kind)`.
@@ -544,7 +544,7 @@ impl MemoryManager {
         }
     }
 
-    // ── compressed page cache (zswap-style) ─────────────────────────────
+    // compressed page cache (zswap-style)
 
     /// Store a compressed page in the cache, evicting oldest entries to the
     /// raw content store when the byte budget is exceeded.

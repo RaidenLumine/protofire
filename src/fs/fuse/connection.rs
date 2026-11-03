@@ -75,7 +75,7 @@ impl FuseConnection {
             .chain(request.payload.iter().copied())
             .collect();
 
-        // ── Write request to the request pipe ──
+        // Write request to the request pipe
         let mut pos = 0;
         while pos < wire_buf.len() {
             let n = self
@@ -88,7 +88,7 @@ impl FuseConnection {
             pos += n;
         }
 
-        // ── Read response header (24 bytes) ──
+        // Read response header (24 bytes)
         let mut header_buf = [0u8; 24];
         let mut offset = 0;
         while offset < 24 {
@@ -103,7 +103,7 @@ impl FuseConnection {
         }
         let resp_header = deserialize_header(&header_buf);
 
-        // ── Read response payload ──
+        // Read response payload
         let payload_len = resp_header.payload_len as usize;
         let mut payload = Vec::with_capacity(payload_len);
         if payload_len > 0 {

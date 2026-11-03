@@ -18,7 +18,7 @@ pub struct SchedulerHotspotStats {
     pub timeout_wake_count: u64,
     pub preempt_count: u64,
 
-    // ── Refusals and losses ────────────────────────────────────────────
+    // Refusals and losses
     //
     // These are the exits that used to be silent.  A scheduler that makes a
     // thread runnable has to put it somewhere; when one of these climbs, the

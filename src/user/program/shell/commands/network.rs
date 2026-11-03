@@ -8,7 +8,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// ─── ping ────────────────────────────────────────────────────────────
+// ping
 
 /// Build a simple payload for an ICMP Echo Request (56 bytes of padding).
 fn build_ping_payload(seq: u8) -> Vec<u8> {

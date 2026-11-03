@@ -30,7 +30,7 @@ pub(crate) struct EroFs {
 }
 
 impl EroFs {
-    // ── Open / Initialise ───────────────────────────────────────────
+    // Open / Initialise
 
     /// Open an EROFS volume from a block device.
     ///
@@ -84,7 +84,7 @@ impl EroFs {
         ErofsSuperblock::parse(&raw[offset_in_sector..]).ok_or(Error::Unsupported)
     }
 
-    // ── Block I/O helpers ──────────────────────────────────────────
+    // Block I/O helpers
 
     pub fn block_size(&self) -> usize {
         self.sb.block_size()
@@ -134,7 +134,7 @@ impl EroFs {
         Ok(available)
     }
 
-    // ── Inode operations ────────────────────────────────────────────
+    // Inode operations
 
     /// Read a compact inode by NID (inode number).
     pub fn read_inode(&self, nid: u32) -> Result<ErofsInodeCompact> {
@@ -189,7 +189,7 @@ impl EroFs {
         Err(Error::NotFound)
     }
 
-    // ── Path resolution ─────────────────────────────────────────────
+    // Path resolution
 
     /// Walk a forward-slash-separated absolute path returning the NID
     /// and inode of the final component.
@@ -217,7 +217,7 @@ impl EroFs {
         Ok((current_nid, inode))
     }
 
-    // ── File data reading ───────────────────────────────────────────
+    // File data reading
 
     /// Read file data starting at `offset` into `buffer`.
     ///
@@ -279,7 +279,7 @@ impl EroFs {
     }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {
@@ -309,7 +309,7 @@ mod tests {
         let total_blocks = 128;
         let mut image = vec![0u8; total_blocks * block_size];
 
-        // ── Superblock at byte offset 1024 ─────────────────────────
+        // Superblock at byte offset 1024
         let sb_off = 1024;
         image[sb_off..sb_off + 4].copy_from_slice(&EROFS_MAGIC.to_le_bytes());
         image[sb_off + 0x0C] = 12; // blkszbits = 12 → 4096
@@ -322,7 +322,7 @@ mod tests {
         let volname = b"test";
         image[sb_off + 0x40..sb_off + 0x40 + volname.len()].copy_from_slice(volname);
 
-        // ── NID 1: root directory inode (at block 64, offset 32) ──
+        // NID 1: root directory inode (at block 64, offset 32)
         // NID 0 is unused (reserved); the first real inode is NID 1.
         let meta_base = 64 * block_size;
         let root_inode_off = meta_base + 32; // NID 1 → offset 32
@@ -334,7 +334,7 @@ mod tests {
             .copy_from_slice(&(block_size as u32).to_le_bytes()); // size
         image[root_inode_off + 16..root_inode_off + 20].copy_from_slice(&65u32.to_le_bytes()); // i_u[0] → block 65
 
-        // ── NID 2: regular file inode (at block 64, offset 64) ────
+        // NID 2: regular file inode (at block 64, offset 64)
         let file_inode_off = meta_base + 64; // NID 2 → offset 64
         let file_content = b"Hello, EROFS!\n";
         image[file_inode_off..file_inode_off + 2]
@@ -344,7 +344,7 @@ mod tests {
             .copy_from_slice(&(file_content.len() as u32).to_le_bytes()); // size
         image[file_inode_off + 16..file_inode_off + 20].copy_from_slice(&66u32.to_le_bytes()); // i_u[0] → block 66
 
-        // ── Block 65: root directory data ──────────────────────────
+        // Block 65: root directory data
         // EROFS directory entries: 12-byte headers at the start of the
         // block, names packed at the tail growing backwards.  Names MUST
         // NOT overlap — each name starts immediately before the previous
@@ -394,7 +394,7 @@ mod tests {
             image[off + 10..off + 12].copy_from_slice(&(EROFS_FT_REG_FILE as u16).to_le_bytes());
         }
 
-        // ── Block 66: file data ────────────────────────────────────
+        // Block 66: file data
         let file_data_off = 66 * block_size;
         image[file_data_off..file_data_off + file_content.len()].copy_from_slice(file_content);
 

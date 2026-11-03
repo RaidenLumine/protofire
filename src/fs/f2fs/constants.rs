@@ -2,7 +2,7 @@
 //!
 //! F2FS layout and inode field constants.
 
-// ─── Inode field offsets (custom simplified layout, contiguous) ────────
+// Inode field offsets (custom simplified layout, contiguous)
 
 /// Offset of `i_mode` within the inode block (u16).
 pub(crate) const F2FS_INODE_MODE_OFF: usize = 0;
@@ -38,7 +38,7 @@ pub(crate) const F2FS_INODE_FLAGS_OFF: usize = 76;
 /// Start of the `i_addr` block pointer array.
 pub(crate) const F2FS_INODE_ADDR_OFF: usize = 80;
 
-// ─── Inode file-type / mode mask constants ────────────────────────────
+// Inode file-type / mode mask constants
 
 pub(crate) const F2FS_S_IFMT: u16 = 0xF000;
 pub(crate) const F2FS_S_IFREG: u16 = 0x8000;
@@ -47,7 +47,7 @@ pub(crate) const F2FS_S_IFCHR: u16 = 0x2000;
 pub(crate) const F2FS_S_IFBLK: u16 = 0x6000;
 pub(crate) const F2FS_S_IFLNK: u16 = 0xA000;
 
-// ─── Directory-entry file-type codes ──────────────────────────────────
+// Directory-entry file-type codes
 
 pub(crate) const F2FS_FT_REG_FILE: u8 = 1;
 pub(crate) const F2FS_FT_DIR: u8 = 2;
@@ -55,7 +55,7 @@ pub(crate) const F2FS_FT_CHRDEV: u8 = 3;
 pub(crate) const F2FS_FT_BLKDEV: u8 = 4;
 pub(crate) const F2FS_FT_SYMLINK: u8 = 7;
 
-// ─── Extended attribute constants ────────────────────────────────────────
+// Extended attribute constants
 
 /// Minimum size per xattr entry (name_len = 0, padded to 4 bytes).
 #[allow(dead_code)]
@@ -64,7 +64,7 @@ pub(crate) const F2FS_XATTR_ENTRY_MIN_SIZE: usize = 4;
 #[allow(dead_code)]
 pub(crate) const F2FS_XATTR_INDEX_USER: u8 = 1;
 
-// ─── Superblock field offsets ─────────────────────────────────────────
+// Superblock field offsets
 //
 // These match the Linux F2FS superblock layout (little-endian) up to
 // `F2FS_SB_META_INO_OFF`; the trailing custom fields (`cp_payload` onward)
@@ -108,7 +108,7 @@ pub(crate) const F2FS_SB_SIT_ENTRY_CNT_OFF: usize = 285;
 /// Custom: total node count (driver extension).
 pub(crate) const F2FS_SB_NODE_COUNT_OFF: usize = 289;
 
-// ─── Checkpoint field offsets (custom contiguous layout) ──────────────
+// Checkpoint field offsets (custom contiguous layout)
 
 pub(crate) const F2FS_CP_CHECK_VER_OFF: usize = 0;
 pub(crate) const F2FS_CP_NAT_VER_OFF: usize = 8;
@@ -122,7 +122,7 @@ pub(crate) const F2FS_CP_SIT_JOURNAL_COUNT_OFF: usize = 44;
 /// Start of the inline NAT journal area (12 bytes per entry).
 pub(crate) const F2FS_CP_NAT_JOURNAL_OFF: usize = 48;
 
-// ─── Structural constants ──────────────────────────────────────────────
+// Structural constants
 
 /// Default block size in bytes.
 pub(crate) const F2FS_DEFAULT_BLOCK_SIZE: usize = 4096;
